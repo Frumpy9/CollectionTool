@@ -19,6 +19,7 @@ export type CollectionSummary = {
 export type AuthUser = {
   id: string;
   email: string;
+  username: string;
   displayName: string;
   systemRole: "admin" | "user";
 };

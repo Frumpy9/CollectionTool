@@ -224,7 +224,7 @@ function WorkspaceShell({
         <div className="account-card">
           <span>
             <strong>{authUser.displayName}</strong>
-            <small>{authUser.email}</small>
+            <small>@{authUser.username} · {authUser.email}</small>
           </span>
           <button type="button" onClick={onLogout}>
             Log out
@@ -333,7 +333,9 @@ function AuthScreen({
 }) {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isBootstrap = mode === "bootstrap";
@@ -345,8 +347,8 @@ function AuthScreen({
 
     try {
       const nextAuth = isBootstrap
-        ? await api.bootstrap({ displayName, email, password })
-        : await api.login({ email, password });
+        ? await api.bootstrap({ displayName, email, password, username })
+        : await api.login({ identifier, password });
       onAuthenticated(nextAuth);
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to sign in.");
@@ -370,28 +372,53 @@ function AuthScreen({
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {isBootstrap ? (
+            <>
+              <label>
+                Display name
+                <input
+                  autoComplete="name"
+                  minLength={2}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  required
+                  value={displayName}
+                />
+              </label>
+              <label>
+                Username
+                <input
+                  autoComplete="username"
+                  minLength={3}
+                  onChange={(event) => setUsername(event.target.value)}
+                  pattern="[A-Za-z0-9_-]{3,32}"
+                  required
+                  value={username}
+                />
+              </label>
+            </>
+          ) : null}
+          {isBootstrap ? (
             <label>
-              Display name
+              Email
               <input
-                autoComplete="name"
-                minLength={2}
-                onChange={(event) => setDisplayName(event.target.value)}
+                autoComplete="email"
+                inputMode="email"
+                onChange={(event) => setEmail(event.target.value)}
                 required
-                value={displayName}
+                type="email"
+                value={email}
               />
             </label>
-          ) : null}
-          <label>
-            Email
-            <input
-              autoComplete="email"
-              inputMode="email"
-              onChange={(event) => setEmail(event.target.value)}
-              required
-              type="email"
-              value={email}
-            />
-          </label>
+          ) : (
+            <label>
+              Email or username
+              <input
+                autoComplete="username"
+                onChange={(event) => setIdentifier(event.target.value)}
+                required
+                value={identifier}
+              />
+            </label>
+          )}
           <label>
             Password
             <input

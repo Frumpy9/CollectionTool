@@ -14,15 +14,18 @@ import {
   listCollectionsForUser,
   pruneExpiredSessions,
   setSessionCookie,
-  validateEmail
+  validateEmail,
+  validateUsername
 } from "../auth.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
 
 type AuthBody = {
   email?: string;
+  identifier?: string;
   password?: string;
   displayName?: string;
+  username?: string;
 };
 
 export async function registerAuthRoutes(
@@ -54,12 +57,18 @@ export async function registerAuthRoutes(
   app.post("/api/auth/bootstrap", async (request, reply): Promise<AuthMeResponse> => {
     const body = request.body as AuthBody;
     const email = body.email ?? "";
+    const username = body.username ?? "";
     const password = body.password ?? "";
     const displayName = body.displayName ?? "";
 
     if (!validateEmail(email)) {
       reply.code(400);
       throw new Error("Enter a valid email address.");
+    }
+
+    if (!validateUsername(username)) {
+      reply.code(400);
+      throw new Error("Username must be 3-32 characters using letters, numbers, underscores, or hyphens.");
     }
 
     if (displayName.trim().length < 2) {
@@ -74,6 +83,7 @@ export async function registerAuthRoutes(
 
     const user = createBootstrapUser(database, {
       email,
+      username,
       password,
       displayName
     });
@@ -95,7 +105,7 @@ export async function registerAuthRoutes(
   app.post("/api/auth/login", async (request, reply): Promise<AuthMeResponse> => {
     const body = request.body as AuthBody;
     const user = authenticateLogin(database, {
-      email: body.email ?? "",
+      identifier: body.identifier ?? body.email ?? "",
       password: body.password ?? ""
     });
 
@@ -124,4 +134,3 @@ export async function registerAuthRoutes(
     return { ok: true };
   });
 }
-

@@ -84,6 +84,23 @@ const migrations: Migration[] = [
       SET value = '2', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 3,
+    name: "add_usernames",
+    sql: `
+      ALTER TABLE users ADD COLUMN username TEXT;
+
+      UPDATE users
+      SET username = lower(substr(email, 1, instr(email, '@') - 1))
+      WHERE username IS NULL;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+
+      UPDATE app_metadata
+      SET value = '3', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 
