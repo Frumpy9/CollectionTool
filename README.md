@@ -30,6 +30,14 @@ npm run dev
 
 The web app runs at `http://localhost:5173` and proxies API requests to `http://localhost:3000`.
 
+For a local throwaway test account:
+
+```bash
+npm run seed:dev-admin --workspace @collection-tool/api
+```
+
+That creates or resets a local-only account with username `admin` and password `admin` in the ignored SQLite dev database.
+
 ## Docker
 
 ```bash
@@ -50,4 +58,3 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - PSA Public API: free PSA account/API token required for cert lookup.
 - eBay sold comps: best-effort personal-use sold-search parsing because official sold-history API access is limited/restricted.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
-

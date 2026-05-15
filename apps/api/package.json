@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite node dist/server.js",
     "dev:watch": "tsx watch src/server.ts",
+    "seed:dev-admin": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite node dist/scripts/seedDevAdmin.js",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json"
