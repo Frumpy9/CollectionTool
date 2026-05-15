@@ -30,6 +30,8 @@ type CollectionRow = {
   id: string;
   name: string;
   role: "owner" | "admin" | "editor" | "viewer";
+  card_count: number;
+  estimated_value_cents: number;
 };
 
 export type AuthContext = {
@@ -79,9 +81,13 @@ export function listCollectionsForUser(
     .prepare(
       `
         SELECT c.id, c.name, cm.role
+          , COALESCE(SUM(oi.quantity), 0) AS card_count
+          , COALESCE(SUM(COALESCE(oi.value_override_cents, oi.purchase_price_cents, 0) * oi.quantity), 0) AS estimated_value_cents
         FROM collections c
         INNER JOIN collection_members cm ON cm.collection_id = c.id
+        LEFT JOIN owned_items oi ON oi.collection_id = c.id
         WHERE cm.user_id = ?
+        GROUP BY c.id, c.name, cm.role, c.created_at
         ORDER BY c.created_at ASC
       `
     )
@@ -91,8 +97,8 @@ export function listCollectionsForUser(
     id: row.id,
     name: row.name,
     role: row.role,
-    cardCount: 0,
-    estimatedValueCents: 0
+    cardCount: row.card_count,
+    estimatedValueCents: row.estimated_value_cents
   }));
 }
 

@@ -101,6 +101,60 @@ const migrations: Migration[] = [
       SET value = '3', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 4,
+    name: "manual_inventory",
+    sql: `
+      CREATE TABLE IF NOT EXISTS cards (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        set_name TEXT,
+        set_code TEXT,
+        card_number TEXT,
+        language TEXT NOT NULL CHECK (language IN ('en', 'ja', 'other')) DEFAULT 'en',
+        rarity TEXT,
+        image_url TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_id TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_cards_manual_lookup
+      ON cards(name, set_code, card_number, language);
+
+      CREATE TABLE IF NOT EXISTS owned_items (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        card_id TEXT NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+        item_type TEXT NOT NULL CHECK (item_type IN ('raw', 'graded')) DEFAULT 'raw',
+        quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+        condition_label TEXT,
+        condition_score REAL CHECK (condition_score IS NULL OR (condition_score >= 1 AND condition_score <= 10)),
+        variant_details TEXT,
+        grader TEXT,
+        grade TEXT,
+        cert_number TEXT,
+        purchase_price_cents INTEGER CHECK (purchase_price_cents IS NULL OR purchase_price_cents >= 0),
+        purchase_date TEXT,
+        value_override_cents INTEGER CHECK (value_override_cents IS NULL OR value_override_cents >= 0),
+        storage_location TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_owned_items_collection_id
+      ON owned_items(collection_id);
+
+      CREATE INDEX IF NOT EXISTS idx_owned_items_card_id
+      ON owned_items(card_id);
+
+      UPDATE app_metadata
+      SET value = '4', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

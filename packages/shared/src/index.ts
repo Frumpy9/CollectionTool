@@ -41,3 +41,68 @@ export type CollectionInvite = {
   token: string;
   expiresAt: string;
 };
+
+export type CardLanguage = "en" | "ja" | "other";
+
+export type InventoryItemType = "raw" | "graded";
+
+export type InventoryItem = {
+  id: string;
+  collectionId: string;
+  cardId: string;
+  itemType: InventoryItemType;
+  quantity: number;
+  conditionLabel: string | null;
+  conditionScore: number | null;
+  variantDetails: string | null;
+  grader: string | null;
+  grade: string | null;
+  certNumber: string | null;
+  purchasePriceCents: number | null;
+  purchaseDate: string | null;
+  valueOverrideCents: number | null;
+  storageLocation: string | null;
+  notes: string | null;
+  createdAt: string;
+  card: {
+    name: string;
+    setName: string | null;
+    setCode: string | null;
+    cardNumber: string | null;
+    language: CardLanguage;
+    rarity: string | null;
+    imageUrl: string | null;
+  };
+};
+
+export type InventoryListResponse = {
+  items: InventoryItem[];
+  summary: {
+    itemCount: number;
+    cardCount: number;
+    estimatedValueCents: number;
+  };
+};
+
+export type CreateInventoryItemRequest = {
+  name: string;
+  setName?: string;
+  setCode?: string;
+  cardNumber?: string;
+  language: CardLanguage;
+  rarity?: string;
+  imageUrl?: string;
+  itemType: InventoryItemType;
+  quantity: number;
+  conditionLabel?: string;
+  conditionScore?: number;
+  variantDetails?: string;
+  grader?: string;
+  grade?: string;
+  certNumber?: string;
+  purchasePriceCents?: number;
+  purchaseDate?: string;
+  valueOverrideCents?: number;
+  storageLocation?: string;
+  notes?: string;
+};
