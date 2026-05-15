@@ -22,6 +22,68 @@ const migrations: Migration[] = [
       INSERT OR IGNORE INTO app_metadata (key, value)
       VALUES ('schema_version', '1');
     `
+  },
+  {
+    id: 2,
+    name: "auth_and_collections",
+    sql: `
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        system_role TEXT NOT NULL CHECK (system_role IN ('admin', 'user')) DEFAULT 'user',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_login_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+
+      CREATE TABLE IF NOT EXISTS collections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        default_locale TEXT NOT NULL CHECK (default_locale IN ('en', 'ja')) DEFAULT 'en',
+        currency TEXT NOT NULL DEFAULT 'USD',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS collection_members (
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('owner', 'admin', 'editor', 'viewer')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (collection_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS collection_invites (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        accepted_at TEXT,
+        created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      UPDATE app_metadata
+      SET value = '2', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 
@@ -74,4 +136,3 @@ export function openDatabase(databasePath: string): AppDatabase {
     migrationsApplied
   };
 }
-

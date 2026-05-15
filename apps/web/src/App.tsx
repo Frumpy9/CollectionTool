@@ -14,6 +14,8 @@ import {
   Tags
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type { AuthMeResponse, AuthUser, CollectionSummary } from "@collection-tool/shared";
+import { api } from "./api";
 
 type HealthState =
   | { status: "loading" }
@@ -37,12 +39,41 @@ const roadmapItems = [
 ];
 
 export function App() {
+  const [auth, setAuth] = useState<AuthMeResponse | null>(null);
+  const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
   const [health, setHealth] = useState<HealthState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
 
-    fetch("/health")
+    Promise.all([api.bootstrapStatus(), api.me()])
+      .then(([bootstrapStatus, me]) => {
+        if (!cancelled) {
+          setNeedsBootstrap(bootstrapStatus.needsBootstrap);
+          setAuth(me);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuth({ user: null, collections: [] });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setAuthLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/health", { credentials: "include" })
       .then(async (response) => {
         if (!response.ok) {
           throw new Error(`API returned ${response.status}`);
@@ -87,6 +118,51 @@ export function App() {
     return "API online";
   }, [health]);
 
+  if (authLoading) {
+    return <LoadingScreen />;
+  }
+
+  if (!auth?.user) {
+    return (
+      <AuthScreen
+        mode={needsBootstrap ? "bootstrap" : "login"}
+        onAuthenticated={(nextAuth) => {
+          setAuth(nextAuth);
+          setNeedsBootstrap(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <WorkspaceShell
+      authUser={auth.user}
+      collections={auth.collections}
+      health={health}
+      healthText={healthText}
+      onLogout={async () => {
+        await api.logout();
+        setAuth({ user: null, collections: [] });
+      }}
+    />
+  );
+}
+
+function WorkspaceShell({
+  authUser,
+  collections,
+  health,
+  healthText,
+  onLogout
+}: {
+  authUser: AuthUser;
+  collections: CollectionSummary[];
+  health: HealthState;
+  healthText: string;
+  onLogout: () => Promise<void>;
+}) {
+  const activeCollection = collections[0];
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Collection navigation">
@@ -102,8 +178,12 @@ export function App() {
 
         <button className="collection-switcher" type="button">
           <span>
-            <strong>Main Collection</strong>
-            <small>Owner workspace</small>
+            <strong>{activeCollection?.name ?? "No collection"}</strong>
+            <small>
+              {activeCollection
+                ? `${activeCollection.role} workspace`
+                : "Create a collection to begin"}
+            </small>
           </span>
           <ChevronDown size={18} aria-hidden="true" />
         </button>
@@ -139,6 +219,16 @@ export function App() {
                   : "Waiting for /health"}
             </small>
           </div>
+        </div>
+
+        <div className="account-card">
+          <span>
+            <strong>{authUser.displayName}</strong>
+            <small>{authUser.email}</small>
+          </span>
+          <button type="button" onClick={onLogout}>
+            Log out
+          </button>
         </div>
       </aside>
 
@@ -222,3 +312,103 @@ export function App() {
   );
 }
 
+function LoadingScreen() {
+  return (
+    <main className="auth-layout">
+      <section className="auth-panel">
+        <p className="eyebrow">Collection Tool</p>
+        <h1>Loading your vault</h1>
+        <p>Checking the local API and account setup.</p>
+      </section>
+    </main>
+  );
+}
+
+function AuthScreen({
+  mode,
+  onAuthenticated
+}: {
+  mode: "bootstrap" | "login";
+  onAuthenticated: (auth: AuthMeResponse) => void;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isBootstrap = mode === "bootstrap";
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+
+    try {
+      const nextAuth = isBootstrap
+        ? await api.bootstrap({ displayName, email, password })
+        : await api.login({ email, password });
+      onAuthenticated(nextAuth);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to sign in.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="auth-layout">
+      <section className="auth-panel">
+        <div className="brand-lockup">
+          <div className="brand-mark">
+            <Gem size={22} aria-hidden="true" />
+          </div>
+          <div>
+            <p className="eyebrow">Pokemon Vault</p>
+            <h1>{isBootstrap ? "Create the first admin" : "Welcome back"}</h1>
+          </div>
+        </div>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          {isBootstrap ? (
+            <label>
+              Display name
+              <input
+                autoComplete="name"
+                minLength={2}
+                onChange={(event) => setDisplayName(event.target.value)}
+                required
+                value={displayName}
+              />
+            </label>
+          ) : null}
+          <label>
+            Email
+            <input
+              autoComplete="email"
+              inputMode="email"
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              type="email"
+              value={email}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              autoComplete={isBootstrap ? "new-password" : "current-password"}
+              minLength={isBootstrap ? 12 : undefined}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              type="password"
+              value={password}
+            />
+          </label>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button className="primary-button" disabled={isSubmitting} type="submit">
+            {isSubmitting ? "Working..." : isBootstrap ? "Create admin" : "Log in"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}

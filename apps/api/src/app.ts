@@ -1,8 +1,11 @@
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import Fastify from "fastify";
 import type { HealthResponse } from "@collection-tool/shared";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
+import { registerAuthRoutes } from "./routes/authRoutes.js";
+import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 
 export async function createApp(config: AppConfig, database: AppDatabase) {
   const app = Fastify({
@@ -16,6 +19,10 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
     credentials: true
   });
 
+  await app.register(cookie, {
+    secret: config.sessionSecret
+  });
+
   app.get("/health", async (): Promise<HealthResponse> => ({
     status: "ok",
     service: "api",
@@ -26,9 +33,8 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
     }
   }));
 
-  app.get("/api/collections", async () => ({
-    collections: []
-  }));
+  await registerAuthRoutes(app, config, database);
+  await registerCollectionRoutes(app, database);
 
   app.addHook("onClose", async () => {
     database.connection.close();
@@ -36,4 +42,3 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
 
   return app;
 }
-

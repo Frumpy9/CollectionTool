@@ -5,6 +5,8 @@ export type AppConfig = {
   databasePath: string;
   host: string;
   port: number;
+  sessionSecret: string;
+  cookieSecure: boolean;
 };
 
 export function loadConfig(): AppConfig {
@@ -12,7 +14,8 @@ export function loadConfig(): AppConfig {
     appUrl: process.env.APP_URL ?? "http://localhost:5173",
     databasePath: process.env.DATABASE_PATH ?? "./data/collection.sqlite",
     host: process.env.HOST ?? "0.0.0.0",
-    port: Number(process.env.PORT ?? 3000)
+    port: Number(process.env.PORT ?? 3000),
+    sessionSecret: process.env.SESSION_SECRET ?? "dev-only-change-me",
+    cookieSecure: (process.env.APP_URL ?? "").startsWith("https://")
   };
 }
-
