@@ -8,6 +8,7 @@ build/
 coverage/
 playwright-report/
 test-results/
+*.tsbuildinfo
 
 # Runtime data
 data/
@@ -29,4 +30,3 @@ cached-images/
 .DS_Store
 .idea/
 .vscode/
-
