@@ -1,0 +1,20 @@
+{
+  "name": "pokemon-collection-tool",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted Pokemon card collection manager.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @collection-tool/api & npm run dev --workspace @collection-tool/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}
+

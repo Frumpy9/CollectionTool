@@ -1,0 +1,37 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      APP_URL: ${APP_URL:-http://localhost:5173}
+      SESSION_SECRET: ${SESSION_SECRET:-change-me-to-a-long-random-secret}
+      DATABASE_PATH: /data/collection.sqlite
+      PSA_USERNAME: ${PSA_USERNAME:-}
+      PSA_PASSWORD: ${PSA_PASSWORD:-}
+      PSA_ACCESS_TOKEN: ${PSA_ACCESS_TOKEN:-}
+      POKEMONTCG_API_KEY: ${POKEMONTCG_API_KEY:-}
+      ENABLE_EBAY_SCRAPER: ${ENABLE_EBAY_SCRAPER:-true}
+      EBAY_MARKETPLACE: ${EBAY_MARKETPLACE:-EBAY_US}
+      SCRAPER_DELAY_MS: ${SCRAPER_DELAY_MS:-2500}
+      ENABLE_CGC_LOOKUP: ${ENABLE_CGC_LOOKUP:-true}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    ports:
+      - "3000:3000"
+    volumes:
+      - collection-data:/data
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  collection-data:
+
