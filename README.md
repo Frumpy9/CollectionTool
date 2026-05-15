@@ -1,0 +1,53 @@
+# Pokemon Collection Tool
+
+A self-hosted collection manager for raw and graded Pokemon cards. The first milestone is a Docker-ready app shell with a React frontend, Fastify API, SQLite migration runner, and a public-repo-safe configuration layout.
+
+## Current Status
+
+Milestone 1 is focused on the working app shell:
+
+- React/Vite web app
+- Fastify API with `/health`
+- SQLite migration runner
+- Docker Compose layout with persistent local data
+- Public-safe `.env.example`
+
+Later milestones add accounts, collections, TCGdex lookup, PSA/CGC cert workflows, eBay sold comps, camera scanning, backups, and import/export.
+
+## Requirements
+
+- Node.js 22+ for local development
+- Docker and Docker Compose for server deployment
+- A persistent data directory on the server
+- Tailscale or Cloudflare Tunnel for phone access
+
+## Local Development
+
+```bash
+npm install
+npm run dev
+```
+
+The web app runs at `http://localhost:5173` and proxies API requests to `http://localhost:3000`.
+
+## Docker
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The SQLite database is stored in the `collection-data` Docker volume at `/data/collection.sqlite`.
+
+## Secrets
+
+Do not commit `.env`, database files, cached images, backups, sessions, or logs. PSA credentials, session secrets, tunnel tokens, and optional PokemonTCG.io keys belong only in runtime environment variables.
+
+## Data Sources
+
+- TCGdex: primary card metadata source, no API key required.
+- PokemonTCG.io: optional free API key for English-card fallback and higher rate limits.
+- PSA Public API: free PSA account/API token required for cert lookup.
+- eBay sold comps: best-effort personal-use sold-search parsing because official sold-history API access is limited/restricted.
+- CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
+
