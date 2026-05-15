@@ -1,6 +1,10 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import type { AuthUser, CollectionSummary } from "@collection-tool/shared";
+import type {
+  AuthUser,
+  CollectionInvite,
+  CollectionSummary
+} from "@collection-tool/shared";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
 
@@ -88,6 +92,116 @@ export function listCollectionsForUser(
     cardCount: 0,
     estimatedValueCents: 0
   }));
+}
+
+export function createCollection(
+  database: AppDatabase,
+  input: { ownerUserId: string; name: string; defaultLocale: "en" | "ja" }
+): CollectionSummary {
+  const collectionId = randomUUID();
+  const name = input.name.trim();
+
+  database.connection.exec("BEGIN");
+  try {
+    database.connection
+      .prepare(
+        `
+          INSERT INTO collections (id, name, owner_user_id, default_locale)
+          VALUES (?, ?, ?, ?)
+        `
+      )
+      .run(collectionId, name, input.ownerUserId, input.defaultLocale);
+
+    database.connection
+      .prepare(
+        `
+          INSERT INTO collection_members (collection_id, user_id, role)
+          VALUES (?, ?, 'owner')
+        `
+      )
+      .run(collectionId, input.ownerUserId);
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  return {
+    id: collectionId,
+    name,
+    role: "owner",
+    cardCount: 0,
+    estimatedValueCents: 0
+  };
+}
+
+export function getCollectionRole(
+  database: AppDatabase,
+  collectionId: string,
+  userId: string
+) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT role
+        FROM collection_members
+        WHERE collection_id = ? AND user_id = ?
+      `
+    )
+    .get(collectionId, userId) as
+    | { role: "owner" | "admin" | "editor" | "viewer" }
+    | undefined;
+
+  return row?.role ?? null;
+}
+
+export function createCollectionInvite(
+  database: AppDatabase,
+  input: {
+    collectionId: string;
+    email: string;
+    role: "admin" | "editor" | "viewer";
+    createdByUserId: string;
+  }
+): CollectionInvite {
+  const token = randomBytes(32).toString("base64url");
+  const id = randomUUID();
+  const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  database.connection
+    .prepare(
+      `
+        INSERT INTO collection_invites (
+          id,
+          collection_id,
+          email,
+          role,
+          token_hash,
+          expires_at,
+          created_by_user_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      id,
+      input.collectionId,
+      normalizeEmail(input.email),
+      input.role,
+      hashToken(token),
+      expiresAt,
+      input.createdByUserId
+    );
+
+  return {
+    id,
+    collectionId: input.collectionId,
+    email: normalizeEmail(input.email),
+    role: input.role,
+    token,
+    expiresAt
+  };
 }
 
 export function createBootstrapUser(
@@ -266,4 +380,3 @@ export function normalizeEmail(email: string) {
 export function validateEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
-

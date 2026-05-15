@@ -31,3 +31,12 @@ export type AuthMeResponse = {
   user: AuthUser | null;
   collections: CollectionSummary[];
 };
+
+export type CollectionInvite = {
+  id: string;
+  collectionId: string;
+  email: string;
+  role: "admin" | "editor" | "viewer";
+  token: string;
+  expiresAt: string;
+};
