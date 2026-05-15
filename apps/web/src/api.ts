@@ -1,0 +1,49 @@
+import type {
+  AuthMeResponse,
+  BootstrapStatusResponse
+} from "@collection-tool/shared";
+
+type AuthPayload = {
+  email: string;
+  password: string;
+  displayName?: string;
+};
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(path, {
+    ...options,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers
+    }
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Request failed with ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+export const api = {
+  bootstrapStatus: () => request<BootstrapStatusResponse>("/api/auth/bootstrap-status"),
+  me: () => request<AuthMeResponse>("/api/auth/me"),
+  bootstrap: (payload: AuthPayload) =>
+    request<AuthMeResponse>("/api/auth/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  login: (payload: AuthPayload) =>
+    request<AuthMeResponse>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  logout: () =>
+    request<{ ok: true }>("/api/auth/logout", {
+      method: "POST",
+      body: JSON.stringify({})
+    })
+};
+

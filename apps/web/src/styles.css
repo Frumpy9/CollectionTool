@@ -168,6 +168,97 @@ small {
   border-radius: 8px;
 }
 
+.account-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.account-card span {
+  display: grid;
+  gap: 3px;
+}
+
+.account-card button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.auth-layout {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 22px;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 24px;
+  width: min(100%, 440px);
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+}
+
+.auth-panel h1 {
+  font-size: 1.6rem;
+}
+
+.auth-panel p:last-child {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.auth-form input {
+  min-height: 46px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.auth-form .primary-button {
+  width: 100%;
+}
+
+.auth-form .primary-button:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.form-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(213, 47, 58, 0.28);
+  border-radius: 8px;
+  color: #a11d2a;
+  background: #fff6f6;
+  font-weight: 700;
+}
+
 .pulse {
   width: 10px;
   height: 10px;
@@ -427,4 +518,3 @@ small {
     min-height: 220px;
   }
 }
-
