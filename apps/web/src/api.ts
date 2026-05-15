@@ -1,6 +1,9 @@
 import type {
   AuthMeResponse,
-  BootstrapStatusResponse
+  BootstrapStatusResponse,
+  CreateInventoryItemRequest,
+  InventoryItem,
+  InventoryListResponse
 } from "@collection-tool/shared";
 
 type AuthPayload = {
@@ -46,5 +49,12 @@ export const api = {
     request<{ ok: true }>("/api/auth/logout", {
       method: "POST",
       body: JSON.stringify({})
+    }),
+  listInventory: (collectionId: string) =>
+    request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
+    request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
+      method: "POST",
+      body: JSON.stringify(payload)
     })
 };
