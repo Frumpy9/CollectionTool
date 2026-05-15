@@ -15,6 +15,7 @@ const sessionDays = 30;
 type UserRow = {
   id: string;
   email: string;
+  username: string;
   display_name: string;
   password_hash: string;
   password_salt: string;
@@ -56,6 +57,7 @@ export function mapUser(row: UserRow): AuthUser {
   return {
     id: row.id,
     email: row.email,
+    username: row.username,
     displayName: row.display_name,
     systemRole: row.system_role
   };
@@ -206,7 +208,7 @@ export function createCollectionInvite(
 
 export function createBootstrapUser(
   database: AppDatabase,
-  input: { email: string; displayName: string; password: string }
+  input: { email: string; username: string; displayName: string; password: string }
 ) {
   if (countUsers(database) > 0) {
     throw new Error("Bootstrap has already been completed.");
@@ -215,6 +217,7 @@ export function createBootstrapUser(
   const userId = randomUUID();
   const collectionId = randomUUID();
   const normalizedEmail = normalizeEmail(input.email);
+  const username = normalizeUsername(input.username);
   const { hash, salt } = hashPassword(input.password);
 
   database.connection.exec("BEGIN");
@@ -222,11 +225,11 @@ export function createBootstrapUser(
     database.connection
       .prepare(
         `
-          INSERT INTO users (id, email, display_name, password_hash, password_salt, system_role)
-          VALUES (?, ?, ?, ?, ?, 'admin')
+          INSERT INTO users (id, email, username, display_name, password_hash, password_salt, system_role)
+          VALUES (?, ?, ?, ?, ?, ?, 'admin')
         `
       )
-      .run(userId, normalizedEmail, input.displayName.trim(), hash, salt);
+      .run(userId, normalizedEmail, username, input.displayName.trim(), hash, salt);
 
     database.connection
       .prepare(
@@ -295,6 +298,7 @@ export function getUserById(database: AppDatabase, userId: string) {
     .prepare(
       `
         SELECT id, email, display_name, password_hash, password_salt, system_role
+        , username
         FROM users
         WHERE id = ?
       `
@@ -306,17 +310,18 @@ export function getUserById(database: AppDatabase, userId: string) {
 
 export function authenticateLogin(
   database: AppDatabase,
-  input: { email: string; password: string }
+  input: { identifier: string; password: string }
 ) {
+  const identifier = normalizeIdentifier(input.identifier);
   const row = database.connection
     .prepare(
       `
-        SELECT id, email, display_name, password_hash, password_salt, system_role
+        SELECT id, email, username, display_name, password_hash, password_salt, system_role
         FROM users
-        WHERE email = ?
+        WHERE email = ? OR username = ?
       `
     )
-    .get(normalizeEmail(input.email)) as UserRow | undefined;
+    .get(identifier, identifier) as UserRow | undefined;
 
   if (!row || !verifyPassword(input.password, row.password_salt, row.password_hash)) {
     return null;
@@ -339,7 +344,7 @@ export function getAuthContext(request: FastifyRequest, database: AppDatabase): 
   const row = database.connection
     .prepare(
       `
-        SELECT u.id, u.email, u.display_name, u.password_hash, u.password_salt, u.system_role, s.expires_at
+        SELECT u.id, u.email, u.username, u.display_name, u.password_hash, u.password_salt, u.system_role, s.expires_at
         FROM sessions s
         INNER JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = ?
@@ -377,6 +382,18 @@ export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
 
+export function normalizeUsername(username: string) {
+  return username.trim().toLowerCase();
+}
+
+export function normalizeIdentifier(identifier: string) {
+  return identifier.includes("@") ? normalizeEmail(identifier) : normalizeUsername(identifier);
+}
+
 export function validateEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+export function validateUsername(username: string) {
+  return /^[a-zA-Z0-9_][a-zA-Z0-9_-]{2,31}$/.test(username);
 }

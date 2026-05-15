@@ -4,9 +4,11 @@ import type {
 } from "@collection-tool/shared";
 
 type AuthPayload = {
-  email: string;
+  email?: string;
+  identifier?: string;
   password: string;
   displayName?: string;
+  username?: string;
 };
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -46,4 +48,3 @@ export const api = {
       body: JSON.stringify({})
     })
 };
-
