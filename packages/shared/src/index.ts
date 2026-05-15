@@ -16,3 +16,18 @@ export type CollectionSummary = {
   estimatedValueCents: number;
 };
 
+export type AuthUser = {
+  id: string;
+  email: string;
+  displayName: string;
+  systemRole: "admin" | "user";
+};
+
+export type BootstrapStatusResponse = {
+  needsBootstrap: boolean;
+};
+
+export type AuthMeResponse = {
+  user: AuthUser | null;
+  collections: CollectionSummary[];
+};
