@@ -1,25 +1,114 @@
-# Implementation Plan
+# Pokemon Collection Tool Implementation Plan
 
-## Branches
+## Current Status
 
-1. `feature/app-shell`
-2. `feature/auth-db`
-3. `feature/card-lookup`
-4. `feature/inventory-images`
-5. `feature/graded-certs`
-6. `feature/pricing-comps`
-7. `feature/scanning`
-8. `feature/backups-export`
-9. `feature/polish-tests`
+- [x] Initialized local git repository on `main`.
+- [x] Added public-safe `.gitignore`, `.env.example`, README, and docs.
+- [x] Built React/Vite frontend shell.
+- [x] Built Fastify API shell with `/health`.
+- [x] Added SQLite migration runner using local database storage.
+- [x] Added Docker Compose and Dockerfiles.
+- [x] Added full account bootstrap, login, logout, and sessions.
+- [x] Added username-or-email login.
+- [x] Added local dev account seed script: `admin` / `admin`.
+- [x] Added multi-collection database foundation.
+- [x] Added collection membership roles and invite route.
+- [x] Added local-only manual inventory backend.
+- [x] Added manual card entry UI with raw/graded fields.
+- [x] Added local inventory list and collection summary stats.
 
-## First Milestone
+## Branch Roadmap
 
-The app shell must provide:
+- [x] `feature/app-shell`
+- [x] `feature/auth-db`
+- [x] `feature/username-login`
+- [x] `feature/manual-inventory`
+- [ ] `feature/card-lookup`
+- [ ] `feature/inventory-images`
+- [ ] `feature/graded-certs`
+- [ ] `feature/pricing-comps`
+- [ ] `feature/scanning`
+- [ ] `feature/backups-export`
+- [ ] `feature/polish-tests`
 
-- Docker-ready monorepo structure
-- Fastify API with `/health`
-- SQLite connection and migration runner
-- React/Vite frontend shell
-- Responsive collection workspace placeholder
-- Public-safe README and `.env.example`
+## Next Recommended Milestones
 
+### 1. Local Inventory Improvements
+
+- [ ] Add edit item flow.
+- [ ] Add delete item flow with confirmation.
+- [ ] Add duplicate/quantity merge behavior for manually entered cards.
+- [ ] Add filters for raw/graded, language, condition, set code, storage, and value.
+- [ ] Add collection search over local card name, set code, card number, cert number, and notes.
+
+### 2. Card Lookup Without Paid APIs
+
+- [ ] Add input parser for values like `s10a 073/071`.
+- [ ] Add TCGdex lookup for Japanese and English card metadata.
+- [ ] Add candidate result picker with card images.
+- [ ] Save selected lookup results into the existing `cards` and `owned_items` tables.
+- [ ] Keep manual entry as fallback when lookup fails.
+
+### 3. Images And Attachments
+
+- [ ] Cache external card images locally when allowed.
+- [ ] Add optional manual image URL per card.
+- [ ] Add optional local upload for front/back photos.
+- [ ] Add PSA cert images later when cert import is implemented.
+
+### 4. Graded Cards And Certs
+
+- [ ] Add PSA cert import with PSA API credentials.
+- [ ] Add CGC cert/barcode draft flow.
+- [ ] Add graded card detail UI for grader, grade, cert number, and cert links.
+- [ ] Add barcode scanner path for PSA/CGC slabs.
+
+### 5. Pricing And Comps
+
+- [ ] Add manual value override history.
+- [ ] Add guide price storage.
+- [ ] Add eBay US sold-comp search/parsing as best-effort personal-use scraping.
+- [ ] Add comp confidence scoring.
+- [ ] Add daily refresh plus manual refresh button.
+
+### 6. Camera Scanning
+
+- [ ] Add scan session setup for English/Japanese.
+- [ ] Add browser camera capture.
+- [ ] Add continuous tray mode with stable-frame capture.
+- [ ] Add OCR draft queue for raw cards.
+- [ ] Add barcode/QR reading for slabs.
+
+### 7. Backups And Export
+
+- [ ] Add CSV export for collections and inventory.
+- [ ] Add CSV import for manual inventory.
+- [ ] Add scheduled SQLite backups under `/data/backups`.
+- [ ] Add admin “backup now” button.
+- [ ] Document restore steps.
+
+### 8. Polish And Public Repo Readiness
+
+- [ ] Add Playwright tests for auth and manual inventory.
+- [ ] Add backend tests for auth, permissions, and inventory routes.
+- [ ] Run Docker Compose on the Ubuntu target server.
+- [ ] Add screenshots to README.
+- [ ] Confirm no secrets, databases, cached images, backups, sessions, or logs are tracked.
+
+## Useful Commands
+
+```bash
+npm install
+npm run dev
+npm run typecheck
+npm run build
+npm run seed:dev-admin --workspace @collection-tool/api
+```
+
+## API Keys Needed Later
+
+- [ ] PSA Public API account/token for cert lookup.
+- [ ] Optional PokemonTCG.io free API key for English fallback and higher rate limits.
+- [ ] No TCGdex API key required.
+- [ ] No eBay API key planned for v1 sold comps.
+- [ ] No CGC API key planned; use best-effort public lookup with manual fallback.
