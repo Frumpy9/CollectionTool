@@ -14,20 +14,22 @@ import {
   Tags
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AuthMeResponse, AuthUser, CollectionSummary } from "@collection-tool/shared";
+import type {
+  AuthMeResponse,
+  AuthUser,
+  CardLanguage,
+  CollectionSummary,
+  CreateInventoryItemRequest,
+  InventoryItem,
+  InventoryItemType,
+  InventoryListResponse
+} from "@collection-tool/shared";
 import { api } from "./api";
 
 type HealthState =
   | { status: "loading" }
   | { status: "ok"; timestamp: string; migrationsApplied: number }
   | { status: "error"; message: string };
-
-const starterStats = [
-  { label: "Total cards", value: "0", icon: Grid2X2 },
-  { label: "Estimated value", value: "$0.00", icon: CircleDollarSign },
-  { label: "Needs review", value: "0", icon: Sparkles },
-  { label: "Price refresh", value: "Ready", icon: BarChart3 }
-];
 
 const roadmapItems = [
   "Manual card lookup",
@@ -162,6 +164,61 @@ function WorkspaceShell({
   onLogout: () => Promise<void>;
 }) {
   const activeCollection = collections[0];
+  const [inventory, setInventory] = useState<InventoryListResponse>({
+    items: [],
+    summary: {
+      itemCount: 0,
+      cardCount: activeCollection?.cardCount ?? 0,
+      estimatedValueCents: activeCollection?.estimatedValueCents ?? 0
+    }
+  });
+  const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [inventoryError, setInventoryError] = useState("");
+  const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
+
+  useEffect(() => {
+    if (!activeCollection) {
+      return;
+    }
+
+    let cancelled = false;
+    setInventoryStatus("loading");
+    setInventoryError("");
+
+    api
+      .listInventory(activeCollection.id)
+      .then((payload) => {
+        if (!cancelled) {
+          setInventory(payload);
+          setInventoryStatus("idle");
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setInventoryStatus("error");
+          setInventoryError(error instanceof Error ? error.message : "Unable to load inventory.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCollection?.id]);
+
+  const workspaceStats = [
+    { label: "Total cards", value: String(inventory.summary.cardCount), icon: Grid2X2 },
+    {
+      label: "Estimated value",
+      value: formatCurrency(inventory.summary.estimatedValueCents),
+      icon: CircleDollarSign
+    },
+    { label: "Inventory rows", value: String(inventory.summary.itemCount), icon: Sparkles },
+    {
+      label: "Inventory",
+      value: inventoryStatus === "loading" ? "Loading" : "Local",
+      icon: BarChart3
+    }
+  ];
 
   return (
     <main className="app-shell">
@@ -242,7 +299,11 @@ function WorkspaceShell({
             <button className="icon-button" type="button" aria-label="Filter collection">
               <ListFilter size={20} aria-hidden="true" />
             </button>
-            <button className="primary-button" type="button">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setIsAddPanelOpen((isOpen) => !isOpen)}
+            >
               <Plus size={18} aria-hidden="true" />
               Add card
             </button>
@@ -273,8 +334,20 @@ function WorkspaceShell({
           </div>
         </section>
 
+        {isAddPanelOpen && activeCollection ? (
+          <ManualAddPanel
+            collectionId={activeCollection.id}
+            onAdded={(item) => {
+              setInventory((current) => summarizeInventory([item, ...current.items]));
+              setIsAddPanelOpen(false);
+            }}
+          />
+        ) : null}
+
+        {inventoryStatus === "error" ? <p className="form-error">{inventoryError}</p> : null}
+
         <section className="stats-grid" aria-label="Collection summary">
-          {starterStats.map((stat) => {
+          {workspaceStats.map((stat) => {
             const Icon = stat.icon;
             return (
               <article className="stat-tile" key={stat.label}>
@@ -286,21 +359,25 @@ function WorkspaceShell({
           })}
         </section>
 
-        <section className="empty-state" id="collection">
-          <div className="empty-visual" aria-hidden="true">
-            <div className="card-stack card-stack-one" />
-            <div className="card-stack card-stack-two" />
-            <div className="card-stack card-stack-three" />
-          </div>
-          <div className="empty-copy">
-            <p className="eyebrow">Ready for inventory</p>
-            <h3>Your collection will live here.</h3>
-            <p>
-              The shell is wired for the next milestones: accounts, card lookup, graded
-              cert import, comps, and scan drafts.
-            </p>
-          </div>
-        </section>
+        {inventory.items.length > 0 ? (
+          <InventoryGrid items={inventory.items} />
+        ) : (
+          <section className="empty-state" id="collection">
+            <div className="empty-visual" aria-hidden="true">
+              <div className="card-stack card-stack-one" />
+              <div className="card-stack card-stack-two" />
+              <div className="card-stack card-stack-three" />
+            </div>
+            <div className="empty-copy">
+              <p className="eyebrow">Ready for inventory</p>
+              <h3>Your collection will live here.</h3>
+              <p>
+                Add cards manually for now. API lookups, cert imports, comps, and scan
+                drafts can plug into this same inventory later.
+              </p>
+            </div>
+          </section>
+        )}
 
         <section className="roadmap-panel" aria-label="Upcoming build milestones">
           {roadmapItems.map((item) => (
@@ -310,6 +387,269 @@ function WorkspaceShell({
       </section>
     </main>
   );
+}
+
+function ManualAddPanel({
+  collectionId,
+  onAdded
+}: {
+  collectionId: string;
+  onAdded: (item: InventoryItem) => void;
+}) {
+  const [itemType, setItemType] = useState<InventoryItemType>("raw");
+  const [language, setLanguage] = useState<CardLanguage>("en");
+  const [error, setError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    const payload: CreateInventoryItemRequest = {
+      name: String(formData.get("name") ?? ""),
+      setName: String(formData.get("setName") ?? ""),
+      setCode: String(formData.get("setCode") ?? ""),
+      cardNumber: String(formData.get("cardNumber") ?? ""),
+      language,
+      rarity: String(formData.get("rarity") ?? ""),
+      imageUrl: String(formData.get("imageUrl") ?? ""),
+      itemType,
+      quantity: Number(formData.get("quantity") ?? 1),
+      conditionLabel: String(formData.get("conditionLabel") ?? ""),
+      conditionScore: optionalNumber(formData.get("conditionScore")),
+      variantDetails: String(formData.get("variantDetails") ?? ""),
+      grader: itemType === "graded" ? String(formData.get("grader") ?? "") : "",
+      grade: itemType === "graded" ? String(formData.get("grade") ?? "") : "",
+      certNumber: itemType === "graded" ? String(formData.get("certNumber") ?? "") : "",
+      purchasePriceCents: moneyToCents(formData.get("purchasePrice")),
+      purchaseDate: String(formData.get("purchaseDate") ?? ""),
+      valueOverrideCents: moneyToCents(formData.get("valueOverride")),
+      storageLocation: String(formData.get("storageLocation") ?? ""),
+      notes: String(formData.get("notes") ?? "")
+    };
+
+    try {
+      const response = await api.createInventoryItem(collectionId, payload);
+      onAdded(response.item);
+      event.currentTarget.reset();
+      setItemType("raw");
+      setLanguage("en");
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Unable to add card.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="manual-panel" aria-label="Manual card entry">
+      <div>
+        <p className="eyebrow">Local entry</p>
+        <h3>Add a card manually</h3>
+      </div>
+      <form className="manual-form" onSubmit={handleSubmit}>
+        <label className="wide-field">
+          Card name
+          <input name="name" placeholder="Charizard, Pikachu, Umbreon VMAX..." required />
+        </label>
+        <label>
+          Type
+          <select
+            name="itemType"
+            onChange={(event) => setItemType(event.target.value as InventoryItemType)}
+            value={itemType}
+          >
+            <option value="raw">Raw</option>
+            <option value="graded">Graded</option>
+          </select>
+        </label>
+        <label>
+          Language
+          <select
+            name="language"
+            onChange={(event) => setLanguage(event.target.value as CardLanguage)}
+            value={language}
+          >
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          Set code
+          <input name="setCode" placeholder="s10a" />
+        </label>
+        <label>
+          Card #
+          <input name="cardNumber" placeholder="073/071" />
+        </label>
+        <label>
+          Set name
+          <input name="setName" placeholder="Dark Phantasma" />
+        </label>
+        <label>
+          Rarity
+          <input name="rarity" placeholder="CHR, SR, holo..." />
+        </label>
+        <label>
+          Quantity
+          <input defaultValue="1" min="1" name="quantity" required type="number" />
+        </label>
+        <label>
+          Condition
+          <select name="conditionLabel">
+            <option value="">Unknown</option>
+            <option value="Near Mint">Near Mint</option>
+            <option value="Lightly Played">Lightly Played</option>
+            <option value="Moderately Played">Moderately Played</option>
+            <option value="Heavily Played">Heavily Played</option>
+            <option value="Damaged">Damaged</option>
+          </select>
+        </label>
+        <label>
+          Score
+          <input max="10" min="1" name="conditionScore" step="0.5" type="number" />
+        </label>
+        {itemType === "graded" ? (
+          <>
+            <label>
+              Grader
+              <select name="grader" required>
+                <option value="">Choose</option>
+                <option value="PSA">PSA</option>
+                <option value="CGC">CGC</option>
+                <option value="BGS">BGS</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>
+              Grade
+              <input name="grade" placeholder="10, 9.5..." required />
+            </label>
+            <label>
+              Cert #
+              <input name="certNumber" placeholder="Optional" />
+            </label>
+          </>
+        ) : null}
+        <label>
+          Purchase $
+          <input inputMode="decimal" name="purchasePrice" placeholder="Optional" />
+        </label>
+        <label>
+          Value $
+          <input inputMode="decimal" name="valueOverride" placeholder="Optional" />
+        </label>
+        <label>
+          Purchase date
+          <input name="purchaseDate" type="date" />
+        </label>
+        <label>
+          Storage
+          <input name="storageLocation" placeholder="Binder 1, Box A..." />
+        </label>
+        <label className="wide-field">
+          Image URL
+          <input name="imageUrl" placeholder="Optional local/reference image URL" />
+        </label>
+        <label className="wide-field">
+          Variants
+          <input name="variantDetails" placeholder="Reverse holo, stamped, print line, etc." />
+        </label>
+        <label className="wide-field">
+          Notes
+          <textarea name="notes" placeholder="Anything worth remembering" />
+        </label>
+        {error ? <p className="form-error wide-field">{error}</p> : null}
+        <button className="primary-button wide-field" disabled={isSubmitting} type="submit">
+          {isSubmitting ? "Adding..." : "Add to collection"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function InventoryGrid({ items }: { items: InventoryItem[] }) {
+  return (
+    <section className="inventory-grid" id="collection" aria-label="Collection cards">
+      {items.map((item) => (
+        <article className="inventory-card" key={item.id}>
+          <div className="inventory-image" aria-hidden="true">
+            {item.card.imageUrl ? <img alt="" src={item.card.imageUrl} /> : <Gem size={38} />}
+          </div>
+          <div className="inventory-body">
+            <div>
+              <p className="eyebrow">
+                {item.card.language.toUpperCase()} · {item.itemType}
+              </p>
+              <h3>{item.card.name}</h3>
+              <p>
+                {[item.card.setCode, item.card.cardNumber, item.card.setName]
+                  .filter(Boolean)
+                  .join(" · ") || "Manual card"}
+              </p>
+            </div>
+            <div className="inventory-meta">
+              <span>Qty {item.quantity}</span>
+              {item.conditionLabel ? <span>{item.conditionLabel}</span> : null}
+              {item.conditionScore ? <span>{item.conditionScore}/10</span> : null}
+              {item.grader && item.grade ? (
+                <span>
+                  {item.grader} {item.grade}
+                </span>
+              ) : null}
+              {item.storageLocation ? <span>{item.storageLocation}</span> : null}
+            </div>
+            <strong>
+              {formatCurrency(
+                (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity
+              )}
+            </strong>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function summarizeInventory(items: InventoryItem[]): InventoryListResponse {
+  return {
+    items,
+    summary: items.reduce(
+      (summary, item) => {
+        summary.itemCount += 1;
+        summary.cardCount += item.quantity;
+        summary.estimatedValueCents +=
+          (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+        return summary;
+      },
+      { itemCount: 0, cardCount: 0, estimatedValueCents: 0 }
+    )
+  };
+}
+
+function formatCurrency(cents: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD"
+  }).format(cents / 100);
+}
+
+function optionalNumber(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim();
+  return text ? Number(text) : undefined;
+}
+
+function moneyToCents(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim().replace(/[$,]/g, "");
+
+  if (!text) {
+    return undefined;
+  }
+
+  return Math.round(Number(text) * 100);
 }
 
 function LoadingScreen() {
