@@ -27,6 +27,7 @@
 - [x] Added multi-select variants for standard, holo/foil, reverse holo, stamped, and related card variants.
 - [x] Added local inventory search, filters, active filter chips, and sorting.
 - [x] Added bulk card lookup and bulk PSA cert import from pasted or uploaded text lists.
+- [x] Added duplicate detection with a quantity-merge choice before adding matching inventory rows.
 
 ## Branch Roadmap
 
@@ -50,7 +51,7 @@
 
 - [x] Add edit item flow.
 - [x] Add delete item flow with confirmation.
-- [ ] Add duplicate/quantity merge behavior for manually entered cards.
+- [x] Add duplicate/quantity merge behavior for manually entered cards.
 - [x] Add filters for raw/graded, language, condition, storage, variants, and value.
 - [x] Add collection search over local card name, set code, card number, cert number, storage, variants, and notes.
 - [x] Add local inventory sorting by newest, name, set/code, value, and quantity.

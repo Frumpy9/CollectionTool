@@ -17,7 +17,7 @@ import {
   Upload,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthMeResponse,
   AuthUser,
@@ -74,6 +74,15 @@ type BulkQueueRow = {
   selectedCandidateId: string;
   psaItem: CreateInventoryItemRequest | null;
   message: string;
+};
+
+type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
+
+type PendingDuplicateDecision = {
+  id: string;
+  existingItem: InventoryItem;
+  payload: CreateInventoryItemRequest;
+  resolve: (choice: DuplicateDecisionChoice) => void;
 };
 
 const roadmapItems = [
@@ -254,6 +263,8 @@ function WorkspaceShell({
   const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
   const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
   const [lookupError, setLookupError] = useState("");
+  const [duplicateDecision, setDuplicateDecision] = useState<PendingDuplicateDecision | null>(null);
+  const inventoryRef = useRef(inventory);
 
   useEffect(() => {
     if (!activeCollection) {
@@ -283,6 +294,58 @@ function WorkspaceShell({
       cancelled = true;
     };
   }, [activeCollection?.id]);
+
+  useEffect(() => {
+    inventoryRef.current = inventory;
+  }, [inventory]);
+
+  function requestDuplicateDecision(
+    existingItem: InventoryItem,
+    payload: CreateInventoryItemRequest
+  ) {
+    return new Promise<DuplicateDecisionChoice>((resolve) => {
+      setDuplicateDecision({
+        id: crypto.randomUUID(),
+        existingItem,
+        payload,
+        resolve
+      });
+    });
+  }
+
+  function resolveDuplicateDecision(choice: DuplicateDecisionChoice) {
+    duplicateDecision?.resolve(choice);
+    setDuplicateDecision(null);
+  }
+
+  async function createOrMergeInventoryItem(
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) {
+    const existingItem = findDuplicateInventoryItem(inventoryRef.current.items, payload);
+
+    if (existingItem) {
+      const decision = await requestDuplicateDecision(existingItem, payload);
+
+      if (decision === "cancel") {
+        return null;
+      }
+
+      if (decision === "merge") {
+        const response = await api.updateInventoryItem(
+          collectionId,
+          existingItem.id,
+          mergeDuplicateInventoryPayload(existingItem, payload)
+        );
+        setInventory((current) => updateInventoryItem(current, response.item));
+        return response.item;
+      }
+    }
+
+    const response = await api.createInventoryItem(collectionId, payload);
+    setInventory((current) => summarizeInventory([response.item, ...current.items]));
+    return response.item;
+  }
 
   const filteredItems = useMemo(
     () => filterInventoryItems(inventory.items, inventoryFilters),
@@ -535,8 +598,8 @@ function WorkspaceShell({
             error={lookupError}
             result={lookupResult}
             status={lookupStatus}
-            onAdded={(item) => {
-              setInventory((current) => summarizeInventory([item, ...current.items]));
+            onCreateItem={createOrMergeInventoryItem}
+            onAdded={() => {
               setActivePanel(null);
               setLookupResult(null);
               setLookupQuery("");
@@ -547,8 +610,8 @@ function WorkspaceShell({
         {activePanel === "manual" && activeCollection ? (
           <ManualAddPanel
             collectionId={activeCollection.id}
-            onAdded={(item) => {
-              setInventory((current) => summarizeInventory([item, ...current.items]));
+            onCreateItem={createOrMergeInventoryItem}
+            onAdded={() => {
               setActivePanel(null);
             }}
           />
@@ -557,8 +620,8 @@ function WorkspaceShell({
         {activePanel === "cert" && activeCollection ? (
           <PsaCertPanel
             collectionId={activeCollection.id}
-            onAdded={(item) => {
-              setInventory((current) => summarizeInventory([item, ...current.items]));
+            onCreateItem={createOrMergeInventoryItem}
+            onAdded={() => {
               setActivePanel(null);
             }}
           />
@@ -567,9 +630,7 @@ function WorkspaceShell({
         {activePanel === "bulk" && activeCollection ? (
           <BulkLookupPanel
             collectionId={activeCollection.id}
-            onAdded={(items) => {
-              setInventory((current) => summarizeInventory([...items, ...current.items]));
-            }}
+            onCreateItem={createOrMergeInventoryItem}
           />
         ) : null}
 
@@ -652,6 +713,13 @@ function WorkspaceShell({
             }}
           />
         ) : null}
+
+        {duplicateDecision ? (
+          <DuplicateMergeDialog
+            decision={duplicateDecision}
+            onResolve={resolveDuplicateDecision}
+          />
+        ) : null}
       </section>
     </main>
   );
@@ -662,12 +730,17 @@ function CardLookupPanel({
   error,
   result,
   status,
+  onCreateItem,
   onAdded
 }: {
   collectionId: string;
   error: string;
   result: CardLookupResponse | null;
   status: "idle" | "loading";
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
   onAdded: (item: InventoryItem) => void;
 }) {
   const [itemType, setItemType] = useState<InventoryItemType>("raw");
@@ -696,8 +769,11 @@ function CardLookupPanel({
           .join("\n")
       };
 
-      const response = await api.createInventoryItem(collectionId, payload);
-      onAdded(response.item);
+      const item = await onCreateItem(collectionId, payload);
+
+      if (item) {
+        onAdded(item);
+      }
     } catch (addError) {
       setSaveError(addError instanceof Error ? addError.message : "Unable to add lookup card.");
     } finally {
@@ -797,10 +873,13 @@ function CardLookupPanel({
 
 function BulkLookupPanel({
   collectionId,
-  onAdded
+  onCreateItem
 }: {
   collectionId: string;
-  onAdded: (items: InventoryItem[]) => void;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
 }) {
   const [mode, setMode] = useState<BulkMode>("cards");
   const [bulkText, setBulkText] = useState("");
@@ -882,17 +961,26 @@ function BulkLookupPanel({
     setStatus("adding");
     setError("");
 
-    const addedItems: InventoryItem[] = [];
-
     for (const row of rowsToAdd) {
       try {
         const payload = bulkRowPayload(row, mode);
-        const response = await api.createInventoryItem(collectionId, payload);
-        addedItems.push(response.item);
+        const item = await onCreateItem(collectionId, payload);
+
+        if (!item) {
+          setQueue((current) =>
+            current.map((candidate) =>
+              candidate.id === row.id
+                ? { ...candidate, status: "selected", message: "Add cancelled." }
+                : candidate
+            )
+          );
+          continue;
+        }
+
         setQueue((current) =>
           current.map((candidate) =>
             candidate.id === row.id
-              ? { ...candidate, status: "added", message: "Added to inventory." }
+              ? { ...candidate, status: "added", message: "Added or merged into inventory." }
               : candidate
           )
         );
@@ -911,10 +999,6 @@ function BulkLookupPanel({
       }
 
       await delay(100);
-    }
-
-    if (addedItems.length > 0) {
-      onAdded(addedItems);
     }
 
     setStatus("idle");
@@ -1152,9 +1236,14 @@ function BulkQueueCard({
 
 function PsaCertPanel({
   collectionId,
+  onCreateItem,
   onAdded
 }: {
   collectionId: string;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
   onAdded: (item: InventoryItem) => void;
 }) {
   const [certNumber, setCertNumber] = useState("");
@@ -1191,8 +1280,11 @@ function PsaCertPanel({
     setError("");
 
     try {
-      const response = await api.createInventoryItem(collectionId, lookup.item);
-      onAdded(response.item);
+      const item = await onCreateItem(collectionId, lookup.item);
+
+      if (item) {
+        onAdded(item);
+      }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to add PSA card.");
     } finally {
@@ -1252,9 +1344,14 @@ function PsaCertPanel({
 
 function ManualAddPanel({
   collectionId,
+  onCreateItem,
   onAdded
 }: {
   collectionId: string;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
   onAdded: (item: InventoryItem) => void;
 }) {
   const [itemType, setItemType] = useState<InventoryItemType>("raw");
@@ -1298,11 +1395,14 @@ function ManualAddPanel({
         payload.imageUrl = await uploadCardImage(collectionId, imageFile);
       }
 
-      const response = await api.createInventoryItem(collectionId, payload);
-      onAdded(response.item);
-      event.currentTarget.reset();
-      setItemType("raw");
-      setLanguage("en");
+      const item = await onCreateItem(collectionId, payload);
+
+      if (item) {
+        onAdded(item);
+        event.currentTarget.reset();
+        setItemType("raw");
+        setLanguage("en");
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to add card.");
     } finally {
@@ -1672,6 +1772,87 @@ function InventoryGrid({
         </article>
       ))}
     </section>
+  );
+}
+
+function DuplicateMergeDialog({
+  decision,
+  onResolve
+}: {
+  decision: PendingDuplicateDecision;
+  onResolve: (choice: DuplicateDecisionChoice) => void;
+}) {
+  const incomingQuantity = normalizeQuantity(decision.payload.quantity);
+  const existingItem = decision.existingItem;
+  const mergedQuantity = Math.min(999, existingItem.quantity + incomingQuantity);
+
+  return (
+    <div className="detail-backdrop" role="presentation">
+      <section
+        aria-labelledby={`duplicate-title-${decision.id}`}
+        className="detail-panel duplicate-panel"
+        role="dialog"
+      >
+        <div className="detail-header">
+          <div>
+            <p className="eyebrow">Possible duplicate</p>
+            <h3 id={`duplicate-title-${decision.id}`}>This card looks familiar</h3>
+          </div>
+          <button
+            aria-label="Cancel duplicate add"
+            className="icon-button"
+            onClick={() => onResolve("cancel")}
+            type="button"
+          >
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="duplicate-match">
+          <div className="detail-image" aria-hidden="true">
+            {existingItem.card.imageUrl ? (
+              <img alt="" src={existingItem.card.imageUrl} />
+            ) : (
+              <Gem size={36} />
+            )}
+          </div>
+          <div>
+            <p className="eyebrow">
+              {existingItem.card.language.toUpperCase()} · {existingItem.itemType}
+            </p>
+            <h4>{existingItem.card.name}</h4>
+            <p>
+              {[existingItem.card.setCode, existingItem.card.cardNumber, existingItem.card.setName]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+            <div className="inventory-meta">
+              <span>Current qty {existingItem.quantity}</span>
+              {existingItem.conditionLabel ? <span>{existingItem.conditionLabel}</span> : null}
+              {existingItem.variantDetails ? <span>{existingItem.variantDetails}</span> : null}
+              {existingItem.certNumber ? <span>Cert {existingItem.certNumber}</span> : null}
+            </div>
+          </div>
+        </div>
+
+        <p className="lookup-note">
+          Do you want to increase this row to qty {mergedQuantity}, or keep this as a separate
+          copy?
+        </p>
+
+        <div className="detail-actions">
+          <button className="primary-button" onClick={() => onResolve("merge")} type="button">
+            Increase quantity
+          </button>
+          <button onClick={() => onResolve("separate")} type="button">
+            Add separate copy
+          </button>
+          <button onClick={() => onResolve("cancel")} type="button">
+            Cancel
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -2052,6 +2233,106 @@ function removeInventoryItem(
   removedItemId: string
 ): InventoryListResponse {
   return summarizeInventory(inventory.items.filter((item) => item.id !== removedItemId));
+}
+
+function findDuplicateInventoryItem(
+  items: InventoryItem[],
+  payload: CreateInventoryItemRequest
+) {
+  return items.find((item) => inventoryDuplicateKey(item) === payloadDuplicateKey(payload));
+}
+
+function mergeDuplicateInventoryPayload(
+  existingItem: InventoryItem,
+  payload: CreateInventoryItemRequest
+): CreateInventoryItemRequest {
+  const existingPayload = inventoryItemToPayload(existingItem);
+
+  return {
+    ...existingPayload,
+    quantity: Math.min(999, existingItem.quantity + normalizeQuantity(payload.quantity)),
+    imageUrl: existingItem.card.imageUrl || payload.imageUrl || ""
+  };
+}
+
+function inventoryItemToPayload(item: InventoryItem): CreateInventoryItemRequest {
+  return {
+    name: item.card.name,
+    setName: item.card.setName ?? "",
+    setCode: item.card.setCode ?? "",
+    cardNumber: item.card.cardNumber ?? "",
+    language: item.card.language,
+    rarity: item.card.rarity ?? "",
+    imageUrl: item.card.imageUrl ?? "",
+    itemType: item.itemType,
+    quantity: item.quantity,
+    conditionLabel: item.conditionLabel ?? "",
+    conditionScore: item.conditionScore ?? undefined,
+    variantDetails: item.variantDetails ?? "",
+    grader: item.grader ?? "",
+    grade: item.grade ?? "",
+    certNumber: item.certNumber ?? "",
+    purchasePriceCents: item.purchasePriceCents ?? undefined,
+    purchaseDate: item.purchaseDate ?? "",
+    valueOverrideCents: item.valueOverrideCents ?? undefined,
+    storageLocation: item.storageLocation ?? "",
+    notes: item.notes ?? ""
+  };
+}
+
+function inventoryDuplicateKey(item: InventoryItem) {
+  return [
+    item.itemType,
+    normalizeText(item.card.language),
+    normalizeText(item.card.name),
+    normalizeText(item.card.setCode),
+    normalizeCardNumber(item.card.cardNumber),
+    normalizeText(item.conditionLabel),
+    normalizeVariantDetails(item.variantDetails),
+    normalizeText(item.grader),
+    normalizeText(item.grade),
+    normalizeText(item.certNumber)
+  ].join("|");
+}
+
+function payloadDuplicateKey(payload: CreateInventoryItemRequest) {
+  return [
+    payload.itemType,
+    normalizeText(payload.language),
+    normalizeText(payload.name),
+    normalizeText(payload.setCode),
+    normalizeCardNumber(payload.cardNumber),
+    normalizeText(payload.conditionLabel),
+    normalizeVariantDetails(payload.variantDetails),
+    normalizeText(payload.grader),
+    normalizeText(payload.grade),
+    normalizeText(payload.certNumber)
+  ].join("|");
+}
+
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function normalizeCardNumber(value: unknown) {
+  return normalizeText(value).replace(/\b0+(\d)/g, "$1");
+}
+
+function normalizeVariantDetails(value: unknown) {
+  return normalizeText(value)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .sort()
+    .join(",");
+}
+
+function normalizeQuantity(value: unknown) {
+  const quantity = Number(value);
+  return Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
 }
 
 function parseBulkTerms(value: string) {

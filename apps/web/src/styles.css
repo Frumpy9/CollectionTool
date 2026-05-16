@@ -959,6 +959,10 @@ small {
   box-shadow: var(--shadow);
 }
 
+.duplicate-panel {
+  width: min(100%, 620px);
+}
+
 .detail-header {
   display: flex;
   align-items: start;
@@ -996,6 +1000,26 @@ small {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+}
+
+.duplicate-match {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.duplicate-match .detail-image {
+  padding: 6px;
+}
+
+.duplicate-match h4 {
+  margin: 0 0 4px;
+  font-size: 1.25rem;
 }
 
 .detail-copy,
@@ -1255,6 +1279,10 @@ small {
 
   .detail-content {
     grid-template-columns: 1fr;
+  }
+
+  .duplicate-match {
+    grid-template-columns: 82px minmax(0, 1fr);
   }
 
   .detail-image {
