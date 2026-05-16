@@ -115,9 +115,43 @@ export async function findJustTcgPricingCandidateByIds({
 
 async function searchJustTcgCards({ apiKey, item }: { apiKey: string; item: InventoryItem }) {
   const game = item.card.language === "ja" ? "pokemon-japan" : "pokemon";
+  const cardsById = new Map<string, JustTcgCard>();
+  const queries = buildSearchQueries(item);
+
+  for (const [index, query] of queries.entries()) {
+    const cards = await fetchJustTcgCards({ apiKey, game, query });
+
+    for (const card of cards) {
+      cardsById.set(card.id, card);
+    }
+
+    if (index < queries.length - 1) {
+      const candidates = Array.from(cardsById.values())
+        .flatMap((card) => candidateFromCard(item, card))
+        .sort((left, right) => right.score - left.score);
+      const [best, nextBest] = candidates;
+
+      if (best && isConfidentAutoMatch(best, nextBest)) {
+        break;
+      }
+    }
+  }
+
+  return Array.from(cardsById.values());
+}
+
+async function fetchJustTcgCards({
+  apiKey,
+  game,
+  query
+}: {
+  apiKey: string;
+  game: string;
+  query: string;
+}) {
   const params = new URLSearchParams({
     game,
-    q: item.card.name,
+    q: query,
     limit: "10"
   });
   const response = await fetch(`${justTcgBaseUrl}/cards?${params}`, {
@@ -137,6 +171,27 @@ async function searchJustTcgCards({ apiKey, item }: { apiKey: string; item: Inve
   }
 
   return Array.isArray(payload.data) ? payload.data : [];
+}
+
+function buildSearchQueries(item: InventoryItem) {
+  const queries = [
+    [item.card.name, item.card.setName].filter(Boolean).join(" "),
+    [item.card.name, normalizeCardNumber(item.card.cardNumber)].filter(Boolean).join(" "),
+    [item.card.name, item.card.cardNumber].filter(Boolean).join(" "),
+    item.card.name
+  ];
+  const seen = new Set<string>();
+
+  return queries.filter((query) => {
+    const normalizedQuery = normalizeText(query);
+
+    if (!normalizedQuery || seen.has(normalizedQuery)) {
+      return false;
+    }
+
+    seen.add(normalizedQuery);
+    return true;
+  });
 }
 
 function candidateFromCard(
@@ -207,13 +262,19 @@ function scoreCard(item: InventoryItem, card: JustTcgCard) {
   }
 
   if (itemNumber && cardNumber === itemNumber) {
-    score += 5;
+    score += 6;
+  } else if (itemNumber && cardNumber) {
+    score -= 3;
+  } else if (itemNumber) {
+    score -= 2;
   }
 
   if (itemSetName && cardSetName.includes(itemSetName)) {
-    score += 2;
+    score += 4;
   } else if (itemSetName && sharesMeaningfulSetToken(itemSetName, cardSetName)) {
-    score += 1;
+    score += 2;
+  } else if (itemSetName) {
+    score -= 2;
   }
 
   if (itemSetCode && sourceSetCode.includes(itemSetCode)) {
