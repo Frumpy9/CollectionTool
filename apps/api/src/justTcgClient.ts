@@ -299,6 +299,12 @@ function scoreCard(item: InventoryItem, card: JustTcgCard) {
   const cardSetName = normalizeText(card.set_name);
   const itemSetCode = normalizeText(item.card.setCode);
   const sourceSetCode = normalizeText(card.set);
+  const itemVariants = normalizeText(item.variantDetails);
+  const wantsShadowless = itemVariants.includes("shadowless");
+  const isShadowless =
+    cardName.includes("shadowless") ||
+    cardSetName.includes("shadowless") ||
+    sourceSetCode.includes("shadowless");
 
   if (cardName === itemName) {
     score += 5;
@@ -324,6 +330,12 @@ function scoreCard(item: InventoryItem, card: JustTcgCard) {
 
   if (itemSetCode && sourceSetCode.includes(itemSetCode)) {
     score += 1;
+  }
+
+  if (wantsShadowless && isShadowless) {
+    score += 5;
+  } else if (!wantsShadowless && isShadowless) {
+    score -= 8;
   }
 
   return score;
@@ -381,15 +393,15 @@ function isConfidentAutoMatch(
   best: JustTcgPricingCandidateWithPayload,
   nextBest: JustTcgPricingCandidateWithPayload | undefined
 ) {
-  return best.score >= 10 && (!nextBest || best.score - nextBest.score >= 3);
+  return best.score >= 15 && (!nextBest || best.score - nextBest.score >= 3);
 }
 
 function confidenceFromScore(score: number): MarketPriceConfidence {
-  if (score >= 10) {
+  if (score >= 15) {
     return "exact";
   }
 
-  if (score >= 7) {
+  if (score >= 10) {
     return "strong";
   }
 

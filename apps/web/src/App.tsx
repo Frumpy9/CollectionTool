@@ -116,6 +116,7 @@ const variantOptions = [
   "Reverse Holo",
   "Stamped",
   "1st Edition",
+  "Shadowless",
   "Promo",
   "Error",
   "Misprint",
