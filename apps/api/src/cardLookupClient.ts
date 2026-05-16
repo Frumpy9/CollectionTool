@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   CardLanguage,
   CardLookupCandidate,
@@ -59,8 +60,36 @@ type JapaneseCacheRow = {
   image_url: string | null;
 };
 
+type OfficialJapaneseSearchResponse = {
+  result?: number;
+  maxPage?: number;
+  searchCondition?: string[];
+  cardList?: OfficialJapaneseSearchCard[];
+};
+
+type OfficialJapaneseSearchCard = {
+  cardID?: string;
+  cardThumbFile?: string;
+  cardNameAltText?: string;
+  cardNameViewText?: string;
+};
+
+type OfficialJapaneseCardDetail = {
+  sourceId: string;
+  setCode: string;
+  setName: string | null;
+  cardNumber: string;
+  printedNumber: string;
+  printedTotal: string | null;
+  name: string;
+  rarity: string | null;
+  imageUrl: string | null;
+  rawPayload: string;
+};
+
 const pokemonTcgBaseUrl = "https://api.pokemontcg.io/v2";
 const tcgdexBaseUrl = "https://api.tcgdex.net/v2";
+const pokemonCardJpBaseUrl = "https://www.pokemon-card.com";
 
 export async function lookupCards({
   query,
@@ -71,6 +100,7 @@ export async function lookupCards({
   const normalizedQuery = query.trim();
   const parsed = parseCardQuery(normalizedQuery);
   const lookupTasks: Array<Promise<CardLookupCandidate[]>> = [];
+  const cachedCandidates: CardLookupCandidate[] = [];
 
   if (language === "all" || language === "en") {
     lookupTasks.push(lookupPokemonTcgCards(parsed, normalizedQuery, pokemonTcgApiKey));
@@ -78,13 +108,18 @@ export async function lookupCards({
   }
 
   if (language === "all" || language === "ja") {
-    lookupTasks.push(Promise.resolve(lookupJapaneseCacheCards(database, parsed, normalizedQuery)));
+    cachedCandidates.push(...lookupJapaneseCacheCards(database, parsed, normalizedQuery));
+
+    if (cachedCandidates.length === 0) {
+      lookupTasks.push(lookupOfficialJapaneseCards(database, parsed, normalizedQuery));
+    }
+
     lookupTasks.push(lookupTcgdexCards("ja", parsed, normalizedQuery));
   }
 
   const settled = await Promise.allSettled(lookupTasks);
-  const candidates = settled.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : []
+  const candidates = cachedCandidates.concat(
+    settled.flatMap((result) => (result.status === "fulfilled" ? result.value : []))
   );
 
   const dedupedCandidates = dedupeCandidates(candidates);
@@ -176,7 +211,13 @@ async function lookupTcgdexCards(
   query: string
 ): Promise<CardLookupCandidate[]> {
   if (parsed.kind === "set-number" && parsed.setCode && parsed.localId) {
-    const direct = await fetchTcgdexCard(language, parsed.setCode, parsed.localId);
+    const direct = await fetchFirstTcgdexCard(
+      language,
+      parsed.setCode,
+      parsed.localId,
+      parsed.printedNumber
+    );
+
     return direct ? [mapTcgdexCard(direct, language, parsed)] : [];
   }
 
@@ -214,6 +255,30 @@ async function fetchTcgdexCard(language: "en" | "ja", setCode: string, localId: 
   }
 
   return (await response.json()) as TcgdexCard;
+}
+
+async function fetchFirstTcgdexCard(
+  language: "en" | "ja",
+  setCode: string,
+  ...localIds: Array<string | null | undefined>
+) {
+  const attempted = new Set<string>();
+
+  for (const localId of localIds) {
+    if (!localId || attempted.has(localId)) {
+      continue;
+    }
+
+    attempted.add(localId);
+
+    const card = await fetchTcgdexCard(language, setCode, localId);
+
+    if (card) {
+      return card;
+    }
+  }
+
+  return null;
 }
 
 async function fetchTcgdexCardById(language: "en" | "ja", cardId: string | undefined) {
@@ -328,6 +393,243 @@ function mapTcgdexCard(
     item,
     score: scoreGenericCard(card.set?.id, card.localId, parsed)
   };
+}
+
+async function lookupOfficialJapaneseCards(
+  database: AppDatabase,
+  parsed: ParsedCardQuery,
+  query: string
+): Promise<CardLookupCandidate[]> {
+  if (parsed.kind !== "set-number" || !parsed.setCode || !parsed.printedNumber) {
+    return [];
+  }
+
+  const importedCount = await importOfficialJapaneseSet(database, parsed);
+
+  if (importedCount === 0) {
+    return [];
+  }
+
+  return lookupJapaneseCacheCards(database, parsed, query);
+}
+
+async function importOfficialJapaneseSet(database: AppDatabase, parsed: ParsedCardQuery) {
+  if (!parsed.setCode) {
+    return 0;
+  }
+
+  const setCode = parsed.setCode;
+  const product = await fetchOfficialJapaneseProduct(setCode);
+
+  if (!product) {
+    return 0;
+  }
+
+  const listingCards = await fetchOfficialJapaneseProductCards(product.productId);
+
+  if (listingCards.length === 0) {
+    return 0;
+  }
+
+  const details = await mapWithConcurrency(listingCards, 8, async (card) => {
+    if (!card.cardID) {
+      return null;
+    }
+
+    return fetchOfficialJapaneseCardDetail(card.cardID, setCode, product.setName);
+  });
+
+  const validDetails = details.filter(
+    (detail): detail is OfficialJapaneseCardDetail =>
+      detail !== null && detail.setCode.toLowerCase() === setCode.toLowerCase()
+  );
+
+  upsertJapaneseCacheDetails(database, validDetails);
+
+  return validDetails.length;
+}
+
+async function fetchOfficialJapaneseProduct(setCode: string) {
+  const response = await fetch(`${pokemonCardJpBaseUrl}/ex/${encodeURIComponent(setCode)}/`);
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html = await response.text();
+  const productId = matchFirst(html, /card-search\/index\.php\?[^"'<>]*pg=(\d+)/i);
+
+  if (!productId) {
+    return null;
+  }
+
+  const title = matchFirst(html, /<title>([^<]+)\|/i);
+
+  return {
+    productId,
+    setName: title ? decodeHtmlEntities(title).trim() : null
+  };
+}
+
+async function fetchOfficialJapaneseProductCards(productId: string) {
+  const firstPage = await fetchOfficialJapaneseProductPage(productId, 1);
+
+  if (!firstPage) {
+    return [];
+  }
+
+  const pages = await Promise.all(
+    Array.from({ length: Math.max(0, (firstPage.maxPage ?? 1) - 1) }, (_, index) =>
+      fetchOfficialJapaneseProductPage(productId, index + 2)
+    )
+  );
+
+  return [firstPage, ...pages]
+    .flatMap((page) => page?.cardList ?? [])
+    .filter((card) => Boolean(card.cardID));
+}
+
+async function fetchOfficialJapaneseProductPage(productId: string, page: number) {
+  const params = new URLSearchParams({
+    pg: productId,
+    regulation: "all",
+    regulation_sidebar_form: "all",
+    page: String(page)
+  });
+  const response = await fetch(`${pokemonCardJpBaseUrl}/card-search/resultAPI.php?${params}`);
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as OfficialJapaneseSearchResponse;
+
+  return payload.result === 1 ? payload : null;
+}
+
+async function fetchOfficialJapaneseCardDetail(
+  cardId: string,
+  fallbackSetCode: string,
+  fallbackSetName: string | null
+): Promise<OfficialJapaneseCardDetail | null> {
+  const response = await fetch(
+    `${pokemonCardJpBaseUrl}/card-search/details.php/card/${encodeURIComponent(cardId)}`
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html = await response.text();
+  const detail = parseOfficialJapaneseCardDetail(html, cardId, fallbackSetCode, fallbackSetName);
+
+  return detail;
+}
+
+function parseOfficialJapaneseCardDetail(
+  html: string,
+  cardId: string,
+  fallbackSetCode: string,
+  fallbackSetName: string | null
+): OfficialJapaneseCardDetail | null {
+  const name = decodeHtmlEntities(
+    matchFirst(html, /<h1[^>]*class="[^"]*Heading1[^"]*"[^>]*>([^<]+)/i)
+  );
+  const setCode = decodeHtmlEntities(
+    matchFirst(html, /class="img-regulation"[^>]*alt="([^"]+)"/i) || fallbackSetCode
+  );
+  const numberMatch = html.match(
+    /class="img-regulation"[^>]*alt="[^"]+"[^>]*>\s*(?:&nbsp;|\s)*([a-z0-9]+)\s*(?:&nbsp;|\s)*\/\s*(?:&nbsp;|\s)*([a-z0-9]+)/i
+  );
+
+  if (!name || !setCode || !numberMatch) {
+    return null;
+  }
+
+  const printedNumber = numberMatch[1];
+  const printedTotal = numberMatch[2] ?? null;
+  const imagePath = matchFirst(html, /<img[^>]*class="fit"[^>]*src="([^"]+)"/i);
+  const setName =
+    decodeHtmlEntities(matchFirst(html, /<li class="List_item"><a[^>]*>([^<]+)<\/a>/i)) ||
+    fallbackSetName;
+  const rarity =
+    matchFirst(html, /\/rarity\/ic_rare_([a-z0-9_]+)\.gif/i)
+      ?.replace(/_/g, " ")
+      .toUpperCase() ?? null;
+
+  return {
+    sourceId: cardId,
+    setCode: setCode.toLowerCase(),
+    setName,
+    cardNumber: printedTotal ? `${printedNumber}/${printedTotal}` : printedNumber,
+    printedNumber,
+    printedTotal,
+    name,
+    rarity,
+    imageUrl: imagePath ? absolutePokemonCardJpUrl(imagePath) : null,
+    rawPayload: JSON.stringify({
+      cardId,
+      source: `${pokemonCardJpBaseUrl}/card-search/details.php/card/${cardId}`
+    })
+  };
+}
+
+function upsertJapaneseCacheDetails(
+  database: AppDatabase,
+  details: OfficialJapaneseCardDetail[]
+) {
+  const statement = database.connection.prepare(
+    `
+      INSERT INTO japanese_card_cache (
+        id,
+        source,
+        source_id,
+        set_code,
+        set_name,
+        card_number,
+        printed_number,
+        printed_total,
+        name,
+        rarity,
+        image_url,
+        raw_payload
+      )
+      VALUES (?, 'pokemon-card-jp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, source_id) DO UPDATE SET
+        set_code = excluded.set_code,
+        set_name = excluded.set_name,
+        card_number = excluded.card_number,
+        printed_number = excluded.printed_number,
+        printed_total = excluded.printed_total,
+        name = excluded.name,
+        rarity = excluded.rarity,
+        image_url = excluded.image_url,
+        raw_payload = excluded.raw_payload,
+        updated_at = CURRENT_TIMESTAMP
+    `
+  );
+
+  const existing = database.connection.prepare(
+    "SELECT id FROM japanese_card_cache WHERE source = 'pokemon-card-jp' AND source_id = ?"
+  );
+
+  for (const detail of details) {
+    const existingRow = existing.get(detail.sourceId) as { id: string } | undefined;
+
+    statement.run(
+      existingRow?.id ?? randomUUID(),
+      detail.sourceId,
+      detail.setCode,
+      detail.setName,
+      detail.cardNumber,
+      detail.printedNumber,
+      detail.printedTotal,
+      detail.name,
+      detail.rarity,
+      detail.imageUrl,
+      detail.rawPayload
+    );
+  }
 }
 
 function lookupJapaneseCacheCards(
@@ -631,6 +933,51 @@ function numberMatches(
 
 function displayCardNumber(cardNumber: string | undefined, printedTotal: number | undefined) {
   return cardNumber && printedTotal ? `${cardNumber}/${printedTotal}` : cardNumber;
+}
+
+function matchFirst(value: string, pattern: RegExp) {
+  return value.match(pattern)?.[1] ?? null;
+}
+
+function decodeHtmlEntities(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#039;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/<[^>]+>/g, "")
+    .trim();
+}
+
+function absolutePokemonCardJpUrl(path: string) {
+  return path.startsWith("http") ? path : `${pokemonCardJpBaseUrl}${path}`;
+}
+
+async function mapWithConcurrency<Input, Output>(
+  items: Input[],
+  limit: number,
+  mapper: (item: Input) => Promise<Output>
+) {
+  const results: Output[] = [];
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < items.length) {
+      const currentIndex = cursor;
+      cursor += 1;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  );
+
+  return results;
 }
 
 function escapePokemonTcgTerm(value: string) {
