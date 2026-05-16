@@ -4,10 +4,12 @@ import {
   ChevronDown,
   CircleDollarSign,
   Database,
+  Download,
   ExternalLink,
   FileText,
   Gem,
   Grid2X2,
+  HardDriveDownload,
   Image as ImageIcon,
   ListFilter,
   Plus,
@@ -265,6 +267,9 @@ function WorkspaceShell({
   const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
   const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
   const [lookupError, setLookupError] = useState("");
+  const [exportStatus, setExportStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [backupStatus, setBackupStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [dataActionMessage, setDataActionMessage] = useState("");
   const [duplicateDecision, setDuplicateDecision] = useState<PendingDuplicateDecision | null>(null);
   const inventoryRef = useRef(inventory);
 
@@ -441,6 +446,47 @@ function WorkspaceShell({
     }
   }
 
+  async function handleExportInventoryCsv() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setExportStatus("loading");
+    setBackupStatus("idle");
+    setDataActionMessage("");
+
+    try {
+      const { blob, fileName } = await api.exportInventoryCsv(activeCollection.id);
+      downloadBlob(blob, fileName);
+      setExportStatus("idle");
+      setDataActionMessage(`Exported ${fileName}.`);
+    } catch (error) {
+      setExportStatus("error");
+      setDataActionMessage(error instanceof Error ? error.message : "Unable to export inventory.");
+    }
+  }
+
+  async function handleCreateSqliteBackup() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBackupStatus("loading");
+    setExportStatus("idle");
+    setDataActionMessage("");
+
+    try {
+      const response = await api.createSqliteBackup(activeCollection.id);
+      setBackupStatus("idle");
+      setDataActionMessage(
+        `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`
+      );
+    } catch (error) {
+      setBackupStatus("error");
+      setDataActionMessage(error instanceof Error ? error.message : "Unable to create backup.");
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Collection navigation">
@@ -518,6 +564,26 @@ function WorkspaceShell({
           </div>
           <div className="topbar-actions">
             <button
+              className={`icon-button ${exportStatus === "loading" ? "active" : ""}`}
+              type="button"
+              aria-label="Export inventory CSV"
+              disabled={!activeCollection || exportStatus === "loading"}
+              onClick={handleExportInventoryCsv}
+              title="Export inventory CSV"
+            >
+              <Download size={20} aria-hidden="true" />
+            </button>
+            <button
+              className={`icon-button ${backupStatus === "loading" ? "active" : ""}`}
+              type="button"
+              aria-label="Back up SQLite database"
+              disabled={!activeCollection || backupStatus === "loading"}
+              onClick={handleCreateSqliteBackup}
+              title="Back up SQLite database"
+            >
+              <HardDriveDownload size={20} aria-hidden="true" />
+            </button>
+            <button
               className={`icon-button ${showFilters ? "active" : ""}`}
               type="button"
               aria-label="Filter collection"
@@ -536,6 +602,16 @@ function WorkspaceShell({
             </button>
           </div>
         </header>
+
+        {dataActionMessage ? (
+          <p
+            className={`data-action-status ${
+              exportStatus === "error" || backupStatus === "error" ? "error" : "ok"
+            }`}
+          >
+            {dataActionMessage}
+          </p>
+        ) : null}
 
         <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
           <div className="search-control">
@@ -2885,6 +2961,24 @@ function formatCurrency(cents: number) {
     style: "currency",
     currency: "USD"
   }).format(cents / 100);
+}
+
+function formatFileSize(bytes: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    style: "unit",
+    unit: "megabyte"
+  }).format(bytes / 1024 / 1024);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function optionalNumber(value: FormDataEntryValue | null) {

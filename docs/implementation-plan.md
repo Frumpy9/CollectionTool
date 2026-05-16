@@ -32,6 +32,9 @@
 - [x] Fixed graded-cert metadata migration id collision and added self-healing cert column setup.
 - [x] Removed PSA estimate UI because the public PSA API did not return estimate values in testing.
 - [x] Verified detail modal closes after saving card edits.
+- [x] Merged graded-card details into `main`.
+- [x] Added collection inventory CSV export.
+- [x] Added admin SQLite backup-now action under `data/backups`.
 
 ## Branch Roadmap
 
@@ -119,10 +122,10 @@
 
 ### 7. Backups And Export
 
-- [ ] Add CSV export for collections and inventory.
+- [x] Add CSV export for inventory.
 - [ ] Add CSV import for manual inventory.
 - [ ] Add scheduled SQLite backups under `/data/backups`.
-- [ ] Add admin “backup now” button.
+- [x] Add admin “backup now” button.
 - [ ] Document restore steps.
 
 ### 8. Polish And Public Repo Readiness
@@ -153,10 +156,9 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 ## End Of Night Checkpoint
 
-- Current working branch: `codex/graded-card-details`.
-- Bulk lookup is merged into `main`.
-- Duplicate/quantity merge is committed on `codex/duplicate-quantity-merge`.
-- Graded cert details are committed on `codex/graded-card-details`.
+- Current working branch: `codex/backups-export`.
+- Bulk lookup, duplicate/quantity merge, and graded-card details are merged into local `main`.
+- Backups/export is in progress on `codex/backups-export`.
 - The current dev database has the graded cert metadata columns applied.
 - Verified in browser: PSA cert refresh persists population/pop higher/spec/category and Save changes closes the detail modal.
 - PSA estimate is intentionally not shown because the public PSA lookup response did not include it for cert `59711010`.

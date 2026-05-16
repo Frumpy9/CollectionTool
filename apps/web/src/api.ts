@@ -1,5 +1,6 @@
 import type {
   AuthMeResponse,
+  BackupSqliteResponse,
   BootstrapStatusResponse,
   CardImageUploadRequest,
   CardImageUploadResponse,
@@ -48,6 +49,25 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string): Promise<{ blob: Blob; fileName: string }> {
+  const response = await fetch(path, {
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+      message?: string;
+    } | null;
+    throw new Error(payload?.message ?? payload?.error ?? `Request failed with ${response.status}`);
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName: fileNameFromContentDisposition(response.headers.get("Content-Disposition"))
+  };
+}
+
 export const api = {
   bootstrapStatus: () => request<BootstrapStatusResponse>("/api/auth/bootstrap-status"),
   me: () => request<AuthMeResponse>("/api/auth/me"),
@@ -68,6 +88,13 @@ export const api = {
     }),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  exportInventoryCsv: (collectionId: string) =>
+    requestBlob(`/api/collections/${collectionId}/items/export.csv`),
+  createSqliteBackup: (collectionId: string) =>
+    request<BackupSqliteResponse>(`/api/collections/${collectionId}/backups/sqlite`, {
+      method: "POST",
+      body: JSON.stringify({})
+    }),
   lookupCards: (payload: CardLookupRequest) =>
     request<CardLookupResponse>("/api/cards/lookup", {
       method: "POST",
@@ -111,3 +138,14 @@ export const api = {
       body: JSON.stringify(payload)
     })
 };
+
+function fileNameFromContentDisposition(contentDisposition: string | null) {
+  const fallback = `pokemon-vault-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const match = /filename="?(?<fileName>[^";]+)"?/i.exec(contentDisposition);
+  return match?.groups?.fileName ?? fallback;
+}

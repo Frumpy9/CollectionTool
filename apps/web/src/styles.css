@@ -318,6 +318,11 @@ small {
   width: 42px;
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .icon-button.active {
   border-color: rgba(213, 47, 58, 0.34);
   color: var(--accent);
@@ -330,6 +335,17 @@ small {
   border-color: transparent;
   color: var(--accent-ink);
   background: var(--accent);
+}
+
+.data-action-status {
+  margin: -10px 0 0;
+  color: var(--teal);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.data-action-status.error {
+  color: #a11d2a;
 }
 
 .command-panel {

@@ -70,6 +70,32 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
     };
   });
 
+  app.get("/api/collections/:collectionId/items/export.csv", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId } = request.params as { collectionId: string };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role) {
+      reply.code(403);
+      return { error: "You do not have access to this collection." };
+    }
+
+    const items = listInventoryItems(database, collectionId);
+    const fileName = `pokemon-vault-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    reply
+      .type("text/csv; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    return toInventoryCsv(items);
+  });
+
   app.post("/api/collections/:collectionId/items", async (request, reply) => {
     const auth = getAuthContext(request, database);
 
@@ -183,6 +209,88 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
 
     return { ok: true };
   });
+}
+
+const inventoryCsvColumns = [
+  "inventory_id",
+  "card_id",
+  "name",
+  "set_name",
+  "set_code",
+  "card_number",
+  "language",
+  "rarity",
+  "image_url",
+  "item_type",
+  "quantity",
+  "condition_label",
+  "condition_score",
+  "variant_details",
+  "grader",
+  "grade",
+  "cert_number",
+  "cert_url",
+  "cert_spec_id",
+  "cert_category",
+  "cert_population",
+  "cert_population_higher",
+  "cert_lookup_at",
+  "purchase_price_cents",
+  "purchase_date",
+  "value_override_cents",
+  "storage_location",
+  "notes",
+  "created_at"
+] as const;
+
+function toInventoryCsv(items: InventoryItem[]) {
+  const rows = items.map((item) => [
+    item.id,
+    item.cardId,
+    item.card.name,
+    item.card.setName,
+    item.card.setCode,
+    item.card.cardNumber,
+    item.card.language,
+    item.card.rarity,
+    item.card.imageUrl,
+    item.itemType,
+    item.quantity,
+    item.conditionLabel,
+    item.conditionScore,
+    item.variantDetails,
+    item.grader,
+    item.grade,
+    item.certNumber,
+    item.certUrl,
+    item.certSpecId,
+    item.certCategory,
+    item.certPopulation,
+    item.certPopulationHigher,
+    item.certLookupAt,
+    item.purchasePriceCents,
+    item.purchaseDate,
+    item.valueOverrideCents,
+    item.storageLocation,
+    item.notes,
+    item.createdAt
+  ]);
+
+  return [inventoryCsvColumns, ...rows].map((row) => row.map(toCsvCell).join(",")).join("\n");
+}
+
+function toCsvCell(value: string | number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const text = String(value);
+
+  if (!/[",\n\r]/.test(text)) {
+    return text;
+  }
+
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 function createInventoryItem(

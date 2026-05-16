@@ -91,6 +91,14 @@ export type InventoryListResponse = {
   };
 };
 
+export type BackupSqliteResponse = {
+  ok: true;
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
 export type CreateInventoryItemRequest = {
   name: string;
   setName?: string;
