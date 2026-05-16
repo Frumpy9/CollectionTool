@@ -122,6 +122,37 @@ export type CardImageUploadResponse = {
   imageUrl: string;
 };
 
+export type CardLookupRequest = {
+  query: string;
+  language?: CardLanguage | "all";
+};
+
+export type CardLookupCandidate = {
+  id: string;
+  source: "pokemontcg" | "tcgdex" | "parsed";
+  sourceId: string;
+  confidence: "exact" | "strong" | "possible";
+  name: string;
+  setName: string | null;
+  setCode: string | null;
+  cardNumber: string | null;
+  language: CardLanguage;
+  rarity: string | null;
+  imageUrl: string | null;
+  item: CreateInventoryItemRequest;
+};
+
+export type CardLookupResponse = {
+  query: string;
+  parsed: {
+    kind: "set-number" | "number" | "name";
+    setCode: string | null;
+    cardNumber: string | null;
+    localId: string | null;
+  };
+  candidates: CardLookupCandidate[];
+};
+
 export type PsaCertLookupRequest = {
   certNumber: string;
 };

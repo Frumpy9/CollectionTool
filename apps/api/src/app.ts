@@ -5,6 +5,7 @@ import type { HealthResponse } from "@collection-tool/shared";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
+import { registerCardLookupRoutes } from "./routes/cardLookupRoutes.js";
 import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
 import { registerPsaRoutes } from "./routes/psaRoutes.js";
@@ -37,6 +38,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   }));
 
   await registerAuthRoutes(app, config, database);
+  await registerCardLookupRoutes(app, config, database);
   await registerCollectionRoutes(app, database);
   await registerInventoryRoutes(app, database);
   await registerPsaRoutes(app, config, database);

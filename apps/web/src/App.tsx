@@ -21,6 +21,8 @@ import type {
   AuthMeResponse,
   AuthUser,
   CardLanguage,
+  CardLookupCandidate,
+  CardLookupResponse,
   CollectionSummary,
   CreateInventoryItemRequest,
   InventoryItem,
@@ -178,8 +180,13 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [activePanel, setActivePanel] = useState<"manual" | "cert" | null>(null);
+  const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupLanguage, setLookupLanguage] = useState<CardLanguage | "all">("all");
+  const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
+  const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
+  const [lookupError, setLookupError] = useState("");
 
   useEffect(() => {
     if (!activeCollection) {
@@ -224,6 +231,30 @@ function WorkspaceShell({
       icon: BarChart3
     }
   ];
+
+  async function handleLookup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLookupError("");
+    setLookupResult(null);
+    setLookupStatus("loading");
+    setActivePanel("lookup");
+
+    try {
+      const response = await api.lookupCards({
+        query: lookupQuery,
+        language: lookupLanguage
+      });
+      setLookupResult(response);
+
+      if (response.candidates.length === 0) {
+        setLookupError("No matching cards found. Try a set code plus card number, or a card name.");
+      }
+    } catch (error) {
+      setLookupError(error instanceof Error ? error.message : "Unable to look up cards.");
+    } finally {
+      setLookupStatus("idle");
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -315,18 +346,29 @@ function WorkspaceShell({
           </div>
         </header>
 
-        <section className="command-panel" aria-label="Add cards">
+        <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
           <div className="search-control">
             <Search size={20} aria-hidden="true" />
             <input
               aria-label="Search or add card"
+              onChange={(event) => setLookupQuery(event.target.value)}
               placeholder="Enter a card name, PSA cert, or set/card number like s10a 073/071"
+              value={lookupQuery}
             />
           </div>
           <div className="mode-actions">
-            <button type="button">
+            <select
+              aria-label="Lookup language"
+              onChange={(event) => setLookupLanguage(event.target.value as CardLanguage | "all")}
+              value={lookupLanguage}
+            >
+              <option value="all">All</option>
+              <option value="en">English</option>
+              <option value="ja">Japanese</option>
+            </select>
+            <button disabled={lookupStatus === "loading"} type="submit">
               <Search size={18} aria-hidden="true" />
-              Lookup
+              {lookupStatus === "loading" ? "Looking..." : "Lookup"}
             </button>
             <button
               type="button"
@@ -340,7 +382,22 @@ function WorkspaceShell({
               Scan
             </button>
           </div>
-        </section>
+        </form>
+
+        {activePanel === "lookup" && activeCollection ? (
+          <CardLookupPanel
+            collectionId={activeCollection.id}
+            error={lookupError}
+            result={lookupResult}
+            status={lookupStatus}
+            onAdded={(item) => {
+              setInventory((current) => summarizeInventory([item, ...current.items]));
+              setActivePanel(null);
+              setLookupResult(null);
+              setLookupQuery("");
+            }}
+          />
+        ) : null}
 
         {activePanel === "manual" && activeCollection ? (
           <ManualAddPanel
@@ -416,6 +473,144 @@ function WorkspaceShell({
         ) : null}
       </section>
     </main>
+  );
+}
+
+function CardLookupPanel({
+  collectionId,
+  error,
+  result,
+  status,
+  onAdded
+}: {
+  collectionId: string;
+  error: string;
+  result: CardLookupResponse | null;
+  status: "idle" | "loading";
+  onAdded: (item: InventoryItem) => void;
+}) {
+  const [itemType, setItemType] = useState<InventoryItemType>("raw");
+  const [grader, setGrader] = useState("PSA");
+  const [grade, setGrade] = useState("");
+  const [certNumber, setCertNumber] = useState("");
+  const [savingId, setSavingId] = useState("");
+  const [saveError, setSaveError] = useState("");
+
+  async function handleAdd(candidate: CardLookupCandidate) {
+    setSaveError("");
+    setSavingId(candidate.id);
+
+    try {
+      const payload: CreateInventoryItemRequest = {
+        ...candidate.item,
+        itemType,
+        grader: itemType === "graded" ? grader : "",
+        grade: itemType === "graded" ? grade : "",
+        certNumber: itemType === "graded" ? certNumber : "",
+        notes: [
+          candidate.item.notes,
+          `Lookup confidence: ${candidate.confidence}`
+        ]
+          .filter(Boolean)
+          .join("\n")
+      };
+
+      const response = await api.createInventoryItem(collectionId, payload);
+      onAdded(response.item);
+    } catch (addError) {
+      setSaveError(addError instanceof Error ? addError.message : "Unable to add lookup card.");
+    } finally {
+      setSavingId("");
+    }
+  }
+
+  return (
+    <section className="manual-panel lookup-panel" aria-label="Card lookup results">
+      <div>
+        <p className="eyebrow">Card lookup</p>
+        <h3>Find and add a card</h3>
+      </div>
+
+      <div className="lookup-controls">
+        <label>
+          Add as
+          <select
+            onChange={(event) => setItemType(event.target.value as InventoryItemType)}
+            value={itemType}
+          >
+            <option value="raw">Raw</option>
+            <option value="graded">Graded</option>
+          </select>
+        </label>
+        {itemType === "graded" ? (
+          <>
+            <label>
+              Grader
+              <select onChange={(event) => setGrader(event.target.value)} value={grader}>
+                <option value="PSA">PSA</option>
+                <option value="CGC">CGC</option>
+                <option value="BGS">BGS</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label>
+              Grade
+              <input onChange={(event) => setGrade(event.target.value)} placeholder="10, 9.5..." value={grade} />
+            </label>
+            <label>
+              Cert #
+              <input onChange={(event) => setCertNumber(event.target.value)} placeholder="Optional" value={certNumber} />
+            </label>
+          </>
+        ) : null}
+      </div>
+
+      {status === "loading" ? <p className="lookup-note">Searching free card databases...</p> : null}
+      {error ? <p className="form-error">{error}</p> : null}
+      {saveError ? <p className="form-error">{saveError}</p> : null}
+
+      {result && result.candidates.length > 0 ? (
+        <>
+          <p className="lookup-note">
+            {result.candidates.length} result{result.candidates.length === 1 ? "" : "s"} for{" "}
+            <strong>{result.query}</strong>
+          </p>
+          <div className="lookup-results">
+            {result.candidates.map((candidate) => (
+              <article className="lookup-card" key={candidate.id}>
+                <div className="lookup-image" aria-hidden="true">
+                  {candidate.imageUrl ? <img alt="" src={candidate.imageUrl} /> : <Gem size={34} />}
+                </div>
+                <div className="lookup-copy">
+                  <p className="eyebrow">
+                    {candidate.language.toUpperCase()} · {candidate.source} · {candidate.confidence}
+                  </p>
+                  <h4>{candidate.name}</h4>
+                  <p>
+                    {[candidate.setCode, candidate.cardNumber, candidate.setName]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  <div className="inventory-meta">
+                    {candidate.rarity ? <span>{candidate.rarity}</span> : null}
+                    <span>{candidate.sourceId}</span>
+                  </div>
+                </div>
+                <button
+                  className="primary-button"
+                  disabled={savingId === candidate.id}
+                  onClick={() => handleAdd(candidate)}
+                  type="button"
+                >
+                  <Plus size={18} aria-hidden="true" />
+                  {savingId === candidate.id ? "Adding..." : "Add"}
+                </button>
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </section>
   );
 }
 
