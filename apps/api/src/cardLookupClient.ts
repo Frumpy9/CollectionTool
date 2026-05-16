@@ -1009,12 +1009,17 @@ function confidenceForCard(
 
 function splitCardNumber(cardNumber: string) {
   const [printedNumber, setTotal] = cardNumber.split("/");
+  const normalizedPrintedNumber = normalizeLeadingZeroCardNumber(printedNumber);
 
   return {
-    printedNumber,
+    printedNumber: normalizedPrintedNumber,
     setTotal: setTotal ?? null,
     localId: printedNumber.padStart(3, "0")
   };
+}
+
+function normalizeLeadingZeroCardNumber(value: string) {
+  return /^\d+$/.test(value) ? String(Number(value)) : value;
 }
 
 function cardNumberSearchValues(parsed: ParsedCardQuery) {
