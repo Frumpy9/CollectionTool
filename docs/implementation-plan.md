@@ -24,6 +24,7 @@
 - [x] Added lookup result picker that can add raw or graded inventory items.
 - [x] Added delete item flow with confirmation.
 - [x] Added edit item flow for card details, grading, values, storage, notes, and images.
+- [x] Added variant dropdown for standard, holo/foil, reverse holo, stamped, and related card variants.
 
 ## Branch Roadmap
 

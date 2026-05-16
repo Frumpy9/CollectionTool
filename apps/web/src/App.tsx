@@ -46,6 +46,16 @@ const roadmapItems = [
   "Continuous scan mode"
 ];
 
+const variantOptions = [
+  "Standard",
+  "Holo / Foil",
+  "Reverse Holo",
+  "Stamped",
+  "1st Edition",
+  "Promo",
+  "Other"
+];
+
 export function App() {
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
@@ -895,7 +905,7 @@ function ManualAddPanel({
         </label>
         <label className="wide-field">
           Variants
-          <input name="variantDetails" placeholder="Reverse holo, stamped, print line, etc." />
+          <CardVariantSelect />
         </label>
         <label className="wide-field">
           Notes
@@ -1252,7 +1262,7 @@ function InventoryItemDetail({
               </label>
               <label>
                 Variants
-                <input defaultValue={item.variantDetails ?? ""} name="variantDetails" />
+                <CardVariantSelect defaultValue={item.variantDetails ?? ""} />
               </label>
               <label>
                 Notes
@@ -1281,6 +1291,23 @@ function InventoryItemDetail({
         </div>
       </section>
     </div>
+  );
+}
+
+function CardVariantSelect({ defaultValue = "" }: { defaultValue?: string }) {
+  const hasCustomValue =
+    defaultValue.trim().length > 0 && !variantOptions.includes(defaultValue);
+
+  return (
+    <select defaultValue={defaultValue} name="variantDetails">
+      <option value="">Not specified</option>
+      {variantOptions.map((variant) => (
+        <option key={variant} value={variant}>
+          {variant}
+        </option>
+      ))}
+      {hasCustomValue ? <option value={defaultValue}>{defaultValue}</option> : null}
+    </select>
   );
 }
 
