@@ -122,9 +122,23 @@ function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLook
     findValue(payload, ["Population", "TotalPopulation", "totalPopulation"])
   );
   const populationHigher = stringify(findValue(payload, ["PopHigher", "PopulationHigher"]));
+  const estimateCents = moneyToCents(
+    findValue(payload, [
+      "PsaEstimate",
+      "PSAEstimate",
+      "psaEstimate",
+      "EstimatedValue",
+      "estimatedValue",
+      "ValueEstimate",
+      "valueEstimate",
+      "SMRPrice",
+      "smrPrice"
+    ])
+  );
   const imageUrl = stringify(findValue(payload, ["ImageURL", "ImageUrl", "imageUrl", "Image"]));
   const certFromPayload =
     stringify(findValue(payload, ["CertNumber", "CertNo", "certNumber", "certNo"])) ?? certNumber;
+  const certUrl = `https://www.psacard.com/cert/${encodeURIComponent(certFromPayload)}/psa`;
   const name = buildCardName({ year, brand, subject, variety });
 
   const item: CreateInventoryItemRequest = {
@@ -139,7 +153,14 @@ function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLook
     grade: grade ?? undefined,
     certNumber: certFromPayload,
     variantDetails: variety ?? undefined,
-    notes: specId ? `PSA Spec ID: ${specId}` : undefined
+    notes: specId ? `PSA Spec ID: ${specId}` : undefined,
+    certUrl,
+    certSpecId: specId ?? undefined,
+    certCategory: category ?? undefined,
+    certPopulation: population ?? undefined,
+    certPopulationHigher: populationHigher ?? undefined,
+    certEstimateCents: estimateCents ?? undefined,
+    certLookupAt: new Date().toISOString()
   };
 
   return {
@@ -155,7 +176,8 @@ function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLook
       variety: variety ?? null,
       category: category ?? null,
       population: population ?? null,
-      populationHigher: populationHigher ?? null
+      populationHigher: populationHigher ?? null,
+      estimateCents: estimateCents ?? null
     }
   };
 }
@@ -174,7 +196,8 @@ function emptyLookup(certNumber: string, serverMessage: string): PsaCertLookupRe
       variety: null,
       category: null,
       population: null,
-      populationHigher: null
+      populationHigher: null,
+      estimateCents: null
     }
   };
 }
@@ -222,6 +245,21 @@ function stringify(value: unknown) {
 
   const text = String(value).trim();
   return text ? text : null;
+}
+
+function moneyToCents(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  const parsed =
+    typeof value === "number" ? value : Number(String(value).replace(/[^0-9.-]/g, ""));
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+
+  return Math.round(parsed * 100);
 }
 
 async function lookupPokemonTcgCard(

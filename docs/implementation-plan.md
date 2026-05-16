@@ -28,6 +28,7 @@
 - [x] Added local inventory search, filters, active filter chips, and sorting.
 - [x] Added bulk card lookup and bulk PSA cert import from pasted or uploaded text lists.
 - [x] Added duplicate detection with a quantity-merge choice before adding matching inventory rows.
+- [x] Added persistent graded-cert metadata and slab detail UI for PSA imports.
 
 ## Branch Roadmap
 
@@ -90,7 +91,7 @@
 - [x] Add PSA cert import with PSA API token.
 - [x] Add bulk PSA cert import from newline-separated text lists.
 - [ ] Add CGC cert/barcode draft flow.
-- [ ] Add graded card detail UI for grader, grade, cert number, and cert links.
+- [x] Add graded card detail UI for grader, grade, cert number, and cert links.
 - [ ] Add barcode scanner path for PSA/CGC slabs.
 
 ### 5. Pricing And Comps

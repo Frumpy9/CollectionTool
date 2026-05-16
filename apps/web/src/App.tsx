@@ -4,12 +4,14 @@ import {
   ChevronDown,
   CircleDollarSign,
   Database,
+  ExternalLink,
   FileText,
   Gem,
   Grid2X2,
   Image as ImageIcon,
   ListFilter,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
@@ -1329,6 +1331,9 @@ function PsaCertPanel({
             {lookup.source.populationHigher ? (
               <span>Higher {lookup.source.populationHigher}</span>
             ) : null}
+            {lookup.source.estimateCents !== null ? (
+              <span>PSA estimate {formatCurrency(lookup.source.estimateCents)}</span>
+            ) : null}
             {lookup.source.category ? <span>{lookup.source.category}</span> : null}
           </div>
           <button className="primary-button" disabled={status === "saving"} onClick={handleAdd} type="button">
@@ -1856,6 +1861,77 @@ function DuplicateMergeDialog({
   );
 }
 
+function GradedCertSummary({
+  item,
+  isRefreshing,
+  onRefresh
+}: {
+  item: InventoryItem;
+  isRefreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const canRefreshPsa = item.grader === "PSA" && Boolean(item.certNumber);
+  const lookupDate = item.certLookupAt ? new Date(item.certLookupAt) : null;
+  const lookupLabel =
+    lookupDate && !Number.isNaN(lookupDate.getTime())
+      ? lookupDate.toLocaleDateString()
+      : null;
+
+  return (
+    <section className="graded-cert-panel" aria-label="Graded cert details">
+      <div className="graded-cert-header">
+        <div>
+          <p className="eyebrow">Slab details</p>
+          <h4>
+            {[item.grader, item.grade].filter(Boolean).join(" ") || "Graded card"}
+          </h4>
+        </div>
+        <div className="graded-cert-actions">
+          {item.certUrl ? (
+            <a href={item.certUrl} rel="noreferrer" target="_blank">
+              <ExternalLink size={16} aria-hidden="true" />
+              Cert
+            </a>
+          ) : null}
+          {canRefreshPsa ? (
+            <button disabled={isRefreshing} onClick={onRefresh} type="button">
+              <RefreshCw size={16} aria-hidden="true" />
+              {isRefreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="graded-cert-stats">
+        <div>
+          <span>Cert #</span>
+          <strong>{item.certNumber || "Not set"}</strong>
+        </div>
+        <div>
+          <span>PSA estimate</span>
+          <strong>
+            {item.certEstimateCents !== null ? formatCurrency(item.certEstimateCents) : "Unknown"}
+          </strong>
+        </div>
+        <div>
+          <span>Population</span>
+          <strong>{item.certPopulation ?? "Unknown"}</strong>
+        </div>
+        <div>
+          <span>Pop higher</span>
+          <strong>{item.certPopulationHigher ?? "Unknown"}</strong>
+        </div>
+      </div>
+
+      <div className="inventory-meta">
+        {item.certSpecId ? <span>Spec {item.certSpecId}</span> : null}
+        {item.certCategory ? <span>{item.certCategory}</span> : null}
+        {lookupLabel ? <span>Updated {lookupLabel}</span> : null}
+      </div>
+    </section>
+  );
+}
+
 function InventoryItemDetail({
   collectionId,
   item,
@@ -1872,7 +1948,7 @@ function InventoryItemDetail({
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
   const [itemType, setItemType] = useState<InventoryItemType>(item.itemType);
   const [language, setLanguage] = useState<CardLanguage>(item.card.language);
-  const [status, setStatus] = useState<"idle" | "saving" | "deleting">("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing">("idle");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1912,7 +1988,14 @@ function InventoryItemDetail({
         purchaseDate: String(formData.get("purchaseDate") ?? ""),
         valueOverrideCents: moneyToCents(formData.get("valueOverride")),
         storageLocation: String(formData.get("storageLocation") ?? ""),
-        notes: String(formData.get("notes") ?? "")
+        notes: String(formData.get("notes") ?? ""),
+        certUrl: itemType === "graded" ? item.certUrl ?? "" : "",
+        certSpecId: itemType === "graded" ? item.certSpecId ?? "" : "",
+        certCategory: itemType === "graded" ? item.certCategory ?? "" : "",
+        certPopulation: itemType === "graded" ? item.certPopulation ?? "" : "",
+        certPopulationHigher: itemType === "graded" ? item.certPopulationHigher ?? "" : "",
+        certEstimateCents: itemType === "graded" ? item.certEstimateCents ?? undefined : undefined,
+        certLookupAt: itemType === "graded" ? item.certLookupAt ?? "" : ""
       });
 
       onUpdated(response.item);
@@ -1960,6 +2043,34 @@ function InventoryItemDetail({
     }
   }
 
+  async function handleRefreshCert() {
+    if (item.grader !== "PSA" || !item.certNumber) {
+      setError("Only PSA certs can be refreshed right now.");
+      return;
+    }
+
+    setError("");
+    setStatus("refreshing");
+
+    try {
+      const lookup = await api.lookupPsaCert({ certNumber: item.certNumber });
+
+      if (!lookup.item) {
+        throw new Error(lookup.serverMessage || "PSA did not return cert details.");
+      }
+
+      const response = await api.updateInventoryItem(
+        collectionId,
+        item.id,
+        mergeCertRefreshPayload(item, lookup.item)
+      );
+      onUpdated(response.item);
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh PSA cert.");
+      setStatus("idle");
+    }
+  }
+
   return (
     <div className="detail-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -2001,6 +2112,14 @@ function InventoryItemDetail({
               ) : null}
               {item.certNumber ? <span>Cert {item.certNumber}</span> : null}
             </div>
+
+            {itemType === "graded" ? (
+              <GradedCertSummary
+                item={item}
+                isRefreshing={status === "refreshing"}
+                onRefresh={handleRefreshCert}
+              />
+            ) : null}
 
             <form className="image-edit-form detail-edit-form" key={item.id} onSubmit={handleSave}>
               <label>
@@ -2276,7 +2395,41 @@ function inventoryItemToPayload(item: InventoryItem): CreateInventoryItemRequest
     purchaseDate: item.purchaseDate ?? "",
     valueOverrideCents: item.valueOverrideCents ?? undefined,
     storageLocation: item.storageLocation ?? "",
-    notes: item.notes ?? ""
+    notes: item.notes ?? "",
+    certUrl: item.certUrl ?? "",
+    certSpecId: item.certSpecId ?? "",
+    certCategory: item.certCategory ?? "",
+    certPopulation: item.certPopulation ?? "",
+    certPopulationHigher: item.certPopulationHigher ?? "",
+    certEstimateCents: item.certEstimateCents ?? undefined,
+    certLookupAt: item.certLookupAt ?? ""
+  };
+}
+
+function mergeCertRefreshPayload(
+  item: InventoryItem,
+  certPayload: CreateInventoryItemRequest
+): CreateInventoryItemRequest {
+  const current = inventoryItemToPayload(item);
+
+  return {
+    ...current,
+    name: certPayload.name || current.name,
+    setName: certPayload.setName ?? current.setName,
+    cardNumber: certPayload.cardNumber ?? current.cardNumber,
+    rarity: certPayload.rarity ?? current.rarity,
+    imageUrl: current.imageUrl || certPayload.imageUrl || "",
+    grader: certPayload.grader ?? current.grader,
+    grade: certPayload.grade ?? current.grade,
+    certNumber: certPayload.certNumber ?? current.certNumber,
+    variantDetails: certPayload.variantDetails ?? current.variantDetails,
+    certUrl: certPayload.certUrl ?? current.certUrl,
+    certSpecId: certPayload.certSpecId ?? current.certSpecId,
+    certCategory: certPayload.certCategory ?? current.certCategory,
+    certPopulation: certPayload.certPopulation ?? current.certPopulation,
+    certPopulationHigher: certPayload.certPopulationHigher ?? current.certPopulationHigher,
+    certEstimateCents: certPayload.certEstimateCents ?? current.certEstimateCents,
+    certLookupAt: certPayload.certLookupAt ?? current.certLookupAt
   };
 }
 
@@ -2535,6 +2688,11 @@ function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterSt
         item.notes,
         item.grader,
         item.grade,
+        item.certUrl,
+        item.certSpecId,
+        item.certCategory,
+        item.certPopulation,
+        item.certPopulationHigher,
         item.card.rarity,
         item.variantDetails,
         item.conditionLabel

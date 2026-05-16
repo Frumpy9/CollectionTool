@@ -28,6 +28,13 @@ type InventoryRow = {
   value_override_cents: number | null;
   storage_location: string | null;
   notes: string | null;
+  cert_url: string | null;
+  cert_spec_id: string | null;
+  cert_category: string | null;
+  cert_population: string | null;
+  cert_population_higher: string | null;
+  cert_estimate_cents: number | null;
+  cert_lookup_at: string | null;
   created_at: string;
   name: string;
   set_name: string | null;
@@ -234,9 +241,16 @@ function createInventoryItem(
             purchase_date,
             value_override_cents,
             storage_location,
-            notes
+            notes,
+            cert_url,
+            cert_spec_id,
+            cert_category,
+            cert_population,
+            cert_population_higher,
+            cert_estimate_cents,
+            cert_lookup_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -255,7 +269,14 @@ function createInventoryItem(
         nullIfBlank(input.purchaseDate),
         input.valueOverrideCents ?? null,
         nullIfBlank(input.storageLocation),
-        nullIfBlank(input.notes)
+        nullIfBlank(input.notes),
+        nullIfBlank(input.certUrl),
+        nullIfBlank(input.certSpecId),
+        nullIfBlank(input.certCategory),
+        nullIfBlank(input.certPopulation),
+        nullIfBlank(input.certPopulationHigher),
+        input.certEstimateCents ?? null,
+        nullIfBlank(input.certLookupAt)
       );
 
     database.connection.exec("COMMIT");
@@ -334,6 +355,13 @@ function updateInventoryItem(
             value_override_cents = ?,
             storage_location = ?,
             notes = ?,
+            cert_url = ?,
+            cert_spec_id = ?,
+            cert_category = ?,
+            cert_population = ?,
+            cert_population_higher = ?,
+            cert_estimate_cents = ?,
+            cert_lookup_at = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND collection_id = ?
         `
@@ -352,6 +380,13 @@ function updateInventoryItem(
         input.valueOverrideCents ?? null,
         nullIfBlank(input.storageLocation),
         nullIfBlank(input.notes),
+        nullIfBlank(input.certUrl),
+        nullIfBlank(input.certSpecId),
+        nullIfBlank(input.certCategory),
+        nullIfBlank(input.certPopulation),
+        nullIfBlank(input.certPopulationHigher),
+        input.certEstimateCents ?? null,
+        nullIfBlank(input.certLookupAt),
         itemId,
         collectionId
       );
@@ -449,6 +484,13 @@ function listInventoryItems(database: AppDatabase, collectionId: string): Invent
           oi.value_override_cents,
           oi.storage_location,
           oi.notes,
+          oi.cert_url,
+          oi.cert_spec_id,
+          oi.cert_category,
+          oi.cert_population,
+          oi.cert_population_higher,
+          oi.cert_estimate_cents,
+          oi.cert_lookup_at,
           oi.created_at,
           c.name,
           c.set_name,
@@ -486,6 +528,13 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
     valueOverrideCents: row.value_override_cents,
     storageLocation: row.storage_location,
     notes: row.notes,
+    certUrl: row.cert_url,
+    certSpecId: row.cert_spec_id,
+    certCategory: row.cert_category,
+    certPopulation: row.cert_population,
+    certPopulationHigher: row.cert_population_higher,
+    certEstimateCents: row.cert_estimate_cents,
+    certLookupAt: row.cert_lookup_at,
     createdAt: row.created_at,
     card: {
       name: row.name,
@@ -554,7 +603,8 @@ function normalizeCreateInput(input: CreateInventoryItemRequest): CreateInventor
     quantity,
     conditionScore,
     purchasePriceCents: normalizeCents(input.purchasePriceCents),
-    valueOverrideCents: normalizeCents(input.valueOverrideCents)
+    valueOverrideCents: normalizeCents(input.valueOverrideCents),
+    certEstimateCents: normalizeCents(input.certEstimateCents)
   };
 }
 

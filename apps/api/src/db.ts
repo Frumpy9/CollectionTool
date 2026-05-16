@@ -191,6 +191,26 @@ const migrations: Migration[] = [
       SET value = '5', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 6,
+    name: "graded_cert_metadata",
+    sql: `
+      ALTER TABLE owned_items ADD COLUMN cert_url TEXT;
+      ALTER TABLE owned_items ADD COLUMN cert_spec_id TEXT;
+      ALTER TABLE owned_items ADD COLUMN cert_category TEXT;
+      ALTER TABLE owned_items ADD COLUMN cert_population TEXT;
+      ALTER TABLE owned_items ADD COLUMN cert_population_higher TEXT;
+      ALTER TABLE owned_items ADD COLUMN cert_estimate_cents INTEGER CHECK (cert_estimate_cents IS NULL OR cert_estimate_cents >= 0);
+      ALTER TABLE owned_items ADD COLUMN cert_lookup_at TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_owned_items_cert_number
+      ON owned_items(grader, cert_number);
+
+      UPDATE app_metadata
+      SET value = '6', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

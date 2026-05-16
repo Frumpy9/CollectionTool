@@ -63,6 +63,13 @@ export type InventoryItem = {
   valueOverrideCents: number | null;
   storageLocation: string | null;
   notes: string | null;
+  certUrl: string | null;
+  certSpecId: string | null;
+  certCategory: string | null;
+  certPopulation: string | null;
+  certPopulationHigher: string | null;
+  certEstimateCents: number | null;
+  certLookupAt: string | null;
   createdAt: string;
   card: {
     name: string;
@@ -105,6 +112,13 @@ export type CreateInventoryItemRequest = {
   valueOverrideCents?: number;
   storageLocation?: string;
   notes?: string;
+  certUrl?: string;
+  certSpecId?: string;
+  certCategory?: string;
+  certPopulation?: string;
+  certPopulationHigher?: string;
+  certEstimateCents?: number;
+  certLookupAt?: string;
 };
 
 export type UpdateInventoryItemRequest = CreateInventoryItemRequest;
@@ -192,5 +206,6 @@ export type PsaCertLookupResponse = {
     category: string | null;
     population: string | null;
     populationHigher: string | null;
+    estimateCents: number | null;
   };
 };

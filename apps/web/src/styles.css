@@ -1022,6 +1022,70 @@ small {
   font-size: 1.25rem;
 }
 
+.graded-cert-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.graded-cert-header,
+.graded-cert-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.graded-cert-header h4 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.graded-cert-actions a,
+.graded-cert-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--panel);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.graded-cert-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.graded-cert-stats div {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.graded-cert-stats span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.graded-cert-stats strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
 .detail-copy,
 .image-edit-form {
   display: grid;
@@ -1283,6 +1347,16 @@ small {
 
   .duplicate-match {
     grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .graded-cert-header,
+  .graded-cert-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .graded-cert-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .detail-image {
