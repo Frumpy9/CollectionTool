@@ -16,6 +16,8 @@
 - [x] Added local-only manual inventory backend.
 - [x] Added manual card entry UI with raw/graded fields.
 - [x] Added local inventory list and collection summary stats.
+- [x] Added PSA cert lookup backend using `PSA_ACCESS_TOKEN`.
+- [x] Added PSA cert import UI under the Cert action.
 
 ## Branch Roadmap
 
@@ -26,6 +28,7 @@
 - [ ] `feature/card-lookup`
 - [ ] `feature/inventory-images`
 - [ ] `feature/graded-certs`
+- [x] `feature/psa-cert-import`
 - [ ] `feature/pricing-comps`
 - [ ] `feature/scanning`
 - [ ] `feature/backups-export`
@@ -58,7 +61,7 @@
 
 ### 4. Graded Cards And Certs
 
-- [ ] Add PSA cert import with PSA API credentials.
+- [x] Add PSA cert import with PSA API token.
 - [ ] Add CGC cert/barcode draft flow.
 - [ ] Add graded card detail UI for grader, grade, cert number, and cert links.
 - [ ] Add barcode scanner path for PSA/CGC slabs.
