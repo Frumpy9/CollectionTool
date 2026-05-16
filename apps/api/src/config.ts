@@ -11,6 +11,7 @@ export type AppConfig = {
   sessionSecret: string;
   cookieSecure: boolean;
   psaAccessToken: string;
+  pokemonTcgApiKey: string;
 };
 
 export function loadConfig(): AppConfig {
@@ -21,6 +22,7 @@ export function loadConfig(): AppConfig {
     port: Number(process.env.PORT ?? 3000),
     sessionSecret: process.env.SESSION_SECRET ?? "dev-only-change-me",
     cookieSecure: (process.env.APP_URL ?? "").startsWith("https://"),
-    psaAccessToken: process.env.PSA_ACCESS_TOKEN ?? ""
+    psaAccessToken: process.env.PSA_ACCESS_TOKEN ?? "",
+    pokemonTcgApiKey: process.env.POKEMONTCG_API_KEY ?? ""
   };
 }
