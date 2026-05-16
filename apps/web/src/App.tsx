@@ -758,7 +758,7 @@ function ManualAddPanel({
       quantity: Number(formData.get("quantity") ?? 1),
       conditionLabel: String(formData.get("conditionLabel") ?? ""),
       conditionScore: optionalNumber(formData.get("conditionScore")),
-      variantDetails: String(formData.get("variantDetails") ?? ""),
+      variantDetails: variantsFromFormData(formData),
       grader: itemType === "graded" ? String(formData.get("grader") ?? "") : "",
       grade: itemType === "graded" ? String(formData.get("grade") ?? "") : "",
       certNumber: itemType === "graded" ? String(formData.get("certNumber") ?? "") : "",
@@ -1030,7 +1030,7 @@ function InventoryItemDetail({
         quantity: Number(formData.get("quantity") ?? 1),
         conditionLabel: String(formData.get("conditionLabel") ?? ""),
         conditionScore: optionalNumber(formData.get("conditionScore")),
-        variantDetails: String(formData.get("variantDetails") ?? ""),
+        variantDetails: variantsFromFormData(formData),
         grader: itemType === "graded" ? String(formData.get("grader") ?? "") : "",
         grade: itemType === "graded" ? String(formData.get("grade") ?? "") : "",
         certNumber: itemType === "graded" ? String(formData.get("certNumber") ?? "") : "",
@@ -1295,19 +1295,29 @@ function InventoryItemDetail({
 }
 
 function CardVariantSelect({ defaultValue = "" }: { defaultValue?: string }) {
-  const hasCustomValue =
-    defaultValue.trim().length > 0 && !variantOptions.includes(defaultValue);
+  const selectedValues = variantsFromText(defaultValue);
+  const customValues = selectedValues.filter((variant) => !variantOptions.includes(variant));
 
   return (
-    <select defaultValue={defaultValue} name="variantDetails">
-      <option value="">Not specified</option>
+    <div className="variant-picker">
       {variantOptions.map((variant) => (
-        <option key={variant} value={variant}>
+        <label key={variant}>
+          <input
+            defaultChecked={selectedValues.includes(variant)}
+            name="variantDetails"
+            type="checkbox"
+            value={variant}
+          />
           {variant}
-        </option>
+        </label>
       ))}
-      {hasCustomValue ? <option value={defaultValue}>{defaultValue}</option> : null}
-    </select>
+      {customValues.map((variant) => (
+        <label key={variant}>
+          <input defaultChecked name="variantDetails" type="checkbox" value={variant} />
+          {variant}
+        </label>
+      ))}
+    </div>
   );
 }
 
@@ -1367,6 +1377,21 @@ function moneyToCents(value: FormDataEntryValue | null) {
 
 function centsToMoneyInput(cents: number | null) {
   return cents === null ? "" : (cents / 100).toFixed(2);
+}
+
+function variantsFromFormData(formData: FormData) {
+  return formData
+    .getAll("variantDetails")
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+function variantsFromText(value: string) {
+  return value
+    .split(",")
+    .map((variant) => variant.trim())
+    .filter(Boolean);
 }
 
 function singleFileFromForm(value: FormDataEntryValue | null) {
