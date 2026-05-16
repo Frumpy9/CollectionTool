@@ -27,8 +27,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   });
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(payload?.error ?? `Request failed with ${response.status}`);
+    const payload = (await response.json().catch(() => null)) as {
+      error?: string;
+      message?: string;
+    } | null;
+    throw new Error(payload?.message ?? payload?.error ?? `Request failed with ${response.status}`);
   }
 
   return response.json() as Promise<T>;
