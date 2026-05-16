@@ -28,6 +28,12 @@ type JustTcgVariant = {
 
 type JustTcgListResponse = {
   data?: JustTcgCard[];
+  meta?: {
+    hasMore?: boolean;
+    limit?: number;
+    offset?: number;
+    total?: number;
+  };
   error?: string;
   message?: string;
 };
@@ -119,7 +125,7 @@ async function searchJustTcgCards({ apiKey, item }: { apiKey: string; item: Inve
   const queries = buildSearchQueries(item);
 
   for (const [index, query] of queries.entries()) {
-    const cards = await fetchJustTcgCards({ apiKey, game, query });
+    const { cards } = await fetchJustTcgCards({ apiKey, game, query, offset: 0 });
 
     for (const card of cards) {
       cardsById.set(card.id, card);
@@ -137,22 +143,52 @@ async function searchJustTcgCards({ apiKey, item }: { apiKey: string; item: Inve
     }
   }
 
+  const [best, nextBest] = rankedCandidates(item, Array.from(cardsById.values()));
+
+  if (best && isConfidentAutoMatch(best, nextBest)) {
+    return Array.from(cardsById.values());
+  }
+
+  const broadQuery = item.card.name;
+  let offset = 10;
+  let hasMore = true;
+
+  while (hasMore && offset <= 20) {
+    const page = await fetchJustTcgCards({ apiKey, game, query: broadQuery, offset });
+
+    for (const card of page.cards) {
+      cardsById.set(card.id, card);
+    }
+
+    const [pageBest, pageNextBest] = rankedCandidates(item, Array.from(cardsById.values()));
+
+    if (pageBest && isConfidentAutoMatch(pageBest, pageNextBest)) {
+      break;
+    }
+
+    hasMore = page.hasMore;
+    offset += 10;
+  }
+
   return Array.from(cardsById.values());
 }
 
 async function fetchJustTcgCards({
   apiKey,
   game,
-  query
+  query,
+  offset
 }: {
   apiKey: string;
   game: string;
   query: string;
+  offset: number;
 }) {
   const params = new URLSearchParams({
     game,
     q: query,
-    limit: "10"
+    limit: "10",
+    offset: String(offset)
   });
   const response = await fetch(`${justTcgBaseUrl}/cards?${params}`, {
     headers: {
@@ -170,7 +206,10 @@ async function fetchJustTcgCards({
     throw new Error(payload.error ?? payload.message ?? `JustTCG returned ${response.status}.`);
   }
 
-  return Array.isArray(payload.data) ? payload.data : [];
+  return {
+    cards: Array.isArray(payload.data) ? payload.data : [],
+    hasMore: Boolean(payload.meta?.hasMore)
+  };
 }
 
 function buildSearchQueries(item: InventoryItem) {
@@ -242,6 +281,12 @@ function candidateFromCard(
       }
     }
   ];
+}
+
+function rankedCandidates(item: InventoryItem, cards: JustTcgCard[]) {
+  return cards
+    .flatMap((card) => candidateFromCard(item, card))
+    .sort((left, right) => right.score - left.score);
 }
 
 function scoreCard(item: InventoryItem, card: JustTcgCard) {
