@@ -101,6 +101,7 @@ type PokeApiSpeciesResponse = {
 const pokemonTcgBaseUrl = "https://api.pokemontcg.io/v2";
 const tcgdexBaseUrl = "https://api.tcgdex.net/v2";
 const pokemonCardJpBaseUrl = "https://www.pokemon-card.com";
+const limitlessBaseUrl = "https://limitlesstcg.com";
 const pokeApiBaseUrl = "https://pokeapi.co/api/v2";
 const officialJapaneseProductIds: Record<string, string> = {
   cp3: "431"
@@ -422,9 +423,21 @@ async function lookupOfficialJapaneseCards(
 
   const importedCount = await importOfficialJapaneseSet(database, parsed);
 
-  if (importedCount === 0) {
+  if (importedCount > 0) {
+    const candidates = lookupJapaneseCacheCards(database, parsed, query);
+
+    if (candidates.length > 0) {
+      return candidates;
+    }
+  }
+
+  const detail = await fetchLimitlessJapaneseCard(parsed);
+
+  if (!detail) {
     return [];
   }
+
+  upsertJapaneseCacheDetails(database, [detail], "limitless");
 
   return lookupJapaneseCacheCards(database, parsed, query);
 }
@@ -556,6 +569,58 @@ async function fetchOfficialJapaneseCardDetail(
   return detail;
 }
 
+async function fetchLimitlessJapaneseCard(
+  parsed: ParsedCardQuery
+): Promise<OfficialJapaneseCardDetail | null> {
+  if (!parsed.setCode || !parsed.printedNumber) {
+    return null;
+  }
+
+  const response = await fetch(
+    `${limitlessBaseUrl}/cards/jp/${encodeURIComponent(parsed.setCode)}/${encodeURIComponent(
+      parsed.printedNumber
+    )}?translate=en`
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html = await response.text();
+  const name = decodeHtmlEntities(
+    matchFirst(html, /<span class="card-text-name"><a[^>]*>([^<]+)<\/a><\/span>/i) ??
+      matchFirst(html, /<title>([^-<]+)-/i)
+  );
+  const setName = decodeHtmlEntities(
+    matchFirst(html, /<span class="text-lg">\s*([^<]+?)\s*<\/span>/i)
+  );
+  const rarity =
+    decodeHtmlEntities(matchFirst(html, /#\d+\s*·\s*([^<]+?)\s*<\/span>/i)) || null;
+  const imageUrl = matchFirst(html, /<img class="card shadow resp-w" src="([^"]+)"/i);
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    sourceId: `${parsed.setCode}:${parsed.printedNumber}`,
+    setCode: parsed.setCode.toLowerCase(),
+    setName: setName || null,
+    cardNumber: parsed.setTotal
+      ? `${parsed.printedNumber}/${parsed.setTotal}`
+      : parsed.printedNumber,
+    printedNumber: parsed.printedNumber,
+    printedTotal: parsed.setTotal,
+    name,
+    japaneseName: name,
+    rarity,
+    imageUrl,
+    rawPayload: JSON.stringify({
+      source: `${limitlessBaseUrl}/cards/jp/${parsed.setCode}/${parsed.printedNumber}?translate=en`
+    })
+  };
+}
+
 async function parseOfficialJapaneseCardDetail(
   html: string,
   cardId: string,
@@ -614,7 +679,8 @@ async function parseOfficialJapaneseCardDetail(
 
 function upsertJapaneseCacheDetails(
   database: AppDatabase,
-  details: OfficialJapaneseCardDetail[]
+  details: OfficialJapaneseCardDetail[],
+  source = "pokemon-card-jp"
 ) {
   const statement = database.connection.prepare(
     `
@@ -632,7 +698,7 @@ function upsertJapaneseCacheDetails(
         image_url,
         raw_payload
       )
-      VALUES (?, 'pokemon-card-jp', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(source, source_id) DO UPDATE SET
         set_code = excluded.set_code,
         set_name = excluded.set_name,
@@ -648,14 +714,15 @@ function upsertJapaneseCacheDetails(
   );
 
   const existing = database.connection.prepare(
-    "SELECT id FROM japanese_card_cache WHERE source = 'pokemon-card-jp' AND source_id = ?"
+    "SELECT id FROM japanese_card_cache WHERE source = ? AND source_id = ?"
   );
 
   for (const detail of details) {
-    const existingRow = existing.get(detail.sourceId) as { id: string } | undefined;
+    const existingRow = existing.get(source, detail.sourceId) as { id: string } | undefined;
 
     statement.run(
       existingRow?.id ?? randomUUID(),
+      source,
       detail.sourceId,
       detail.setCode,
       detail.setName,
