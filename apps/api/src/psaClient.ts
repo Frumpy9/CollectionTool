@@ -4,11 +4,27 @@ const psaBaseUrl = "https://api.psacard.com/publicapi";
 
 type PsaLookupOptions = {
   accessToken: string;
+  pokemonTcgApiKey: string;
   certNumber: string;
+};
+
+type PokemonTcgCard = {
+  id: string;
+  name: string;
+  number: string;
+  rarity?: string;
+  set?: {
+    name?: string;
+  };
+  images?: {
+    small?: string;
+    large?: string;
+  };
 };
 
 export async function lookupPsaCert({
   accessToken,
+  pokemonTcgApiKey,
   certNumber
 }: PsaLookupOptions): Promise<PsaCertLookupResponse> {
   if (!accessToken) {
@@ -34,7 +50,37 @@ export async function lookupPsaCert({
   }
 
   const payload = (await response.json()) as unknown;
-  return normalizePsaResponse(certNumber, payload);
+  const normalized = normalizePsaResponse(certNumber, payload);
+
+  if (!normalized.item?.cardNumber) {
+    return normalized;
+  }
+
+  const pokemonCard = await lookupPokemonTcgCard(
+    normalized.item.cardNumber,
+    pokemonTcgApiKey
+  ).catch(() => null);
+
+  if (!pokemonCard) {
+    return normalized;
+  }
+
+  return {
+    ...normalized,
+    item: {
+      ...normalized.item,
+      name: pokemonCard.name,
+      setName: pokemonCard.set?.name ?? normalized.item.setName,
+      rarity: pokemonCard.rarity ?? normalized.item.rarity,
+      imageUrl: pokemonCard.images?.large ?? pokemonCard.images?.small ?? normalized.item.imageUrl,
+      notes: [
+        normalized.item.notes,
+        `PokemonTCG.io ID: ${pokemonCard.id}`
+      ]
+        .filter(Boolean)
+        .join("\n")
+    }
+  };
 }
 
 function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLookupResponse {
@@ -171,4 +217,25 @@ function stringify(value: unknown) {
 
   const text = String(value).trim();
   return text ? text : null;
+}
+
+async function lookupPokemonTcgCard(cardNumber: string, apiKey: string) {
+  if (!apiKey) {
+    return null;
+  }
+
+  const query = encodeURIComponent(`number:${cardNumber}`);
+  const response = await fetch(`https://api.pokemontcg.io/v2/cards?q=${query}`, {
+    headers: {
+      "X-Api-Key": apiKey,
+      accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as { data?: PokemonTcgCard[] };
+  return payload.data?.[0] ?? null;
 }
