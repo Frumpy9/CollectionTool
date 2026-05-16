@@ -10,6 +10,7 @@ Milestone 1 is focused on the working app shell:
 - Fastify API with `/health`
 - SQLite migration runner
 - Local card image uploads stored outside git
+- Free card lookup through PokemonTCG.io and TCGdex
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 

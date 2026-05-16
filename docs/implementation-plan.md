@@ -20,6 +20,8 @@
 - [x] Added PSA cert import UI under the Cert action.
 - [x] Added card detail image override with URL or local upload.
 - [x] Added authenticated local image serving from app data storage.
+- [x] Added free card lookup for set/card-number and name searches.
+- [x] Added lookup result picker that can add raw or graded inventory items.
 
 ## Branch Roadmap
 
@@ -27,7 +29,7 @@
 - [x] `feature/auth-db`
 - [x] `feature/username-login`
 - [x] `feature/manual-inventory`
-- [ ] `feature/card-lookup`
+- [x] `feature/card-lookup`
 - [x] `feature/inventory-images`
 - [ ] `feature/graded-certs`
 - [x] `feature/psa-cert-import`
@@ -48,11 +50,12 @@
 
 ### 2. Card Lookup Without Paid APIs
 
-- [ ] Add input parser for values like `s10a 073/071`.
-- [ ] Add TCGdex lookup for Japanese and English card metadata.
-- [ ] Add candidate result picker with card images.
-- [ ] Save selected lookup results into the existing `cards` and `owned_items` tables.
-- [ ] Keep manual entry as fallback when lookup fails.
+- [x] Add input parser for values like `s10a 073/071`.
+- [x] Add TCGdex lookup for Japanese and English card metadata.
+- [x] Add PokemonTCG.io lookup for English set/card-number and name searches.
+- [x] Add candidate result picker with card images.
+- [x] Save selected lookup results into the existing `cards` and `owned_items` tables.
+- [x] Keep manual entry and parsed draft candidates as fallback when lookup fails.
 
 ### 3. Images And Attachments
 

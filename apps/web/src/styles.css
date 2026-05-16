@@ -360,6 +360,16 @@ small {
   background: var(--panel-strong);
 }
 
+.mode-actions select {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font-weight: 800;
+}
+
 .manual-panel {
   display: grid;
   gap: 18px;
@@ -435,6 +445,94 @@ small {
 
 .cert-result p:not(.eyebrow) {
   margin-bottom: 0;
+  color: var(--muted);
+}
+
+.lookup-panel {
+  gap: 20px;
+}
+
+.lookup-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.lookup-controls label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.lookup-controls input,
+.lookup-controls select {
+  min-height: 42px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.lookup-note {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.lookup-results {
+  display: grid;
+  gap: 12px;
+}
+
+.lookup-card {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.lookup-image {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--blue);
+  background: var(--panel-strong);
+  overflow: hidden;
+}
+
+.lookup-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.lookup-copy {
+  min-width: 0;
+}
+
+.lookup-copy h4 {
+  margin: 0 0 5px;
+  font-size: 1.2rem;
+  line-height: 1.15;
+}
+
+.lookup-copy p:not(.eyebrow) {
+  margin-bottom: 8px;
   color: var(--muted);
 }
 
@@ -763,6 +861,7 @@ small {
 
   .manual-form,
   .cert-result,
+  .lookup-controls,
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -782,7 +881,8 @@ small {
 
   .icon-button,
   .primary-button,
-  .mode-actions button {
+  .mode-actions button,
+  .mode-actions select {
     width: 100%;
   }
 
@@ -790,8 +890,18 @@ small {
   .manual-form,
   .cert-form,
   .cert-result,
+  .lookup-controls,
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .lookup-card {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .lookup-card .primary-button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .wide-field {

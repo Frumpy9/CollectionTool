@@ -3,6 +3,8 @@ import type {
   BootstrapStatusResponse,
   CardImageUploadRequest,
   CardImageUploadResponse,
+  CardLookupRequest,
+  CardLookupResponse,
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryListResponse,
@@ -60,6 +62,11 @@ export const api = {
     }),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  lookupCards: (payload: CardLookupRequest) =>
+    request<CardLookupResponse>("/api/cards/lookup", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
       method: "POST",
