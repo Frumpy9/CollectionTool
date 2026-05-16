@@ -10,6 +10,7 @@ import { registerBackupRoutes } from "./routes/backupRoutes.js";
 import { registerCardLookupRoutes } from "./routes/cardLookupRoutes.js";
 import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
+import { registerPricingRoutes } from "./routes/pricingRoutes.js";
 import { registerPsaRoutes } from "./routes/psaRoutes.js";
 import { registerUploadRoutes } from "./routes/uploadRoutes.js";
 
@@ -44,6 +45,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerCardLookupRoutes(app, config, database);
   await registerCollectionRoutes(app, database);
   await registerInventoryRoutes(app, database);
+  await registerPricingRoutes(app, config, database);
   await registerPsaRoutes(app, config, database);
   await registerUploadRoutes(app, config, database);
   startScheduledSqliteBackups(app, database, config);

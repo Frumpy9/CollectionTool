@@ -11,6 +11,8 @@ import type {
   InventoryListResponse,
   PsaCertLookupRequest,
   PsaCertLookupResponse,
+  RefreshJustTcgPricingResponse,
+  SelectJustTcgPricingRequest,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
@@ -136,7 +138,27 @@ export const api = {
     request<PsaCertLookupResponse>("/api/psa/cert/lookup", {
       method: "POST",
       body: JSON.stringify(payload)
-    })
+    }),
+  refreshJustTcgPricing: (collectionId: string, itemId: string) =>
+    request<RefreshJustTcgPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/justtcg/refresh`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
+  selectJustTcgPricing: (
+    collectionId: string,
+    itemId: string,
+    payload: SelectJustTcgPricingRequest
+  ) =>
+    request<RefreshJustTcgPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/justtcg/select`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    )
 };
 
 function fileNameFromContentDisposition(contentDisposition: string | null) {

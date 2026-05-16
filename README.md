@@ -66,6 +66,7 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 
 - TCGdex: primary card metadata source, no API key required.
 - PokemonTCG.io: optional free API key for English-card fallback and higher rate limits.
+- JustTCG: optional API key for raw-card guide pricing.
 - PSA Public API: free PSA account/API token required for cert lookup.
 - eBay sold comps: best-effort personal-use sold-search parsing because official sold-history API access is limited/restricted.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.

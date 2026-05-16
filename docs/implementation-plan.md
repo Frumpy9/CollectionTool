@@ -38,6 +38,7 @@
 - [x] Added CSV import preview for manual inventory rows.
 - [x] Documented SQLite backup restore steps.
 - [x] Added scheduled SQLite backups with retention.
+- [x] Added JustTCG raw-card pricing refresh and market-value storage.
 
 ## Branch Roadmap
 
@@ -110,7 +111,8 @@
 ### 5. Pricing And Comps
 
 - [ ] Add manual value override history.
-- [ ] Add guide price storage.
+- [x] Add guide price storage.
+- [x] Add JustTCG raw-card guide price refresh.
 - [ ] Add eBay US sold-comp search/parsing as best-effort personal-use scraping.
 - [ ] Add comp confidence scoring.
 - [ ] Add daily refresh plus manual refresh button.
@@ -153,6 +155,7 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 - [x] PSA Public API account/token for cert lookup.
 - [x] Optional PokemonTCG.io free API key for English fallback and higher rate limits.
+- [x] Optional JustTCG API key for raw-card guide pricing.
 - [ ] No TCGdex API key required.
 - [ ] No eBay API key planned for v1 sold comps.
 - [ ] No CGC API key planned; use best-effort public lookup with manual fallback.

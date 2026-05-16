@@ -211,6 +211,38 @@ const migrations: Migration[] = [
       SET value = '7', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 8,
+    name: "raw_market_prices",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_market_prices (
+        owned_item_id TEXT PRIMARY KEY REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg')),
+        source_card_id TEXT NOT NULL,
+        source_variant_id TEXT NOT NULL,
+        matched_name TEXT NOT NULL,
+        matched_set_name TEXT,
+        matched_card_number TEXT,
+        condition_label TEXT,
+        printing TEXT,
+        language TEXT,
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        currency TEXT NOT NULL DEFAULT 'USD',
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'possible')),
+        looked_up_at TEXT NOT NULL,
+        raw_payload TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_market_prices_source_card
+      ON item_market_prices(source, source_card_id);
+
+      UPDATE app_metadata
+      SET value = '8', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

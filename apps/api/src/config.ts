@@ -12,6 +12,7 @@ export type AppConfig = {
   cookieSecure: boolean;
   psaAccessToken: string;
   pokemonTcgApiKey: string;
+  justTcgApiKey: string;
   uploadsPath: string;
   maxImageUploadBytes: number;
   scheduledBackupsEnabled: boolean;
@@ -29,6 +30,7 @@ export function loadConfig(): AppConfig {
     cookieSecure: (process.env.APP_URL ?? "").startsWith("https://"),
     psaAccessToken: process.env.PSA_ACCESS_TOKEN ?? "",
     pokemonTcgApiKey: process.env.POKEMONTCG_API_KEY ?? "",
+    justTcgApiKey: process.env.JUSTTCG_API_KEY ?? "",
     uploadsPath: process.env.UPLOADS_PATH ?? "./data/uploads",
     maxImageUploadBytes: positiveIntegerFromEnv(
       process.env.MAX_IMAGE_UPLOAD_BYTES,

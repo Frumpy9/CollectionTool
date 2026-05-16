@@ -46,6 +46,10 @@ export type CardLanguage = "en" | "ja" | "other";
 
 export type InventoryItemType = "raw" | "graded";
 
+export type MarketPriceConfidence = "exact" | "strong" | "possible";
+
+export type InventoryMarketPriceSource = "justtcg";
+
 export type InventoryItem = {
   id: string;
   collectionId: string;
@@ -61,6 +65,15 @@ export type InventoryItem = {
   purchasePriceCents: number | null;
   purchaseDate: string | null;
   valueOverrideCents: number | null;
+  marketPriceCents: number | null;
+  marketPriceSource: InventoryMarketPriceSource | null;
+  marketPriceUpdatedAt: string | null;
+  marketPriceConfidence: MarketPriceConfidence | null;
+  marketPriceMatchedName: string | null;
+  marketPriceMatchedSetName: string | null;
+  marketPriceMatchedCardNumber: string | null;
+  marketPriceCondition: string | null;
+  marketPricePrinting: string | null;
   storageLocation: string | null;
   notes: string | null;
   certUrl: string | null;
@@ -133,6 +146,33 @@ export type UpdateInventoryItemRequest = CreateInventoryItemRequest;
 
 export type UpdateInventoryItemImageRequest = {
   imageUrl: string;
+};
+
+export type JustTcgPricingCandidate = {
+  sourceCardId: string;
+  sourceVariantId: string;
+  matchedName: string;
+  matchedSetName: string | null;
+  matchedCardNumber: string | null;
+  condition: string | null;
+  printing: string | null;
+  language: string | null;
+  priceCents: number;
+  currency: "USD";
+  confidence: MarketPriceConfidence;
+  score: number;
+};
+
+export type RefreshJustTcgPricingResponse = {
+  status: "saved" | "needs-review";
+  item: InventoryItem | null;
+  candidates: JustTcgPricingCandidate[];
+  message: string;
+};
+
+export type SelectJustTcgPricingRequest = {
+  sourceCardId: string;
+  sourceVariantId: string;
 };
 
 export type CardImageUploadRequest = {

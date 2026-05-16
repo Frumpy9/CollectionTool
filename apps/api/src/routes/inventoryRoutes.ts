@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import type {
   CardLanguage,
   CreateInventoryItemRequest,
+  InventoryMarketPriceSource,
   InventoryItem,
   InventoryItemType,
+  MarketPriceConfidence,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
@@ -26,6 +28,15 @@ type InventoryRow = {
   purchase_price_cents: number | null;
   purchase_date: string | null;
   value_override_cents: number | null;
+  market_price_cents: number | null;
+  market_price_source: InventoryMarketPriceSource | null;
+  market_price_updated_at: string | null;
+  market_price_confidence: MarketPriceConfidence | null;
+  market_price_matched_name: string | null;
+  market_price_matched_set_name: string | null;
+  market_price_matched_card_number: string | null;
+  market_price_condition: string | null;
+  market_price_printing: string | null;
   storage_location: string | null;
   notes: string | null;
   cert_url: string | null;
@@ -238,6 +249,15 @@ const inventoryCsvColumns = [
   "purchase_price_cents",
   "purchase_date",
   "value_override_cents",
+  "market_price_cents",
+  "market_price_source",
+  "market_price_updated_at",
+  "market_price_confidence",
+  "market_price_matched_name",
+  "market_price_matched_set_name",
+  "market_price_matched_card_number",
+  "market_price_condition",
+  "market_price_printing",
   "storage_location",
   "notes",
   "created_at"
@@ -271,6 +291,15 @@ function toInventoryCsv(items: InventoryItem[]) {
     item.purchasePriceCents,
     item.purchaseDate,
     item.valueOverrideCents,
+    item.marketPriceCents,
+    item.marketPriceSource,
+    item.marketPriceUpdatedAt,
+    item.marketPriceConfidence,
+    item.marketPriceMatchedName,
+    item.marketPriceMatchedSetName,
+    item.marketPriceMatchedCardNumber,
+    item.marketPriceCondition,
+    item.marketPricePrinting,
     item.storageLocation,
     item.notes,
     item.createdAt
@@ -571,7 +600,7 @@ function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId
   return true;
 }
 
-function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {
+export function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {
   const rows = database.connection
     .prepare(
       `
@@ -590,6 +619,15 @@ function listInventoryItems(database: AppDatabase, collectionId: string): Invent
           oi.purchase_price_cents,
           oi.purchase_date,
           oi.value_override_cents,
+          imp.price_cents AS market_price_cents,
+          imp.source AS market_price_source,
+          imp.looked_up_at AS market_price_updated_at,
+          imp.confidence AS market_price_confidence,
+          imp.matched_name AS market_price_matched_name,
+          imp.matched_set_name AS market_price_matched_set_name,
+          imp.matched_card_number AS market_price_matched_card_number,
+          imp.condition_label AS market_price_condition,
+          imp.printing AS market_price_printing,
           oi.storage_location,
           oi.notes,
           oi.cert_url,
@@ -609,6 +647,7 @@ function listInventoryItems(database: AppDatabase, collectionId: string): Invent
           c.image_url
         FROM owned_items oi
         INNER JOIN cards c ON c.id = oi.card_id
+        LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
         WHERE oi.collection_id = ?
         ORDER BY oi.created_at DESC
       `
@@ -634,6 +673,15 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
     purchasePriceCents: row.purchase_price_cents,
     purchaseDate: row.purchase_date,
     valueOverrideCents: row.value_override_cents,
+    marketPriceCents: Number.isFinite(row.market_price_cents) ? row.market_price_cents : null,
+    marketPriceSource: row.market_price_source ?? null,
+    marketPriceUpdatedAt: row.market_price_updated_at ?? null,
+    marketPriceConfidence: row.market_price_confidence ?? null,
+    marketPriceMatchedName: row.market_price_matched_name ?? null,
+    marketPriceMatchedSetName: row.market_price_matched_set_name ?? null,
+    marketPriceMatchedCardNumber: row.market_price_matched_card_number ?? null,
+    marketPriceCondition: row.market_price_condition ?? null,
+    marketPricePrinting: row.market_price_printing ?? null,
     storageLocation: row.storage_location,
     notes: row.notes,
     certUrl: row.cert_url ?? null,
@@ -662,7 +710,8 @@ function summarizeItems(items: InventoryItem[]) {
       summary.itemCount += 1;
       summary.cardCount += item.quantity;
       summary.estimatedValueCents +=
-        (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+        (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) *
+        item.quantity;
       return summary;
     },
     {

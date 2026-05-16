@@ -33,6 +33,7 @@ import type {
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
+  JustTcgPricingCandidate,
   PsaCertLookupResponse
 } from "@collection-tool/shared";
 import { api } from "./api";
@@ -2127,13 +2128,12 @@ function InventoryGrid({
                   {item.grader} {item.grade}
                 </span>
               ) : null}
+              {item.marketPriceCents !== null ? (
+                <span>Market {formatCurrency(item.marketPriceCents)}</span>
+              ) : null}
               {item.storageLocation ? <span>{item.storageLocation}</span> : null}
             </div>
-            <strong>
-              {formatCurrency(
-                (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity
-              )}
-            </strong>
+            <strong>{formatCurrency(inventoryItemValue(item))}</strong>
           </div>
         </article>
       ))}
@@ -2287,6 +2287,109 @@ function GradedCertSummary({
   );
 }
 
+function RawMarketPriceSummary({
+  candidates,
+  isRefreshing,
+  item,
+  onRefresh,
+  onSelectCandidate
+}: {
+  candidates: JustTcgPricingCandidate[];
+  isRefreshing: boolean;
+  item: InventoryItem;
+  onRefresh: () => void;
+  onSelectCandidate: (candidate: JustTcgPricingCandidate) => void;
+}) {
+  const lookupDate = item.marketPriceUpdatedAt ? new Date(item.marketPriceUpdatedAt) : null;
+  const lookupLabel =
+    lookupDate && !Number.isNaN(lookupDate.getTime())
+      ? lookupDate.toLocaleDateString()
+      : null;
+
+  return (
+    <section className="raw-price-panel" aria-label="Raw market price">
+      <div className="graded-cert-header">
+        <div>
+          <p className="eyebrow">Raw market price</p>
+          <h4>
+            {item.marketPriceCents !== null
+              ? formatCurrency(item.marketPriceCents)
+              : "No market price yet"}
+          </h4>
+        </div>
+        <div className="graded-cert-actions">
+          <button disabled={isRefreshing} onClick={onRefresh} type="button">
+            <RefreshCw size={16} aria-hidden="true" />
+            {isRefreshing ? "Refreshing..." : "Refresh raw price"}
+          </button>
+        </div>
+      </div>
+
+      {item.marketPriceCents !== null ? (
+        <>
+          <div className="graded-cert-stats">
+            <div>
+              <span>Source</span>
+              <strong>{item.marketPriceSource === "justtcg" ? "JustTCG" : "Unknown"}</strong>
+            </div>
+            <div>
+              <span>Confidence</span>
+              <strong>{item.marketPriceConfidence ?? "Unknown"}</strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{lookupLabel ?? "Unknown"}</strong>
+            </div>
+          </div>
+          <div className="inventory-meta">
+            {item.marketPriceMatchedName ? <span>{item.marketPriceMatchedName}</span> : null}
+            {item.marketPriceMatchedSetName ? <span>{item.marketPriceMatchedSetName}</span> : null}
+            {item.marketPriceMatchedCardNumber ? (
+              <span>{item.marketPriceMatchedCardNumber}</span>
+            ) : null}
+            {item.marketPriceCondition ? <span>{item.marketPriceCondition}</span> : null}
+            {item.marketPricePrinting ? <span>{item.marketPricePrinting}</span> : null}
+          </div>
+        </>
+      ) : (
+        <p className="lookup-note">
+          Refresh with JustTCG to store a raw-card guide price. Graded cards are excluded.
+        </p>
+      )}
+
+      {candidates.length > 0 ? (
+        <div className="price-candidate-list">
+          {candidates.map((candidate) => (
+            <article className="price-candidate" key={candidate.sourceVariantId}>
+              <div>
+                <strong>{candidate.matchedName}</strong>
+                <p>
+                  {[candidate.matchedSetName, candidate.matchedCardNumber]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <div className="inventory-meta">
+                  <span>{formatCurrency(candidate.priceCents)}</span>
+                  <span>{candidate.confidence}</span>
+                  {candidate.condition ? <span>{candidate.condition}</span> : null}
+                  {candidate.printing ? <span>{candidate.printing}</span> : null}
+                </div>
+              </div>
+              <button
+                disabled={isRefreshing}
+                onClick={() => onSelectCandidate(candidate)}
+                type="button"
+              >
+                Use this price
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function InventoryItemDetail({
   collectionId,
   item,
@@ -2303,13 +2406,17 @@ function InventoryItemDetail({
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
   const [itemType, setItemType] = useState<InventoryItemType>(item.itemType);
   const [language, setLanguage] = useState<CardLanguage>(item.card.language);
-  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing">("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing" | "pricing">(
+    "idle"
+  );
+  const [pricingCandidates, setPricingCandidates] = useState<JustTcgPricingCandidate[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setImageUrl(item.card.imageUrl ?? "");
     setItemType(item.itemType);
     setLanguage(item.card.language);
+    setPricingCandidates([]);
     setError("");
     setStatus("idle");
   }, [item]);
@@ -2428,6 +2535,61 @@ function InventoryItemDetail({
     }
   }
 
+  async function handleRefreshRawPrice() {
+    if (item.itemType !== "raw") {
+      setError("JustTCG pricing is only available for raw cards.");
+      return;
+    }
+
+    setError("");
+    setPricingCandidates([]);
+    setStatus("pricing");
+
+    try {
+      const response = await api.refreshJustTcgPricing(collectionId, item.id);
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setPricingCandidates(response.status === "needs-review" ? response.candidates : []);
+
+      if (response.status === "needs-review") {
+        setError(response.message);
+      }
+    } catch (pricingError) {
+      setError(
+        pricingError instanceof Error ? pricingError.message : "Unable to refresh JustTCG pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleSelectRawPrice(candidate: JustTcgPricingCandidate) {
+    setError("");
+    setStatus("pricing");
+
+    try {
+      const response = await api.selectJustTcgPricing(collectionId, item.id, {
+        sourceCardId: candidate.sourceCardId,
+        sourceVariantId: candidate.sourceVariantId
+      });
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setPricingCandidates([]);
+    } catch (pricingError) {
+      setError(
+        pricingError instanceof Error ? pricingError.message : "Unable to save JustTCG pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
   return (
     <div className="detail-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -2475,6 +2637,16 @@ function InventoryItemDetail({
                 item={item}
                 isRefreshing={status === "refreshing"}
                 onRefresh={handleRefreshCert}
+              />
+            ) : null}
+
+            {itemType === "raw" ? (
+              <RawMarketPriceSummary
+                candidates={pricingCandidates}
+                isRefreshing={status === "pricing"}
+                item={item}
+                onRefresh={handleRefreshRawPrice}
+                onSelectCandidate={handleSelectRawPrice}
               />
             ) : null}
 
@@ -2687,7 +2859,8 @@ function summarizeInventory(items: InventoryItem[]): InventoryListResponse {
         summary.itemCount += 1;
         summary.cardCount += item.quantity;
         summary.estimatedValueCents +=
-          (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+          (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) *
+          item.quantity;
         return summary;
       },
       { itemCount: 0, cardCount: 0, estimatedValueCents: 0 }
@@ -3344,7 +3517,10 @@ function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterSt
       return false;
     }
 
-    const hasValue = item.valueOverrideCents !== null || item.purchasePriceCents !== null;
+    const hasValue =
+      item.valueOverrideCents !== null ||
+      item.marketPriceCents !== null ||
+      item.purchasePriceCents !== null;
 
     if (filters.valueStatus === "with-value" && !hasValue) {
       return false;
@@ -3516,7 +3692,7 @@ function uniqueSorted(values: Array<string | null>) {
 }
 
 function inventoryItemValue(item: InventoryItem) {
-  return (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+  return (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) * item.quantity;
 }
 
 function normalizeSearchText(value: string) {
