@@ -82,14 +82,28 @@ type OfficialJapaneseCardDetail = {
   printedNumber: string;
   printedTotal: string | null;
   name: string;
+  japaneseName: string;
   rarity: string | null;
   imageUrl: string | null;
   rawPayload: string;
 };
 
+type PokeApiSpeciesResponse = {
+  names?: Array<{
+    name?: string;
+    language?: {
+      name?: string;
+    };
+  }>;
+};
+
 const pokemonTcgBaseUrl = "https://api.pokemontcg.io/v2";
 const tcgdexBaseUrl = "https://api.tcgdex.net/v2";
 const pokemonCardJpBaseUrl = "https://www.pokemon-card.com";
+const pokeApiBaseUrl = "https://pokeapi.co/api/v2";
+const officialJapaneseProductIds: Record<string, string> = {
+  cp3: "431"
+};
 
 export async function lookupCards({
   query,
@@ -450,6 +464,15 @@ async function importOfficialJapaneseSet(database: AppDatabase, parsed: ParsedCa
 }
 
 async function fetchOfficialJapaneseProduct(setCode: string) {
+  const mappedProductId = officialJapaneseProductIds[setCode.toLowerCase()];
+
+  if (mappedProductId) {
+    return {
+      productId: mappedProductId,
+      setName: null
+    };
+  }
+
   const response = await fetch(`${pokemonCardJpBaseUrl}/ex/${encodeURIComponent(setCode)}/`);
 
   if (!response.ok) {
@@ -521,18 +544,23 @@ async function fetchOfficialJapaneseCardDetail(
   }
 
   const html = await response.text();
-  const detail = parseOfficialJapaneseCardDetail(html, cardId, fallbackSetCode, fallbackSetName);
+  const detail = await parseOfficialJapaneseCardDetail(
+    html,
+    cardId,
+    fallbackSetCode,
+    fallbackSetName
+  );
 
   return detail;
 }
 
-function parseOfficialJapaneseCardDetail(
+async function parseOfficialJapaneseCardDetail(
   html: string,
   cardId: string,
   fallbackSetCode: string,
   fallbackSetName: string | null
-): OfficialJapaneseCardDetail | null {
-  const name = decodeHtmlEntities(
+): Promise<OfficialJapaneseCardDetail | null> {
+  const japaneseName = decodeHtmlEntities(
     matchFirst(html, /<h1[^>]*class="[^"]*Heading1[^"]*"[^>]*>([^<]+)/i)
   );
   const setCode = decodeHtmlEntities(
@@ -542,13 +570,17 @@ function parseOfficialJapaneseCardDetail(
     /class="img-regulation"[^>]*alt="[^"]+"[^>]*>\s*(?:&nbsp;|\s)*([a-z0-9]+)\s*(?:&nbsp;|\s)*\/\s*(?:&nbsp;|\s)*([a-z0-9]+)/i
   );
 
-  if (!name || !setCode || !numberMatch) {
+  if (!japaneseName || !setCode || !numberMatch) {
     return null;
   }
 
   const printedNumber = numberMatch[1];
   const printedTotal = numberMatch[2] ?? null;
   const imagePath = matchFirst(html, /<img[^>]*class="fit"[^>]*src="([^"]+)"/i);
+  const dexId =
+    matchFirst(html, /####\s*No\.(\d+)/i) ??
+    matchFirst(html, /<h4>\s*No\.(\d+)/i);
+  const englishName = dexId ? await fetchEnglishPokemonSpeciesName(dexId) : null;
   const setName =
     decodeHtmlEntities(matchFirst(html, /<li class="List_item"><a[^>]*>([^<]+)<\/a>/i)) ||
     fallbackSetName;
@@ -564,11 +596,15 @@ function parseOfficialJapaneseCardDetail(
     cardNumber: printedTotal ? `${printedNumber}/${printedTotal}` : printedNumber,
     printedNumber,
     printedTotal,
-    name,
+    name: applyJapaneseCardSuffix(japaneseName, englishName),
+    japaneseName,
     rarity,
     imageUrl: imagePath ? absolutePokemonCardJpUrl(imagePath) : null,
     rawPayload: JSON.stringify({
       cardId,
+      dexId,
+      japaneseName,
+      englishName,
       source: `${pokemonCardJpBaseUrl}/card-search/details.php/card/${cardId}`
     })
   };
@@ -955,6 +991,31 @@ function decodeHtmlEntities(value: string | null | undefined) {
 
 function absolutePokemonCardJpUrl(path: string) {
   return path.startsWith("http") ? path : `${pokemonCardJpBaseUrl}${path}`;
+}
+
+async function fetchEnglishPokemonSpeciesName(dexId: string) {
+  const response = await fetch(`${pokeApiBaseUrl}/pokemon-species/${encodeURIComponent(dexId)}`);
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as PokeApiSpeciesResponse;
+  const englishName = payload.names?.find((name) => name.language?.name === "en")?.name;
+
+  return englishName ?? null;
+}
+
+function applyJapaneseCardSuffix(japaneseName: string, englishName: string | null) {
+  if (!englishName) {
+    return japaneseName;
+  }
+
+  const suffix = japaneseName.match(/[A-Za-z][A-Za-z0-9-]*$/)?.[0];
+
+  return suffix && !englishName.toLowerCase().endsWith(suffix.toLowerCase())
+    ? `${englishName} ${suffix}`
+    : englishName;
 }
 
 async function mapWithConcurrency<Input, Output>(
