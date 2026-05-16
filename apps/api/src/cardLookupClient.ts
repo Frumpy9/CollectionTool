@@ -154,7 +154,7 @@ export async function lookupCards({
 export function parseCardQuery(query: string): ParsedCardQuery {
   const normalized = query.trim();
   const setNumberMatch = normalized.match(
-    /^([a-z0-9][a-z0-9-]{1,18})[\s#-]+([a-z0-9]+(?:\/[a-z0-9]+)?)$/i
+    /^([a-z0-9][a-z0-9-]{1,18})[\s#-]+((?=[a-z0-9/]*\d)[a-z0-9]+(?:\/[a-z0-9]+)?)$/i
   );
 
   if (setNumberMatch) {
@@ -332,7 +332,9 @@ function buildPokemonTcgQuery(parsed: ParsedCardQuery, query: string) {
   }
 
   if (query.length >= 2) {
-    return `name:${escapePokemonTcgTerm(query)}*`;
+    const nameTerms = pokemonTcgNameTerms(query);
+
+    return nameTerms.length > 0 ? nameTerms.map((term) => `name:${term}*`).join(" ") : null;
   }
 
   return null;
@@ -865,10 +867,10 @@ function dedupeCandidates(candidates: CardLookupCandidate[]) {
   return candidates
     .filter((candidate) => {
       const key = [
-        candidate.name.toLowerCase(),
+        normalizeCandidateName(candidate.name),
         candidate.language,
         candidate.setCode?.toLowerCase(),
-        candidate.cardNumber?.toLowerCase()
+        normalizeCandidateCardNumber(candidate.cardNumber)
       ].join("|");
 
       if (seen.has(key)) {
@@ -1042,6 +1044,19 @@ function numberMatches(
   );
 }
 
+function normalizeCandidateName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function normalizeCandidateCardNumber(value: string | null | undefined) {
+  const cardNumber = value?.split("/")[0]?.toLowerCase() ?? "";
+
+  return normalizeLeadingZeroCardNumber(cardNumber);
+}
+
 function displayCardNumber(cardNumber: string | undefined, printedTotal: number | undefined) {
   return cardNumber && printedTotal ? `${cardNumber}/${printedTotal}` : cardNumber;
 }
@@ -1147,4 +1162,11 @@ async function mapWithConcurrency<Input, Output>(
 
 function escapePokemonTcgTerm(value: string) {
   return value.replace(/["\\]/g, "");
+}
+
+function pokemonTcgNameTerms(query: string) {
+  return query
+    .split(/[^a-z0-9]+/i)
+    .map((term) => escapePokemonTcgTerm(term.trim().toLowerCase()))
+    .filter(Boolean);
 }
