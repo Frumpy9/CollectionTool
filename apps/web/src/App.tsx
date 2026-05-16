@@ -2123,6 +2123,7 @@ function InventoryGrid({
               <span>Qty {item.quantity}</span>
               {item.conditionLabel ? <span>{item.conditionLabel}</span> : null}
               {item.conditionScore ? <span>{item.conditionScore}/10</span> : null}
+              {item.variantDetails ? <span>{item.variantDetails}</span> : null}
               {item.grader && item.grade ? (
                 <span>
                   {item.grader} {item.grade}
@@ -2624,6 +2625,7 @@ function InventoryItemDetail({
               {item.card.setCode ? <span>{item.card.setCode}</span> : null}
               {item.card.cardNumber ? <span>{item.card.cardNumber}</span> : null}
               {item.card.setName ? <span>{item.card.setName}</span> : null}
+              {item.variantDetails ? <span>{item.variantDetails}</span> : null}
               {item.grader && item.grade ? (
                 <span>
                   {item.grader} {item.grade}

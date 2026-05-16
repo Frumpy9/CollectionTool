@@ -230,6 +230,10 @@ function variantScore(item: InventoryItem, variant: JustTcgVariant) {
   const variantPrinting = normalizeText(variant.printing);
   const variantLanguage = normalizeText(variant.language);
   const itemVariants = normalizeText(item.variantDetails);
+  const wantsFirstEdition = itemVariants.includes("1st edition");
+  const isFirstEdition = variantPrinting.includes("1st edition");
+  const isUnlimitedOrNormal =
+    variantPrinting.includes("unlimited") || variantPrinting === "normal";
 
   if (desiredCondition && variantCondition === desiredCondition) {
     score += 3;
@@ -252,8 +256,16 @@ function variantScore(item: InventoryItem, variant: JustTcgVariant) {
     variantPrinting.includes("holo")
   ) {
     score += 2;
-  } else if (!itemVariants.includes("reverse") && variantPrinting === "normal") {
+  } else if (!itemVariants.includes("reverse") && isUnlimitedOrNormal) {
     score += 1;
+  }
+
+  if (wantsFirstEdition && isFirstEdition) {
+    score += 3;
+  } else if (!wantsFirstEdition && isFirstEdition) {
+    score -= 4;
+  } else if (!wantsFirstEdition && isUnlimitedOrNormal) {
+    score += 2;
   }
 
   return score;
