@@ -18,6 +18,8 @@
 - [x] Added local inventory list and collection summary stats.
 - [x] Added PSA cert lookup backend using `PSA_ACCESS_TOKEN`.
 - [x] Added PSA cert import UI under the Cert action.
+- [x] Added card detail image override with URL or local upload.
+- [x] Added authenticated local image serving from app data storage.
 
 ## Branch Roadmap
 
@@ -26,7 +28,7 @@
 - [x] `feature/username-login`
 - [x] `feature/manual-inventory`
 - [ ] `feature/card-lookup`
-- [ ] `feature/inventory-images`
+- [x] `feature/inventory-images`
 - [ ] `feature/graded-certs`
 - [x] `feature/psa-cert-import`
 - [ ] `feature/pricing-comps`
@@ -55,8 +57,9 @@
 ### 3. Images And Attachments
 
 - [ ] Cache external card images locally when allowed.
-- [ ] Add optional manual image URL per card.
-- [ ] Add optional local upload for front/back photos.
+- [x] Add optional manual image URL per card.
+- [x] Add optional local upload for front card images.
+- [ ] Add separate back-photo attachment support.
 - [ ] Add PSA cert images later when cert import is implemented.
 
 ### 4. Graded Cards And Certs

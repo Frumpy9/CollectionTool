@@ -107,6 +107,21 @@ export type CreateInventoryItemRequest = {
   notes?: string;
 };
 
+export type UpdateInventoryItemImageRequest = {
+  imageUrl: string;
+};
+
+export type CardImageUploadRequest = {
+  collectionId: string;
+  fileName: string;
+  mimeType: string;
+  dataBase64: string;
+};
+
+export type CardImageUploadResponse = {
+  imageUrl: string;
+};
+
 export type PsaCertLookupRequest = {
   certNumber: string;
 };
