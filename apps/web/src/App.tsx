@@ -608,7 +608,7 @@ function CardLookupPanel({
                   </p>
                   <div className="inventory-meta">
                     {candidate.rarity ? <span>{candidate.rarity}</span> : null}
-                    <span>{candidate.sourceId}</span>
+                    {displayLookupSourceId(candidate) ? <span>{candidate.sourceId}</span> : null}
                   </div>
                 </div>
                 <button
@@ -1293,6 +1293,14 @@ function InventoryItemDetail({
       </section>
     </div>
   );
+}
+
+function displayLookupSourceId(candidate: CardLookupCandidate) {
+  if (candidate.source === "japanese-cache") {
+    return false;
+  }
+
+  return Boolean(candidate.sourceId);
 }
 
 function CardVariantSelect({ defaultValue = "" }: { defaultValue?: string }) {
