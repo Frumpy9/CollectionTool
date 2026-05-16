@@ -29,6 +29,9 @@
 - [x] Added bulk card lookup and bulk PSA cert import from pasted or uploaded text lists.
 - [x] Added duplicate detection with a quantity-merge choice before adding matching inventory rows.
 - [x] Added persistent graded-cert metadata and slab detail UI for PSA imports.
+- [x] Fixed graded-cert metadata migration id collision and added self-healing cert column setup.
+- [x] Removed PSA estimate UI because the public PSA API did not return estimate values in testing.
+- [x] Verified detail modal closes after saving card edits.
 
 ## Branch Roadmap
 
@@ -39,7 +42,7 @@
 - [x] `feature/card-lookup`
 - [x] `feature/bulk-lookup`
 - [x] `feature/inventory-images`
-- [ ] `feature/graded-certs`
+- [x] `feature/graded-certs`
 - [x] `feature/psa-cert-import`
 - [ ] `feature/pricing-comps`
 - [ ] `feature/scanning`
@@ -92,6 +95,10 @@
 - [x] Add bulk PSA cert import from newline-separated text lists.
 - [ ] Add CGC cert/barcode draft flow.
 - [x] Add graded card detail UI for grader, grade, cert number, and cert links.
+- [x] Persist PSA cert URL, spec ID, category, population, pop higher, and lookup timestamp.
+- [x] Add PSA cert refresh action on graded card details.
+- [x] Repair migration safety after parked pricing work reused migration id 6.
+- [x] Remove PSA estimate display until a reliable free source exists.
 - [ ] Add barcode scanner path for PSA/CGC slabs.
 
 ### 5. Pricing And Comps
@@ -138,8 +145,18 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 ## API Keys Needed Later
 
-- [ ] PSA Public API account/token for cert lookup.
-- [ ] Optional PokemonTCG.io free API key for English fallback and higher rate limits.
+- [x] PSA Public API account/token for cert lookup.
+- [x] Optional PokemonTCG.io free API key for English fallback and higher rate limits.
 - [ ] No TCGdex API key required.
 - [ ] No eBay API key planned for v1 sold comps.
 - [ ] No CGC API key planned; use best-effort public lookup with manual fallback.
+
+## End Of Night Checkpoint
+
+- Current working branch: `codex/graded-card-details`.
+- Bulk lookup is merged into `main`.
+- Duplicate/quantity merge is committed on `codex/duplicate-quantity-merge`.
+- Graded cert details are committed on `codex/graded-card-details`.
+- The current dev database has the graded cert metadata columns applied.
+- Verified in browser: PSA cert refresh persists population/pop higher/spec/category and Save changes closes the detail modal.
+- PSA estimate is intentionally not shown because the public PSA lookup response did not include it for cert `59711010`.
