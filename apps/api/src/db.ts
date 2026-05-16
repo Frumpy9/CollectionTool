@@ -155,6 +155,42 @@ const migrations: Migration[] = [
       SET value = '4', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 5,
+    name: "japanese_card_cache",
+    sql: `
+      CREATE TABLE IF NOT EXISTS japanese_card_cache (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        set_code TEXT NOT NULL,
+        set_name TEXT,
+        card_number TEXT NOT NULL,
+        printed_number TEXT NOT NULL,
+        printed_total TEXT,
+        name TEXT NOT NULL,
+        rarity TEXT,
+        image_url TEXT,
+        raw_payload TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source, source_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_japanese_card_cache_set_number
+      ON japanese_card_cache(set_code, printed_number);
+
+      CREATE INDEX IF NOT EXISTS idx_japanese_card_cache_number_total
+      ON japanese_card_cache(printed_number, printed_total);
+
+      CREATE INDEX IF NOT EXISTS idx_japanese_card_cache_name
+      ON japanese_card_cache(name);
+
+      UPDATE app_metadata
+      SET value = '5', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

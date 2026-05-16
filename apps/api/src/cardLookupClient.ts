@@ -4,11 +4,13 @@ import type {
   CardLookupResponse,
   CreateInventoryItemRequest
 } from "@collection-tool/shared";
+import type { AppDatabase } from "./db.js";
 
 type CardLookupOptions = {
   query: string;
   language: CardLanguage | "all";
   pokemonTcgApiKey: string;
+  database: AppDatabase;
 };
 
 type ParsedCardQuery = CardLookupResponse["parsed"];
@@ -43,13 +45,28 @@ type TcgdexCard = {
   };
 };
 
+type JapaneseCacheRow = {
+  id: string;
+  source: string;
+  source_id: string;
+  set_code: string;
+  set_name: string | null;
+  card_number: string;
+  printed_number: string;
+  printed_total: string | null;
+  name: string;
+  rarity: string | null;
+  image_url: string | null;
+};
+
 const pokemonTcgBaseUrl = "https://api.pokemontcg.io/v2";
 const tcgdexBaseUrl = "https://api.tcgdex.net/v2";
 
 export async function lookupCards({
   query,
   language,
-  pokemonTcgApiKey
+  pokemonTcgApiKey,
+  database
 }: CardLookupOptions): Promise<CardLookupResponse> {
   const normalizedQuery = query.trim();
   const parsed = parseCardQuery(normalizedQuery);
@@ -61,6 +78,7 @@ export async function lookupCards({
   }
 
   if (language === "all" || language === "ja") {
+    lookupTasks.push(Promise.resolve(lookupJapaneseCacheCards(database, parsed, normalizedQuery)));
     lookupTasks.push(lookupTcgdexCards("ja", parsed, normalizedQuery));
   }
 
@@ -312,6 +330,102 @@ function mapTcgdexCard(
   };
 }
 
+function lookupJapaneseCacheCards(
+  database: AppDatabase,
+  parsed: ParsedCardQuery,
+  query: string
+): CardLookupCandidate[] {
+  const rows = selectJapaneseCacheRows(database, parsed, query);
+
+  return rows.map((row) => mapJapaneseCacheRow(row, parsed));
+}
+
+function selectJapaneseCacheRows(
+  database: AppDatabase,
+  parsed: ParsedCardQuery,
+  query: string
+) {
+  if (parsed.kind === "set-number" && parsed.setCode && parsed.printedNumber) {
+    const [printedNumber, localId] = cardNumberSearchValues(parsed);
+
+    return database.connection
+      .prepare(
+        `
+          SELECT *
+          FROM japanese_card_cache
+          WHERE set_code = ? AND printed_number IN (?, ?)
+          ORDER BY updated_at DESC
+          LIMIT 12
+        `
+      )
+      .all(parsed.setCode, printedNumber, localId) as JapaneseCacheRow[];
+  }
+
+  if (parsed.kind === "number" && parsed.printedNumber && parsed.setTotal) {
+    const [printedNumber, localId] = cardNumberSearchValues(parsed);
+
+    return database.connection
+      .prepare(
+        `
+          SELECT *
+          FROM japanese_card_cache
+          WHERE printed_number IN (?, ?) AND printed_total = ?
+          ORDER BY updated_at DESC
+          LIMIT 12
+        `
+      )
+      .all(printedNumber, localId, parsed.setTotal) as JapaneseCacheRow[];
+  }
+
+  if (parsed.kind === "name" && query.length >= 2) {
+    return database.connection
+      .prepare(
+        `
+          SELECT *
+          FROM japanese_card_cache
+          WHERE name LIKE ?
+          ORDER BY updated_at DESC
+          LIMIT 12
+        `
+      )
+      .all(`%${query}%`) as JapaneseCacheRow[];
+  }
+
+  return [];
+}
+
+function mapJapaneseCacheRow(
+  row: JapaneseCacheRow,
+  parsed: ParsedCardQuery
+): CardLookupCandidate {
+  const item = buildInventoryItem({
+    name: row.name,
+    setName: row.set_name,
+    setCode: row.set_code,
+    cardNumber: row.card_number,
+    language: "ja",
+    rarity: row.rarity,
+    imageUrl: row.image_url,
+    sourceLabel: `Japanese cache: ${row.source} ${row.source_id}`
+  });
+
+  return {
+    id: `jp-cache:${row.id}`,
+    source: "japanese-cache",
+    sourceId: row.source_id,
+    confidence: confidenceForCard(row.set_code, row.printed_number, parsed, row.printed_total),
+    name: row.name,
+    setName: row.set_name,
+    setCode: row.set_code,
+    cardNumber: row.card_number,
+    language: "ja",
+    rarity: row.rarity,
+    imageUrl: row.image_url,
+    item,
+    score: scoreGenericCard(row.set_code, row.printed_number, parsed, row.printed_total)
+  };
+}
+
 function buildInventoryItem(input: {
   name: string;
   setName: string | null;
@@ -374,7 +488,11 @@ function dedupeCandidates(candidates: CardLookupCandidate[]) {
 }
 
 function sourceRank(source: CardLookupCandidate["source"]) {
-  return source === "pokemontcg" ? 0 : source === "tcgdex" ? 1 : 2;
+  if (source === "japanese-cache") {
+    return 0;
+  }
+
+  return source === "pokemontcg" ? 1 : source === "tcgdex" ? 2 : 3;
 }
 
 function buildParsedFallbackCandidate(parsed: ParsedCardQuery): CardLookupCandidate[] {
@@ -417,7 +535,7 @@ function scoreGenericCard(
   setCode: string | undefined,
   cardNumber: string | undefined,
   parsed: ParsedCardQuery,
-  printedTotal?: number
+  printedTotal?: number | string | null
 ) {
   const normalizedSetCode = setCode?.toLowerCase();
   const normalizedCardNumber = cardNumber?.toLowerCase();
@@ -452,7 +570,7 @@ function confidenceForCard(
   setCode: string | undefined,
   cardNumber: string | undefined,
   parsed: ParsedCardQuery,
-  printedTotal?: number
+  printedTotal?: number | string | null
 ): CardLookupCandidate["confidence"] {
   const normalizedSetCode = setCode?.toLowerCase();
   const normalizedCardNumber = cardNumber?.toLowerCase();
@@ -489,6 +607,13 @@ function splitCardNumber(cardNumber: string) {
     setTotal: setTotal ?? null,
     localId: printedNumber.padStart(3, "0")
   };
+}
+
+function cardNumberSearchValues(parsed: ParsedCardQuery) {
+  const printedNumber = parsed.printedNumber ?? "";
+  const localId = parsed.localId ?? printedNumber;
+
+  return [printedNumber, localId] as const;
 }
 
 function numberMatches(

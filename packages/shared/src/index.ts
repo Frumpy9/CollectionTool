@@ -131,7 +131,7 @@ export type CardLookupRequest = {
 
 export type CardLookupCandidate = {
   id: string;
-  source: "pokemontcg" | "tcgdex" | "parsed";
+  source: "pokemontcg" | "tcgdex" | "japanese-cache" | "parsed";
   sourceId: string;
   confidence: "exact" | "strong" | "possible";
   name: string;
@@ -156,6 +156,22 @@ export type CardLookupResponse = {
     localId: string | null;
   };
   candidates: CardLookupCandidate[];
+};
+
+export type UpsertJapaneseCardCacheRequest = {
+  source?: string;
+  sourceId?: string;
+  setCode: string;
+  setName?: string;
+  cardNumber: string;
+  name: string;
+  rarity?: string;
+  imageUrl?: string;
+};
+
+export type JapaneseCardCacheResponse = {
+  ok: true;
+  id: string;
 };
 
 export type PsaCertLookupRequest = {

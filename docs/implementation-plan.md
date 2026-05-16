@@ -59,6 +59,12 @@
 - [x] Add candidate result picker with card images.
 - [x] Save selected lookup results into the existing `cards` and `owned_items` tables.
 - [x] Keep manual entry and parsed draft candidates as fallback when lookup fails.
+- [x] Add SQLite-backed Japanese card cache for fast local set/card lookups.
+- [x] Add authenticated API endpoint to seed/update Japanese cache entries.
+- [ ] Add importer/backfill for Japanese set lists from free sources where available.
+- [x] Normalize Japanese cache fields: set code, card number, printed total, name, rarity, image URL, source.
+- [x] Search Japanese cache before live APIs using indexed set/card and number/total queries.
+- [ ] Add admin/maintenance UI to import or refresh a Japanese set.
 
 ### 3. Images And Attachments
 
