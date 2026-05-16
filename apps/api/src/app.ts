@@ -7,6 +7,7 @@ import type { AppDatabase } from "./db.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
+import { registerPsaRoutes } from "./routes/psaRoutes.js";
 
 export async function createApp(config: AppConfig, database: AppDatabase) {
   const app = Fastify({
@@ -37,6 +38,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerAuthRoutes(app, config, database);
   await registerCollectionRoutes(app, database);
   await registerInventoryRoutes(app, database);
+  await registerPsaRoutes(app, config, database);
 
   app.addHook("onClose", async () => {
     database.connection.close();

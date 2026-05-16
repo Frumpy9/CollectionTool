@@ -106,3 +106,24 @@ export type CreateInventoryItemRequest = {
   storageLocation?: string;
   notes?: string;
 };
+
+export type PsaCertLookupRequest = {
+  certNumber: string;
+};
+
+export type PsaCertLookupResponse = {
+  certNumber: string;
+  isValidRequest: boolean;
+  serverMessage: string;
+  item: CreateInventoryItemRequest | null;
+  source: {
+    specId: string | null;
+    year: string | null;
+    brand: string | null;
+    subject: string | null;
+    variety: string | null;
+    category: string | null;
+    population: string | null;
+    populationHigher: string | null;
+  };
+};
