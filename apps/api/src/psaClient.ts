@@ -15,6 +15,7 @@ type PokemonTcgCard = {
   rarity?: string;
   set?: {
     name?: string;
+    series?: string;
   };
   images?: {
     small?: string;
@@ -58,6 +59,10 @@ export async function lookupPsaCert({
 
   const pokemonCard = await lookupPokemonTcgCard(
     normalized.item.cardNumber,
+    {
+      brand: normalized.source.brand,
+      subject: normalized.source.subject
+    },
     pokemonTcgApiKey
   ).catch(() => null);
 
@@ -219,7 +224,11 @@ function stringify(value: unknown) {
   return text ? text : null;
 }
 
-async function lookupPokemonTcgCard(cardNumber: string, apiKey: string) {
+async function lookupPokemonTcgCard(
+  cardNumber: string,
+  psaContext: { brand: string | null; subject: string | null },
+  apiKey: string
+) {
   if (!apiKey) {
     return null;
   }
@@ -237,5 +246,61 @@ async function lookupPokemonTcgCard(cardNumber: string, apiKey: string) {
   }
 
   const payload = (await response.json()) as { data?: PokemonTcgCard[] };
-  return payload.data?.[0] ?? null;
+  return selectBestPokemonTcgCard(payload.data ?? [], psaContext);
+}
+
+function selectBestPokemonTcgCard(
+  cards: PokemonTcgCard[],
+  psaContext: { brand: string | null; subject: string | null }
+) {
+  let best: { card: PokemonTcgCard; score: number } | null = null;
+
+  for (const card of cards) {
+    const score = scorePokemonTcgCandidate(card, psaContext);
+
+    if (!best || score > best.score) {
+      best = { card, score };
+    }
+  }
+
+  return best && best.score >= 4 ? best.card : null;
+}
+
+function scorePokemonTcgCandidate(
+  card: PokemonTcgCard,
+  psaContext: { brand: string | null; subject: string | null }
+) {
+  const brandTokens = tokenize(psaContext.brand);
+  const subjectTokens = tokenize(psaContext.subject);
+  const setTokens = tokenize([card.set?.name, card.set?.series].filter(Boolean).join(" "));
+  const nameTokens = tokenize(card.name);
+
+  let score = 0;
+
+  for (const token of brandTokens) {
+    if (setTokens.has(token)) {
+      score += token.length >= 4 ? 2 : 1;
+    }
+  }
+
+  for (const token of subjectTokens) {
+    if (nameTokens.has(token)) {
+      score += token.length >= 4 ? 3 : 1;
+    }
+  }
+
+  return score;
+}
+
+function tokenize(value: string | null | undefined) {
+  const ignored = new Set(["pokemon", "tcg", "cards", "card", "the", "and"]);
+
+  return new Set(
+    (value ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(" ")
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 2 && !ignored.has(token))
+  );
 }
