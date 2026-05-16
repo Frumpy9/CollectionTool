@@ -271,6 +271,7 @@ function WorkspaceShell({
   >(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showDataMenu, setShowDataMenu] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
     useState<InventoryFilterState>(defaultInventoryFilters);
   const [lookupQuery, setLookupQuery] = useState("");
@@ -470,6 +471,7 @@ function WorkspaceShell({
       const { blob, fileName } = await api.exportInventoryCsv(activeCollection.id);
       downloadBlob(blob, fileName);
       setExportStatus("idle");
+      setShowDataMenu(false);
       setDataActionMessage(`Exported ${fileName}.`);
     } catch (error) {
       setExportStatus("error");
@@ -489,6 +491,7 @@ function WorkspaceShell({
     try {
       const response = await api.createSqliteBackup(activeCollection.id);
       setBackupStatus("idle");
+      setShowDataMenu(false);
       setDataActionMessage(
         `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`
       );
@@ -574,50 +577,75 @@ function WorkspaceShell({
             <h2 id="workspace-title">Collection workspace</h2>
           </div>
           <div className="topbar-actions">
-            <button
-              className={`icon-button ${exportStatus === "loading" ? "active" : ""}`}
-              type="button"
-              aria-label="Export inventory CSV"
-              disabled={!activeCollection || exportStatus === "loading"}
-              onClick={handleExportInventoryCsv}
-              title="Export inventory CSV"
-            >
-              <Download size={20} aria-hidden="true" />
-            </button>
-            <button
-              className={`icon-button ${backupStatus === "loading" ? "active" : ""}`}
-              type="button"
-              aria-label="Back up SQLite database"
-              disabled={!activeCollection || backupStatus === "loading"}
-              onClick={handleCreateSqliteBackup}
-              title="Back up SQLite database"
-            >
-              <HardDriveDownload size={20} aria-hidden="true" />
-            </button>
+            <div className="data-menu-wrap">
+              <button
+                className={`primary-button secondary-button ${showDataMenu ? "active" : ""}`}
+                type="button"
+                aria-expanded={showDataMenu}
+                aria-haspopup="menu"
+                disabled={!activeCollection}
+                onClick={() => setShowDataMenu((isOpen) => !isOpen)}
+              >
+                <Database size={18} aria-hidden="true" />
+                Data
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {showDataMenu ? (
+                <div className="data-menu" role="menu" aria-label="Data actions">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={exportStatus === "loading"}
+                    onClick={handleExportInventoryCsv}
+                  >
+                    <Download size={18} aria-hidden="true" />
+                    {exportStatus === "loading" ? "Exporting..." : "Export CSV"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={backupStatus === "loading"}
+                    onClick={handleCreateSqliteBackup}
+                  >
+                    <HardDriveDownload size={18} aria-hidden="true" />
+                    {backupStatus === "loading" ? "Backing up..." : "Back up SQLite"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActivePanel((panel) => (panel === "import" ? null : "import"));
+                      setShowDataMenu(false);
+                    }}
+                  >
+                    <Upload size={18} aria-hidden="true" />
+                    Import CSV
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button
               className={`icon-button ${showFilters ? "active" : ""}`}
               type="button"
               aria-label="Filter collection"
               aria-expanded={showFilters}
-              onClick={() => setShowFilters((isOpen) => !isOpen)}
+              onClick={() => {
+                setShowFilters((isOpen) => !isOpen);
+                setShowDataMenu(false);
+              }}
             >
               <ListFilter size={20} aria-hidden="true" />
             </button>
             <button
               className="primary-button"
               type="button"
-              onClick={() => setActivePanel((panel) => (panel === "manual" ? null : "manual"))}
+              onClick={() => {
+                setActivePanel((panel) => (panel === "manual" ? null : "manual"));
+                setShowDataMenu(false);
+              }}
             >
               <Plus size={18} aria-hidden="true" />
               Add card
-            </button>
-            <button
-              className="primary-button secondary-button"
-              type="button"
-              onClick={() => setActivePanel((panel) => (panel === "import" ? null : "import"))}
-            >
-              <Upload size={18} aria-hidden="true" />
-              Import CSV
             </button>
           </div>
         </header>
