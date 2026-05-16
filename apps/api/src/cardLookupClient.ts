@@ -22,6 +22,8 @@ type PokemonTcgCard = {
     id?: string;
     name?: string;
     series?: string;
+    printedTotal?: number;
+    total?: number;
   };
   images?: {
     small?: string;
@@ -91,7 +93,7 @@ export function parseCardQuery(query: string): ParsedCardQuery {
       kind: "set-number",
       setCode: setNumberMatch[1].toLowerCase(),
       cardNumber: setNumberMatch[2],
-      localId: localIdFromCardNumber(setNumberMatch[2])
+      ...splitCardNumber(setNumberMatch[2])
     };
   }
 
@@ -100,7 +102,7 @@ export function parseCardQuery(query: string): ParsedCardQuery {
       kind: "number",
       setCode: null,
       cardNumber: normalized,
-      localId: localIdFromCardNumber(normalized)
+      ...splitCardNumber(normalized)
     };
   }
 
@@ -108,6 +110,8 @@ export function parseCardQuery(query: string): ParsedCardQuery {
     kind: "name",
     setCode: null,
     cardNumber: null,
+    printedNumber: null,
+    setTotal: null,
     localId: null
   };
 }
@@ -128,7 +132,9 @@ async function lookupPokemonTcgCards(
   }
 
   const response = await fetch(
-    `${pokemonTcgBaseUrl}/cards?q=${encodeURIComponent(q)}&pageSize=12&orderBy=set.releaseDate`,
+    `${pokemonTcgBaseUrl}/cards?q=${encodeURIComponent(q)}&pageSize=${pokemonTcgPageSize(
+      parsed
+    )}&orderBy=set.releaseDate`,
     {
       headers: {
         "X-Api-Key": apiKey,
@@ -209,12 +215,12 @@ async function fetchTcgdexCardById(language: "en" | "ja", cardId: string | undef
 function buildPokemonTcgQuery(parsed: ParsedCardQuery, query: string) {
   if (parsed.kind === "set-number" && parsed.setCode && parsed.cardNumber) {
     return `set.id:${escapePokemonTcgTerm(parsed.setCode)} number:${escapePokemonTcgTerm(
-      parsed.cardNumber
+      parsed.printedNumber ?? parsed.cardNumber
     )}`;
   }
 
   if (parsed.kind === "number" && parsed.cardNumber) {
-    return `number:${escapePokemonTcgTerm(parsed.cardNumber)}`;
+    return `number:${escapePokemonTcgTerm(parsed.printedNumber ?? parsed.cardNumber)}`;
   }
 
   if (query.length >= 2) {
@@ -224,13 +230,17 @@ function buildPokemonTcgQuery(parsed: ParsedCardQuery, query: string) {
   return null;
 }
 
+function pokemonTcgPageSize(parsed: ParsedCardQuery) {
+  return parsed.kind === "number" && parsed.setTotal ? 50 : 12;
+}
+
 function mapPokemonTcgCard(card: PokemonTcgCard, parsed: ParsedCardQuery): CardLookupCandidate {
   const imageUrl = card.images?.large ?? card.images?.small ?? null;
   const item = buildInventoryItem({
     name: card.name,
     setName: card.set?.name ?? null,
     setCode: card.set?.id ?? null,
-    cardNumber: card.number ?? null,
+    cardNumber: displayCardNumber(card.number, card.set?.printedTotal) ?? null,
     language: "en",
     rarity: card.rarity ?? null,
     imageUrl,
@@ -241,11 +251,11 @@ function mapPokemonTcgCard(card: PokemonTcgCard, parsed: ParsedCardQuery): CardL
     id: `pokemontcg:${card.id}`,
     source: "pokemontcg",
     sourceId: card.id,
-    confidence: confidenceForCard(card.set?.id, card.number, parsed),
+    confidence: confidenceForCard(card.set?.id, card.number, parsed, card.set?.printedTotal),
     name: card.name,
     setName: card.set?.name ?? null,
     setCode: card.set?.id ?? null,
-    cardNumber: card.number ?? null,
+    cardNumber: displayCardNumber(card.number, card.set?.printedTotal) ?? null,
     language: "en",
     rarity: card.rarity ?? null,
     imageUrl,
@@ -331,7 +341,19 @@ function dedupeCandidates(candidates: CardLookupCandidate[]) {
       seen.add(key);
       return true;
     })
-    .sort((left, right) => confidenceRank[left.confidence] - confidenceRank[right.confidence]);
+    .sort((left, right) => {
+      const confidenceDelta = confidenceRank[left.confidence] - confidenceRank[right.confidence];
+
+      if (confidenceDelta !== 0) {
+        return confidenceDelta;
+      }
+
+      return sourceRank(left.source) - sourceRank(right.source);
+    });
+}
+
+function sourceRank(source: CardLookupCandidate["source"]) {
+  return source === "pokemontcg" ? 0 : source === "tcgdex" ? 1 : 2;
 }
 
 function buildParsedFallbackCandidate(parsed: ParsedCardQuery): CardLookupCandidate[] {
@@ -372,34 +394,61 @@ function buildParsedFallbackCandidate(parsed: ParsedCardQuery): CardLookupCandid
 function confidenceForCard(
   setCode: string | undefined,
   cardNumber: string | undefined,
-  parsed: ParsedCardQuery
+  parsed: ParsedCardQuery,
+  printedTotal?: number
 ): CardLookupCandidate["confidence"] {
   const normalizedSetCode = setCode?.toLowerCase();
   const normalizedCardNumber = cardNumber?.toLowerCase();
   const parsedSetCode = parsed.setCode?.toLowerCase();
   const parsedCardNumber = parsed.cardNumber?.toLowerCase();
+  const parsedPrintedNumber = parsed.printedNumber?.toLowerCase();
   const parsedLocalId = parsed.localId?.toLowerCase();
+  const normalizedPrintedTotal = printedTotal ? String(printedTotal).toLowerCase() : null;
+  const parsedSetTotal = parsed.setTotal?.toLowerCase() ?? null;
 
   if (
     parsed.kind === "set-number" &&
     normalizedSetCode === parsedSetCode &&
-    (normalizedCardNumber === parsedCardNumber || normalizedCardNumber === parsedLocalId)
+    numberMatches(normalizedCardNumber, parsedCardNumber, parsedPrintedNumber, parsedLocalId)
   ) {
     return "exact";
   }
 
   if (
     parsed.kind === "number" &&
-    (normalizedCardNumber === parsedCardNumber || normalizedCardNumber === parsedLocalId)
+    numberMatches(normalizedCardNumber, parsedCardNumber, parsedPrintedNumber, parsedLocalId)
   ) {
-    return "strong";
+    return parsedSetTotal && normalizedPrintedTotal === parsedSetTotal ? "exact" : "strong";
   }
 
   return parsed.kind === "name" ? "possible" : "possible";
 }
 
-function localIdFromCardNumber(cardNumber: string) {
-  return cardNumber.split("/")[0].padStart(3, "0");
+function splitCardNumber(cardNumber: string) {
+  const [printedNumber, setTotal] = cardNumber.split("/");
+
+  return {
+    printedNumber,
+    setTotal: setTotal ?? null,
+    localId: printedNumber.padStart(3, "0")
+  };
+}
+
+function numberMatches(
+  cardNumber: string | undefined,
+  parsedCardNumber: string | undefined,
+  parsedPrintedNumber: string | undefined,
+  parsedLocalId: string | undefined
+) {
+  return (
+    cardNumber === parsedCardNumber ||
+    cardNumber === parsedPrintedNumber ||
+    cardNumber === parsedLocalId
+  );
+}
+
+function displayCardNumber(cardNumber: string | undefined, printedTotal: number | undefined) {
+  return cardNumber && printedTotal ? `${cardNumber}/${printedTotal}` : cardNumber;
 }
 
 function escapePokemonTcgTerm(value: string) {
