@@ -1952,11 +1952,12 @@ function InventoryItemDetail({
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setError("");
     setStatus("saving");
 
     try {
-      const formData = new FormData(event.currentTarget);
+      const formData = new FormData(form);
       const imageFile = singleFileFromForm(formData.get("imageFile"));
       const nextImageUrl = imageFile ? await uploadCardImage(collectionId, imageFile) : imageUrl;
       const response = await api.updateInventoryItem(collectionId, item.id, {
@@ -1990,7 +1991,7 @@ function InventoryItemDetail({
       });
 
       onUpdated(response.item);
-      event.currentTarget.reset();
+      form.reset();
       onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save image.");
