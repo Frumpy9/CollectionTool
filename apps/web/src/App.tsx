@@ -1909,9 +1909,7 @@ function GradedCertSummary({
         </div>
         <div>
           <span>PSA estimate</span>
-          <strong>
-            {item.certEstimateCents !== null ? formatCurrency(item.certEstimateCents) : "Unknown"}
-          </strong>
+          <strong>{formatOptionalCurrency(item.certEstimateCents)}</strong>
         </div>
         <div>
           <span>Population</span>
@@ -2870,6 +2868,10 @@ function formatCurrency(cents: number) {
     style: "currency",
     currency: "USD"
   }).format(cents / 100);
+}
+
+function formatOptionalCurrency(cents: number | null | undefined) {
+  return typeof cents === "number" && Number.isFinite(cents) ? formatCurrency(cents) : "Unknown";
 }
 
 function optionalNumber(value: FormDataEntryValue | null) {
