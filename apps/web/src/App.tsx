@@ -711,7 +711,7 @@ function WorkspaceShell({
             }}
             onUpdated={(updatedItem) => {
               setInventory((current) => updateInventoryItem(current, updatedItem));
-              setSelectedItem(null);
+              setSelectedItem(updatedItem);
             }}
           />
         ) : null}
@@ -1998,6 +1998,7 @@ function InventoryItemDetail({
 
       onUpdated(response.item);
       event.currentTarget.reset();
+      onClose();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save image.");
     } finally {
@@ -2062,7 +2063,7 @@ function InventoryItemDetail({
         item.id,
         mergeCertRefreshPayload(item, lookup.item)
       );
-      onUpdated(response.item);
+      onUpdated(mergeCertLookupIntoInventoryItem(response.item, lookup));
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : "Unable to refresh PSA cert.");
       setStatus("idle");
@@ -2428,6 +2429,28 @@ function mergeCertRefreshPayload(
     certPopulationHigher: certPayload.certPopulationHigher ?? current.certPopulationHigher,
     certEstimateCents: certPayload.certEstimateCents ?? current.certEstimateCents,
     certLookupAt: certPayload.certLookupAt ?? current.certLookupAt
+  };
+}
+
+function mergeCertLookupIntoInventoryItem(
+  item: InventoryItem,
+  lookup: PsaCertLookupResponse
+): InventoryItem {
+  const source = lookup.source;
+
+  return {
+    ...item,
+    certUrl: item.certUrl ?? `https://www.psacard.com/cert/${lookup.certNumber}/psa`,
+    certSpecId: item.certSpecId ?? source.specId,
+    certCategory: item.certCategory ?? source.category,
+    certPopulation: item.certPopulation ?? source.population,
+    certPopulationHigher: item.certPopulationHigher ?? source.populationHigher,
+    certEstimateCents:
+      item.certEstimateCents ??
+      (typeof source.estimateCents === "number" && Number.isFinite(source.estimateCents)
+        ? source.estimateCents
+        : null),
+    certLookupAt: item.certLookupAt ?? new Date().toISOString()
   };
 }
 

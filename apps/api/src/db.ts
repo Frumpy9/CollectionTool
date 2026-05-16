@@ -193,7 +193,7 @@ const migrations: Migration[] = [
     `
   },
   {
-    id: 6,
+    id: 7,
     name: "graded_cert_metadata",
     sql: `
       ALTER TABLE owned_items ADD COLUMN cert_url TEXT;
@@ -208,7 +208,7 @@ const migrations: Migration[] = [
       ON owned_items(grader, cert_number);
 
       UPDATE app_metadata
-      SET value = '6', updated_at = CURRENT_TIMESTAMP
+      SET value = '7', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
   }
@@ -257,9 +257,54 @@ export function openDatabase(databasePath: string): AppDatabase {
     }
   }
 
+  ensureOwnedItemCertMetadataColumns(connection);
+
   return {
     path: databasePath,
     connection,
     migrationsApplied
   };
+}
+
+function ensureOwnedItemCertMetadataColumns(connection: DatabaseSync) {
+  const columns = new Set(
+    connection
+      .prepare("PRAGMA table_info(owned_items)")
+      .all()
+      .map((column) => String((column as { name: string }).name))
+  );
+
+  const missingColumns = [
+    ["cert_url", "TEXT"],
+    ["cert_spec_id", "TEXT"],
+    ["cert_category", "TEXT"],
+    ["cert_population", "TEXT"],
+    ["cert_population_higher", "TEXT"],
+    [
+      "cert_estimate_cents",
+      "INTEGER CHECK (cert_estimate_cents IS NULL OR cert_estimate_cents >= 0)"
+    ],
+    ["cert_lookup_at", "TEXT"]
+  ].filter(([name]) => !columns.has(name));
+
+  if (missingColumns.length === 0) {
+    return;
+  }
+
+  connection.exec("BEGIN");
+  try {
+    for (const [name, definition] of missingColumns) {
+      connection.exec(`ALTER TABLE owned_items ADD COLUMN ${name} ${definition};`);
+    }
+
+    connection.exec(`
+      CREATE INDEX IF NOT EXISTS idx_owned_items_cert_number
+      ON owned_items(grader, cert_number);
+    `);
+
+    connection.exec("COMMIT");
+  } catch (error) {
+    connection.exec("ROLLBACK");
+    throw error;
+  }
 }
