@@ -37,6 +37,31 @@ type HealthState =
   | { status: "ok"; timestamp: string; migrationsApplied: number }
   | { status: "error"; message: string };
 
+type InventorySortMode = "newest" | "name" | "set" | "value" | "quantity";
+type InventoryValueFilter = "all" | "with-value" | "missing-value";
+
+type InventoryFilterState = {
+  query: string;
+  itemType: InventoryItemType | "all";
+  language: CardLanguage | "all";
+  variants: string[];
+  conditionLabel: string;
+  storageLocation: string;
+  valueStatus: InventoryValueFilter;
+  sort: InventorySortMode;
+};
+
+type InventoryFilterOptions = {
+  conditions: string[];
+  storageLocations: string[];
+};
+
+type InventoryFilterChip = {
+  key: string;
+  label: string;
+  onRemove: () => void;
+};
+
 const roadmapItems = [
   "Manual card lookup",
   "Full accounts",
@@ -56,6 +81,17 @@ const variantOptions = [
   "Error",
   "Other"
 ];
+
+const defaultInventoryFilters: InventoryFilterState = {
+  query: "",
+  itemType: "all",
+  language: "all",
+  variants: [],
+  conditionLabel: "",
+  storageLocation: "",
+  valueStatus: "all",
+  sort: "newest"
+};
 
 export function App() {
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
@@ -193,6 +229,9 @@ function WorkspaceShell({
   const [inventoryError, setInventoryError] = useState("");
   const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [showFilters, setShowFilters] = useState(false);
+  const [inventoryFilters, setInventoryFilters] =
+    useState<InventoryFilterState>(defaultInventoryFilters);
   const [lookupQuery, setLookupQuery] = useState("");
   const [lookupLanguage, setLookupLanguage] = useState<CardLanguage | "all">("all");
   const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
@@ -227,6 +266,59 @@ function WorkspaceShell({
       cancelled = true;
     };
   }, [activeCollection?.id]);
+
+  const filteredItems = useMemo(
+    () => filterInventoryItems(inventory.items, inventoryFilters),
+    [inventory.items, inventoryFilters]
+  );
+  const filterOptions = useMemo(() => getInventoryFilterOptions(inventory.items), [inventory.items]);
+  const activeFilterChips = useMemo(
+    () =>
+      getInventoryFilterChips(inventoryFilters, {
+        onClearQuery: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            query: ""
+          })),
+        onClearItemType: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            itemType: "all"
+          })),
+        onClearLanguage: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            language: "all"
+          })),
+        onClearVariant: (variant) =>
+          setInventoryFilters((current) => ({
+            ...current,
+            variants: current.variants.filter((selected) => selected !== variant)
+          })),
+        onClearCondition: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            conditionLabel: ""
+          })),
+        onClearStorage: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            storageLocation: ""
+          })),
+        onClearValueStatus: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            valueStatus: "all"
+          })),
+        onClearSort: () =>
+          setInventoryFilters((current) => ({
+            ...current,
+            sort: "newest"
+          }))
+      }),
+    [inventoryFilters]
+  );
+  const hasActiveInventoryFilters = activeFilterChips.length > 0;
 
   const workspaceStats = [
     { label: "Total cards", value: String(inventory.summary.cardCount), icon: Grid2X2 },
@@ -343,7 +435,13 @@ function WorkspaceShell({
             <h2 id="workspace-title">Collection workspace</h2>
           </div>
           <div className="topbar-actions">
-            <button className="icon-button" type="button" aria-label="Filter collection">
+            <button
+              className={`icon-button ${showFilters ? "active" : ""}`}
+              type="button"
+              aria-label="Filter collection"
+              aria-expanded={showFilters}
+              onClick={() => setShowFilters((isOpen) => !isOpen)}
+            >
               <ListFilter size={20} aria-hidden="true" />
             </button>
             <button
@@ -394,6 +492,18 @@ function WorkspaceShell({
             </button>
           </div>
         </form>
+
+        {showFilters ? (
+          <InventoryFilterPanel
+            chips={activeFilterChips}
+            filters={inventoryFilters}
+            options={filterOptions}
+            resultCount={filteredItems.length}
+            totalCount={inventory.items.length}
+            onChange={setInventoryFilters}
+            onClearAll={() => setInventoryFilters(defaultInventoryFilters)}
+          />
+        ) : null}
 
         {activePanel === "lookup" && activeCollection ? (
           <CardLookupPanel
@@ -446,7 +556,30 @@ function WorkspaceShell({
         </section>
 
         {inventory.items.length > 0 ? (
-          <InventoryGrid items={inventory.items} onSelect={setSelectedItem} />
+          <>
+            <div className="inventory-list-header">
+              <p>
+                Showing <strong>{filteredItems.length}</strong> of{" "}
+                <strong>{inventory.items.length}</strong>
+              </p>
+              {hasActiveInventoryFilters ? (
+                <button type="button" onClick={() => setInventoryFilters(defaultInventoryFilters)}>
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+            {filteredItems.length > 0 ? (
+              <InventoryGrid items={filteredItems} onSelect={setSelectedItem} />
+            ) : (
+              <section className="empty-state filtered-empty" id="collection">
+                <div className="empty-copy">
+                  <p className="eyebrow">No visible matches</p>
+                  <h3>No cards match those filters.</h3>
+                  <p>Clear a filter or adjust the search text to bring cards back into view.</p>
+                </div>
+              </section>
+            )}
+          </>
         ) : (
           <section className="empty-state" id="collection">
             <div className="empty-visual" aria-hidden="true">
@@ -921,6 +1054,177 @@ function ManualAddPanel({
   );
 }
 
+function InventoryFilterPanel({
+  chips,
+  filters,
+  options,
+  resultCount,
+  totalCount,
+  onChange,
+  onClearAll
+}: {
+  chips: InventoryFilterChip[];
+  filters: InventoryFilterState;
+  options: InventoryFilterOptions;
+  resultCount: number;
+  totalCount: number;
+  onChange: React.Dispatch<React.SetStateAction<InventoryFilterState>>;
+  onClearAll: () => void;
+}) {
+  function updateFilter(next: Partial<InventoryFilterState>) {
+    onChange((current) => ({
+      ...current,
+      ...next
+    }));
+  }
+
+  function toggleVariant(variant: string) {
+    onChange((current) => {
+      const isSelected = current.variants.includes(variant);
+
+      return {
+        ...current,
+        variants: isSelected
+          ? current.variants.filter((selected) => selected !== variant)
+          : [...current.variants, variant]
+      };
+    });
+  }
+
+  return (
+    <section className="filter-panel" aria-label="Inventory filters">
+      <div className="filter-panel-header">
+        <div>
+          <p className="eyebrow">Inventory filters</p>
+          <h3>Find cards you already own</h3>
+        </div>
+        <p>
+          Showing <strong>{resultCount}</strong> of <strong>{totalCount}</strong>
+        </p>
+      </div>
+
+      <div className="filter-grid">
+        <label className="wide-field">
+          Search inventory
+          <input
+            onChange={(event) => updateFilter({ query: event.target.value })}
+            placeholder="Name, set, number, cert, storage, notes..."
+            value={filters.query}
+          />
+        </label>
+        <label>
+          Type
+          <select
+            onChange={(event) =>
+              updateFilter({ itemType: event.target.value as InventoryItemType | "all" })
+            }
+            value={filters.itemType}
+          >
+            <option value="all">All cards</option>
+            <option value="raw">Raw</option>
+            <option value="graded">Graded</option>
+          </select>
+        </label>
+        <label>
+          Language
+          <select
+            onChange={(event) =>
+              updateFilter({ language: event.target.value as CardLanguage | "all" })
+            }
+            value={filters.language}
+          >
+            <option value="all">All languages</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label>
+          Condition
+          <select
+            onChange={(event) => updateFilter({ conditionLabel: event.target.value })}
+            value={filters.conditionLabel}
+          >
+            <option value="">Any condition</option>
+            {options.conditions.map((condition) => (
+              <option key={condition} value={condition}>
+                {condition}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Storage
+          <select
+            onChange={(event) => updateFilter({ storageLocation: event.target.value })}
+            value={filters.storageLocation}
+          >
+            <option value="">Any storage</option>
+            {options.storageLocations.map((storage) => (
+              <option key={storage} value={storage}>
+                {storage}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Value
+          <select
+            onChange={(event) =>
+              updateFilter({ valueStatus: event.target.value as InventoryValueFilter })
+            }
+            value={filters.valueStatus}
+          >
+            <option value="all">Any value</option>
+            <option value="with-value">Has value</option>
+            <option value="missing-value">Missing value</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select
+            onChange={(event) => updateFilter({ sort: event.target.value as InventorySortMode })}
+            value={filters.sort}
+          >
+            <option value="newest">Newest first</option>
+            <option value="name">Name A-Z</option>
+            <option value="set">Set/code</option>
+            <option value="value">Highest value</option>
+            <option value="quantity">Quantity</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="filter-variants" aria-label="Variant filters">
+        {variantOptions.map((variant) => (
+          <button
+            className={filters.variants.includes(variant) ? "selected" : ""}
+            key={variant}
+            onClick={() => toggleVariant(variant)}
+            type="button"
+          >
+            {variant}
+          </button>
+        ))}
+      </div>
+
+      {chips.length > 0 ? (
+        <div className="active-filters" aria-label="Active filters">
+          {chips.map((chip) => (
+            <button key={chip.key} onClick={chip.onRemove} type="button">
+              <span>{chip.label}</span>
+              <X size={14} aria-hidden="true" />
+            </button>
+          ))}
+          <button className="clear-filter-button" onClick={onClearAll} type="button">
+            Clear all
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function InventoryGrid({
   items,
   onSelect
@@ -1360,6 +1664,231 @@ function removeInventoryItem(
   removedItemId: string
 ): InventoryListResponse {
   return summarizeInventory(inventory.items.filter((item) => item.id !== removedItemId));
+}
+
+function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterState) {
+  const queryTokens = normalizeSearchText(filters.query).split(" ").filter(Boolean);
+  const filtered = items.filter((item) => {
+    if (filters.itemType !== "all" && item.itemType !== filters.itemType) {
+      return false;
+    }
+
+    if (filters.language !== "all" && item.card.language !== filters.language) {
+      return false;
+    }
+
+    if (filters.conditionLabel && item.conditionLabel !== filters.conditionLabel) {
+      return false;
+    }
+
+    if (filters.storageLocation && item.storageLocation !== filters.storageLocation) {
+      return false;
+    }
+
+    const hasValue = item.valueOverrideCents !== null || item.purchasePriceCents !== null;
+
+    if (filters.valueStatus === "with-value" && !hasValue) {
+      return false;
+    }
+
+    if (filters.valueStatus === "missing-value" && hasValue) {
+      return false;
+    }
+
+    const itemVariants = variantsFromText(item.variantDetails ?? "");
+
+    if (
+      filters.variants.length > 0 &&
+      !filters.variants.every((variant) => itemVariants.includes(variant))
+    ) {
+      return false;
+    }
+
+    if (queryTokens.length === 0) {
+      return true;
+    }
+
+    const haystack = normalizeSearchText(
+      [
+        item.card.name,
+        item.card.setName,
+        item.card.setCode,
+        item.card.cardNumber,
+        item.certNumber,
+        item.storageLocation,
+        item.notes,
+        item.grader,
+        item.grade,
+        item.card.rarity,
+        item.variantDetails,
+        item.conditionLabel
+      ]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    return queryTokens.every((token) => haystack.includes(token));
+  });
+
+  return filtered.sort((left, right) => compareInventoryItems(left, right, filters.sort));
+}
+
+function compareInventoryItems(left: InventoryItem, right: InventoryItem, sort: InventorySortMode) {
+  if (sort === "name") {
+    return left.card.name.localeCompare(right.card.name, undefined, { sensitivity: "base" });
+  }
+
+  if (sort === "set") {
+    const leftSet = [left.card.setCode, left.card.cardNumber, left.card.name].filter(Boolean).join(" ");
+    const rightSet = [right.card.setCode, right.card.cardNumber, right.card.name].filter(Boolean).join(" ");
+
+    return leftSet.localeCompare(rightSet, undefined, { numeric: true, sensitivity: "base" });
+  }
+
+  if (sort === "value") {
+    return inventoryItemValue(right) - inventoryItemValue(left);
+  }
+
+  if (sort === "quantity") {
+    return right.quantity - left.quantity;
+  }
+
+  return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+}
+
+function getInventoryFilterOptions(items: InventoryItem[]): InventoryFilterOptions {
+  return {
+    conditions: uniqueSorted(items.map((item) => item.conditionLabel)),
+    storageLocations: uniqueSorted(items.map((item) => item.storageLocation))
+  };
+}
+
+function getInventoryFilterChips(
+  filters: InventoryFilterState,
+  actions: {
+    onClearQuery: () => void;
+    onClearItemType: () => void;
+    onClearLanguage: () => void;
+    onClearVariant: (variant: string) => void;
+    onClearCondition: () => void;
+    onClearStorage: () => void;
+    onClearValueStatus: () => void;
+    onClearSort: () => void;
+  }
+): InventoryFilterChip[] {
+  const chips: InventoryFilterChip[] = [];
+
+  if (filters.query.trim()) {
+    chips.push({
+      key: "query",
+      label: `Search: ${filters.query.trim()}`,
+      onRemove: actions.onClearQuery
+    });
+  }
+
+  if (filters.itemType !== "all") {
+    chips.push({
+      key: "type",
+      label: filters.itemType === "raw" ? "Raw" : "Graded",
+      onRemove: actions.onClearItemType
+    });
+  }
+
+  if (filters.language !== "all") {
+    chips.push({
+      key: "language",
+      label: languageLabel(filters.language),
+      onRemove: actions.onClearLanguage
+    });
+  }
+
+  for (const variant of filters.variants) {
+    chips.push({
+      key: `variant-${variant}`,
+      label: variant,
+      onRemove: () => actions.onClearVariant(variant)
+    });
+  }
+
+  if (filters.conditionLabel) {
+    chips.push({
+      key: "condition",
+      label: filters.conditionLabel,
+      onRemove: actions.onClearCondition
+    });
+  }
+
+  if (filters.storageLocation) {
+    chips.push({
+      key: "storage",
+      label: `Storage: ${filters.storageLocation}`,
+      onRemove: actions.onClearStorage
+    });
+  }
+
+  if (filters.valueStatus !== "all") {
+    chips.push({
+      key: "value",
+      label: filters.valueStatus === "with-value" ? "Has value" : "Missing value",
+      onRemove: actions.onClearValueStatus
+    });
+  }
+
+  if (filters.sort !== "newest") {
+    chips.push({
+      key: "sort",
+      label: `Sort: ${sortLabel(filters.sort)}`,
+      onRemove: actions.onClearSort
+    });
+  }
+
+  return chips;
+}
+
+function uniqueSorted(values: Array<string | null>) {
+  return [...new Set(values.map((value) => value?.trim()).filter(Boolean) as string[])].sort(
+    (left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })
+  );
+}
+
+function inventoryItemValue(item: InventoryItem) {
+  return (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function languageLabel(language: CardLanguage) {
+  if (language === "en") {
+    return "English";
+  }
+
+  if (language === "ja") {
+    return "Japanese";
+  }
+
+  return "Other language";
+}
+
+function sortLabel(sort: InventorySortMode) {
+  if (sort === "name") {
+    return "Name A-Z";
+  }
+
+  if (sort === "set") {
+    return "Set/code";
+  }
+
+  if (sort === "value") {
+    return "Highest value";
+  }
+
+  if (sort === "quantity") {
+    return "Quantity";
+  }
+
+  return "Newest first";
 }
 
 function formatCurrency(cents: number) {
