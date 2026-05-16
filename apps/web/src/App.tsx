@@ -1331,9 +1331,6 @@ function PsaCertPanel({
             {lookup.source.populationHigher ? (
               <span>Higher {lookup.source.populationHigher}</span>
             ) : null}
-            {lookup.source.estimateCents !== null ? (
-              <span>PSA estimate {formatCurrency(lookup.source.estimateCents)}</span>
-            ) : null}
             {lookup.source.category ? <span>{lookup.source.category}</span> : null}
           </div>
           <button className="primary-button" disabled={status === "saving"} onClick={handleAdd} type="button">
@@ -1906,10 +1903,6 @@ function GradedCertSummary({
         <div>
           <span>Cert #</span>
           <strong>{item.certNumber || "Not set"}</strong>
-        </div>
-        <div>
-          <span>PSA estimate</span>
-          <strong>{formatOptionalCurrency(item.certEstimateCents)}</strong>
         </div>
         <div>
           <span>Population</span>
@@ -2891,10 +2884,6 @@ function formatCurrency(cents: number) {
     style: "currency",
     currency: "USD"
   }).format(cents / 100);
-}
-
-function formatOptionalCurrency(cents: number | null | undefined) {
-  return typeof cents === "number" && Number.isFinite(cents) ? formatCurrency(cents) : "Unknown";
 }
 
 function optionalNumber(value: FormDataEntryValue | null) {
