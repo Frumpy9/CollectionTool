@@ -37,6 +37,7 @@
 - [x] Added admin SQLite backup-now action under `data/backups`.
 - [x] Added CSV import preview for manual inventory rows.
 - [x] Documented SQLite backup restore steps.
+- [x] Added scheduled SQLite backups with retention.
 
 ## Branch Roadmap
 
@@ -51,7 +52,7 @@
 - [x] `feature/psa-cert-import`
 - [ ] `feature/pricing-comps`
 - [ ] `feature/scanning`
-- [ ] `feature/backups-export`
+- [x] `feature/backups-export`
 - [ ] `feature/polish-tests`
 
 ## Next Recommended Milestones
@@ -126,7 +127,7 @@
 
 - [x] Add CSV export for inventory.
 - [x] Add CSV import for manual inventory.
-- [ ] Add scheduled SQLite backups under `/data/backups`.
+- [x] Add scheduled SQLite backups under `/data/backups`.
 - [x] Add admin “backup now” button.
 - [x] Document restore steps.
 

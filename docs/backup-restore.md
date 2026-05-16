@@ -19,7 +19,7 @@ Docker deployment:
 Backup files are named like:
 
 ```text
-collection-2026-05-16T20-48-57Z.sqlite
+collection-2026-05-16T20-48-57-123Z.sqlite
 ```
 
 ## Create A Backup
@@ -27,6 +27,20 @@ collection-2026-05-16T20-48-57Z.sqlite
 In the app, sign in as a collection owner or admin and click the database backup button in the top bar. The API writes a new `.sqlite` file under the backups directory.
 
 You can also export inventory as CSV from the top bar. CSV exports are useful for spreadsheet review and manual import, but the SQLite backup is the full restore point.
+
+## Scheduled Backups
+
+The API also checks for scheduled backups while it is running. By default it creates one SQLite backup every 24 hours and prunes backups older than 30 days.
+
+Configure this with environment variables:
+
+```bash
+ENABLE_SCHEDULED_BACKUPS=true
+BACKUP_INTERVAL_HOURS=24
+BACKUP_RETENTION_DAYS=30
+```
+
+Set `ENABLE_SCHEDULED_BACKUPS=false` to turn the scheduler off.
 
 ## Restore Locally
 

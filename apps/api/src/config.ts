@@ -14,6 +14,9 @@ export type AppConfig = {
   pokemonTcgApiKey: string;
   uploadsPath: string;
   maxImageUploadBytes: number;
+  scheduledBackupsEnabled: boolean;
+  backupIntervalHours: number;
+  backupRetentionDays: number;
 };
 
 export function loadConfig(): AppConfig {
@@ -30,7 +33,10 @@ export function loadConfig(): AppConfig {
     maxImageUploadBytes: positiveIntegerFromEnv(
       process.env.MAX_IMAGE_UPLOAD_BYTES,
       6 * 1024 * 1024
-    )
+    ),
+    scheduledBackupsEnabled: booleanFromEnv(process.env.ENABLE_SCHEDULED_BACKUPS, true),
+    backupIntervalHours: positiveIntegerFromEnv(process.env.BACKUP_INTERVAL_HOURS, 24),
+    backupRetentionDays: positiveIntegerFromEnv(process.env.BACKUP_RETENTION_DAYS, 30)
   };
 }
 
@@ -38,4 +44,12 @@ function positiveIntegerFromEnv(value: string | undefined, fallback: number) {
   const parsed = Number(value);
 
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function booleanFromEnv(value: string | undefined, fallback: boolean) {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }

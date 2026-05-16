@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import Fastify from "fastify";
 import type { HealthResponse } from "@collection-tool/shared";
+import { startScheduledSqliteBackups } from "./backups.js";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
@@ -45,6 +46,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerInventoryRoutes(app, database);
   await registerPsaRoutes(app, config, database);
   await registerUploadRoutes(app, config, database);
+  startScheduledSqliteBackups(app, database, config);
 
   app.addHook("onClose", async () => {
     database.connection.close();

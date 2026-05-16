@@ -12,11 +12,11 @@ Milestone 1 is focused on the working app shell:
 - Local card image uploads stored outside git
 - Free card lookup through PokemonTCG.io and TCGdex
 - Inventory CSV export/import preview
-- SQLite backup-now flow under `data/backups`
+- SQLite backup-now and scheduled backup flow under `data/backups`
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
-Later milestones add CGC cert workflows, pricing comps, camera scanning, scheduled backups, and deeper import/export tools.
+Later milestones add CGC cert workflows, pricing comps, camera scanning, and deeper import/export tools.
 
 ## Requirements
 
