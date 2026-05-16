@@ -53,6 +53,7 @@ const variantOptions = [
   "Stamped",
   "1st Edition",
   "Promo",
+  "Error",
   "Other"
 ];
 
