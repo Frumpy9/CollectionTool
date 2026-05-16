@@ -38,11 +38,17 @@ export async function lookupPsaCert({
 }
 
 function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLookupResponse {
-  const isValidRequest = Boolean(findValue(payload, ["IsValidRequest", "isValidRequest"]));
+  const hasCertPayload = Boolean(findValue(payload, ["PSACert"]));
+  const isValidRequest =
+    hasCertPayload || Boolean(findValue(payload, ["IsValidRequest", "isValidRequest"]));
   const serverMessage =
-    stringify(findValue(payload, ["ServerMessage", "serverMessage"])) ?? "Unknown PSA response.";
+    stringify(findValue(payload, ["ServerMessage", "serverMessage"])) ??
+    (hasCertPayload ? "Request successful" : "Unknown PSA response.");
 
-  if (!isValidRequest || !serverMessage.toLowerCase().includes("successful")) {
+  if (
+    !isValidRequest ||
+    (!hasCertPayload && !serverMessage.toLowerCase().includes("successful"))
+  ) {
     return {
       ...emptyLookup(certNumber, serverMessage),
       isValidRequest
