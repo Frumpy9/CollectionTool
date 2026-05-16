@@ -481,7 +481,7 @@ function WorkspaceShell({
             }}
             onUpdated={(updatedItem) => {
               setInventory((current) => updateInventoryItem(current, updatedItem));
-              setSelectedItem(updatedItem);
+              setSelectedItem(null);
             }}
           />
         ) : null}
