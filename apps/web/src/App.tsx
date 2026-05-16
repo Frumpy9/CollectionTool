@@ -79,6 +79,7 @@ const variantOptions = [
   "1st Edition",
   "Promo",
   "Error",
+  "Misprint",
   "Other"
 ];
 
