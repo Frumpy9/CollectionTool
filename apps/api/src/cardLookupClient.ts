@@ -6,6 +6,7 @@ import type {
   CreateInventoryItemRequest
 } from "@collection-tool/shared";
 import type { AppDatabase } from "./db.js";
+import { japanesePokemonNameMap } from "./japanesePokemonNames.js";
 
 type CardLookupOptions = {
   query: string;
@@ -596,7 +597,7 @@ async function parseOfficialJapaneseCardDetail(
     cardNumber: printedTotal ? `${printedNumber}/${printedTotal}` : printedNumber,
     printedNumber,
     printedTotal,
-    name: applyJapaneseCardSuffix(japaneseName, englishName),
+    name: translateJapaneseCardName(japaneseName, englishName),
     japaneseName,
     rarity,
     imageUrl: imagePath ? absolutePokemonCardJpUrl(imagePath) : null,
@@ -736,8 +737,9 @@ function mapJapaneseCacheRow(
   row: JapaneseCacheRow,
   parsed: ParsedCardQuery
 ): CardLookupCandidate {
+  const name = translateJapaneseCardName(row.name, null);
   const item = buildInventoryItem({
-    name: row.name,
+    name,
     setName: row.set_name,
     setCode: row.set_code,
     cardNumber: row.card_number,
@@ -752,7 +754,7 @@ function mapJapaneseCacheRow(
     source: "japanese-cache",
     sourceId: row.source_id,
     confidence: confidenceForCard(row.set_code, row.printed_number, parsed, row.printed_total),
-    name: row.name,
+    name,
     setName: row.set_name,
     setCode: row.set_code,
     cardNumber: row.card_number,
@@ -1006,16 +1008,41 @@ async function fetchEnglishPokemonSpeciesName(dexId: string) {
   return englishName ?? null;
 }
 
-function applyJapaneseCardSuffix(japaneseName: string, englishName: string | null) {
-  if (!englishName) {
+function translateJapaneseCardName(japaneseName: string, dexEnglishName: string | null) {
+  const translatedName = japanesePokemonNameMap.reduce(
+    (name, [japanese, english]) => name.replaceAll(japanese, english),
+    japaneseName
+  );
+
+  if (translatedName !== japaneseName) {
+    return normalizeTranslatedCardName(translatedName);
+  }
+
+  if (!dexEnglishName) {
     return japaneseName;
   }
 
+  return normalizeTranslatedCardName(applyCardNameSuffix(japaneseName, dexEnglishName));
+}
+
+function applyCardNameSuffix(japaneseName: string, englishName: string) {
   const suffix = japaneseName.match(/[A-Za-z][A-Za-z0-9-]*$/)?.[0];
 
   return suffix && !englishName.toLowerCase().endsWith(suffix.toLowerCase())
     ? `${englishName} ${suffix}`
     : englishName;
+}
+
+function normalizeTranslatedCardName(name: string) {
+  return name
+    .replace(/＆/g, "&")
+    .replace(/\s*&\s*/g, " & ")
+    .replace(/\s*\/\s*/g, " / ")
+    .replace(/\s*・\s*/g, " / ")
+    .replace(/^M(?=[A-Z])/, "M ")
+    .replace(/([A-Za-z])\s*(V-UNION|VSTAR|VMAX|BREAK|GX|EX|ex|V)$/u, "$1 $2")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 async function mapWithConcurrency<Input, Output>(

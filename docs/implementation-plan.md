@@ -64,6 +64,7 @@
 - [x] Add on-demand official Japanese card list import for exact set/card-number searches.
 - [x] Add older Japanese product-id fallback for sets like `CP3`.
 - [x] Add English Pokemon name enrichment from free species data when official Japanese pages include a Pokedex number.
+- [x] Add local Japanese Pokemon species-name translation map for Tag Teams and cached Japanese names.
 - [ ] Add importer/backfill for Japanese set lists from free sources where available.
 - [x] Normalize Japanese cache fields: set code, card number, printed total, name, rarity, image URL, source.
 - [x] Search Japanese cache before live APIs using indexed set/card and number/total queries.
