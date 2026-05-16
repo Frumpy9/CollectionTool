@@ -22,7 +22,8 @@ import type {
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryItemType,
-  InventoryListResponse
+  InventoryListResponse,
+  PsaCertLookupResponse
 } from "@collection-tool/shared";
 import { api } from "./api";
 
@@ -174,7 +175,7 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [isAddPanelOpen, setIsAddPanelOpen] = useState(false);
+  const [activePanel, setActivePanel] = useState<"manual" | "cert" | null>(null);
 
   useEffect(() => {
     if (!activeCollection) {
@@ -302,7 +303,7 @@ function WorkspaceShell({
             <button
               className="primary-button"
               type="button"
-              onClick={() => setIsAddPanelOpen((isOpen) => !isOpen)}
+              onClick={() => setActivePanel((panel) => (panel === "manual" ? null : "manual"))}
             >
               <Plus size={18} aria-hidden="true" />
               Add card
@@ -323,7 +324,10 @@ function WorkspaceShell({
               <Search size={18} aria-hidden="true" />
               Lookup
             </button>
-            <button type="button">
+            <button
+              type="button"
+              onClick={() => setActivePanel((panel) => (panel === "cert" ? null : "cert"))}
+            >
               <ShieldCheck size={18} aria-hidden="true" />
               Cert
             </button>
@@ -334,12 +338,22 @@ function WorkspaceShell({
           </div>
         </section>
 
-        {isAddPanelOpen && activeCollection ? (
+        {activePanel === "manual" && activeCollection ? (
           <ManualAddPanel
             collectionId={activeCollection.id}
             onAdded={(item) => {
               setInventory((current) => summarizeInventory([item, ...current.items]));
-              setIsAddPanelOpen(false);
+              setActivePanel(null);
+            }}
+          />
+        ) : null}
+
+        {activePanel === "cert" && activeCollection ? (
+          <PsaCertPanel
+            collectionId={activeCollection.id}
+            onAdded={(item) => {
+              setInventory((current) => summarizeInventory([item, ...current.items]));
+              setActivePanel(null);
             }}
           />
         ) : null}
@@ -386,6 +400,106 @@ function WorkspaceShell({
         </section>
       </section>
     </main>
+  );
+}
+
+function PsaCertPanel({
+  collectionId,
+  onAdded
+}: {
+  collectionId: string;
+  onAdded: (item: InventoryItem) => void;
+}) {
+  const [certNumber, setCertNumber] = useState("");
+  const [lookup, setLookup] = useState<PsaCertLookupResponse | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "saving">("idle");
+  const [error, setError] = useState("");
+
+  async function handleLookup(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setLookup(null);
+    setStatus("loading");
+
+    try {
+      const response = await api.lookupPsaCert({ certNumber });
+      setLookup(response);
+
+      if (!response.item) {
+        setError(response.serverMessage);
+      }
+    } catch (lookupError) {
+      setError(lookupError instanceof Error ? lookupError.message : "Unable to look up PSA cert.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleAdd() {
+    if (!lookup?.item) {
+      return;
+    }
+
+    setStatus("saving");
+    setError("");
+
+    try {
+      const response = await api.createInventoryItem(collectionId, lookup.item);
+      onAdded(response.item);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to add PSA card.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  return (
+    <section className="manual-panel cert-panel" aria-label="PSA cert import">
+      <div>
+        <p className="eyebrow">PSA import</p>
+        <h3>Add a graded card by cert number</h3>
+      </div>
+      <form className="cert-form" onSubmit={handleLookup}>
+        <label>
+          PSA cert number
+          <input
+            inputMode="numeric"
+            onChange={(event) => setCertNumber(event.target.value)}
+            placeholder="Enter the number on the slab"
+            required
+            value={certNumber}
+          />
+        </label>
+        <button className="primary-button" disabled={status === "loading"} type="submit">
+          {status === "loading" ? "Looking up..." : "Lookup cert"}
+        </button>
+      </form>
+
+      {lookup?.item ? (
+        <div className="cert-result">
+          <div>
+            <p className="eyebrow">Ready to add</p>
+            <h3>{lookup.item.name}</h3>
+            <p>
+              PSA {lookup.item.grade ?? "grade unknown"} · Cert {lookup.certNumber}
+            </p>
+          </div>
+          <div className="inventory-meta">
+            {lookup.source.specId ? <span>Spec {lookup.source.specId}</span> : null}
+            {lookup.source.population ? <span>Pop {lookup.source.population}</span> : null}
+            {lookup.source.populationHigher ? (
+              <span>Higher {lookup.source.populationHigher}</span>
+            ) : null}
+            {lookup.source.category ? <span>{lookup.source.category}</span> : null}
+          </div>
+          <button className="primary-button" disabled={status === "saving"} onClick={handleAdd} type="button">
+            {status === "saving" ? "Adding..." : "Add PSA card"}
+          </button>
+        </div>
+      ) : null}
+
+      {error ? <p className="form-error">{error}</p> : null}
+    </section>
   );
 }
 

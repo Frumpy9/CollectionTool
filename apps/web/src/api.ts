@@ -3,7 +3,9 @@ import type {
   BootstrapStatusResponse,
   CreateInventoryItemRequest,
   InventoryItem,
-  InventoryListResponse
+  InventoryListResponse,
+  PsaCertLookupRequest,
+  PsaCertLookupResponse
 } from "@collection-tool/shared";
 
 type AuthPayload = {
@@ -54,6 +56,11 @@ export const api = {
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  lookupPsaCert: (payload: PsaCertLookupRequest) =>
+    request<PsaCertLookupResponse>("/api/psa/cert/lookup", {
       method: "POST",
       body: JSON.stringify(payload)
     })
