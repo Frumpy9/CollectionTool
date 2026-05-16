@@ -10,6 +10,7 @@ import type {
   InventoryListResponse,
   PsaCertLookupRequest,
   PsaCertLookupResponse,
+  UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
 
@@ -75,6 +76,15 @@ export const api = {
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
       method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateInventoryItem: (
+    collectionId: string,
+    itemId: string,
+    payload: UpdateInventoryItemRequest
+  ) =>
+    request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items/${itemId}`, {
+      method: "PATCH",
       body: JSON.stringify(payload)
     }),
   updateInventoryItemImage: (

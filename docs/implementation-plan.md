@@ -23,6 +23,7 @@
 - [x] Added free card lookup for set/card-number and name searches.
 - [x] Added lookup result picker that can add raw or graded inventory items.
 - [x] Added delete item flow with confirmation.
+- [x] Added edit item flow for card details, grading, values, storage, notes, and images.
 
 ## Branch Roadmap
 
@@ -43,7 +44,7 @@
 
 ### 1. Local Inventory Improvements
 
-- [ ] Add edit item flow.
+- [x] Add edit item flow.
 - [x] Add delete item flow with confirmation.
 - [ ] Add duplicate/quantity merge behavior for manually entered cards.
 - [ ] Add filters for raw/graded, language, condition, set code, storage, and value.

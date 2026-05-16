@@ -107,6 +107,8 @@ export type CreateInventoryItemRequest = {
   notes?: string;
 };
 
+export type UpdateInventoryItemRequest = CreateInventoryItemRequest;
+
 export type UpdateInventoryItemImageRequest = {
   imageUrl: string;
 };
