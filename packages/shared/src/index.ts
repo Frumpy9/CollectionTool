@@ -150,6 +150,8 @@ export type CardLookupResponse = {
     kind: "set-number" | "number" | "name";
     setCode: string | null;
     cardNumber: string | null;
+    printedNumber: string | null;
+    setTotal: string | null;
     localId: string | null;
   };
   candidates: CardLookupCandidate[];
