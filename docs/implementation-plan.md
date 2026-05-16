@@ -26,6 +26,7 @@
 - [x] Added edit item flow for card details, grading, values, storage, notes, and images.
 - [x] Added multi-select variants for standard, holo/foil, reverse holo, stamped, and related card variants.
 - [x] Added local inventory search, filters, active filter chips, and sorting.
+- [x] Added bulk card lookup and bulk PSA cert import from pasted or uploaded text lists.
 
 ## Branch Roadmap
 
@@ -34,6 +35,7 @@
 - [x] `feature/username-login`
 - [x] `feature/manual-inventory`
 - [x] `feature/card-lookup`
+- [x] `feature/bulk-lookup`
 - [x] `feature/inventory-images`
 - [ ] `feature/graded-certs`
 - [x] `feature/psa-cert-import`
@@ -60,6 +62,7 @@
 - [x] Add PokemonTCG.io lookup for English set/card-number and name searches.
 - [x] Add candidate result picker with card images.
 - [x] Save selected lookup results into the existing `cards` and `owned_items` tables.
+- [x] Add bulk newline-list card lookup with staged review before inventory add.
 - [x] Keep manual entry and parsed draft candidates as fallback when lookup fails.
 - [x] Add SQLite-backed Japanese card cache for fast local set/card lookups.
 - [x] Add authenticated API endpoint to seed/update Japanese cache entries.
@@ -84,6 +87,7 @@
 ### 4. Graded Cards And Certs
 
 - [x] Add PSA cert import with PSA API token.
+- [x] Add bulk PSA cert import from newline-separated text lists.
 - [ ] Add CGC cert/barcode draft flow.
 - [ ] Add graded card detail UI for grader, grade, cert number, and cert links.
 - [ ] Add barcode scanner path for PSA/CGC slabs.
