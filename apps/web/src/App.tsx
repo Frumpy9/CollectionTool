@@ -80,6 +80,17 @@ type BulkQueueRow = {
   message: string;
 };
 
+type CsvImportRowStatus = "ready" | "error" | "adding" | "added" | "skipped";
+
+type CsvImportPreviewRow = {
+  id: string;
+  lineNumber: number;
+  raw: Record<string, string>;
+  payload: CreateInventoryItemRequest;
+  errors: string[];
+  status: CsvImportRowStatus;
+};
+
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
 
 type PendingDuplicateDecision = {
@@ -255,9 +266,9 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | "bulk" | null>(
-    null
-  );
+  const [activePanel, setActivePanel] = useState<
+    "lookup" | "manual" | "cert" | "bulk" | "import" | null
+  >(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
@@ -600,6 +611,14 @@ function WorkspaceShell({
               <Plus size={18} aria-hidden="true" />
               Add card
             </button>
+            <button
+              className="primary-button secondary-button"
+              type="button"
+              onClick={() => setActivePanel((panel) => (panel === "import" ? null : "import"))}
+            >
+              <Upload size={18} aria-hidden="true" />
+              Import CSV
+            </button>
           </div>
         </header>
 
@@ -707,6 +726,13 @@ function WorkspaceShell({
 
         {activePanel === "bulk" && activeCollection ? (
           <BulkLookupPanel
+            collectionId={activeCollection.id}
+            onCreateItem={createOrMergeInventoryItem}
+          />
+        ) : null}
+
+        {activePanel === "import" && activeCollection ? (
+          <InventoryCsvImportPanel
             collectionId={activeCollection.id}
             onCreateItem={createOrMergeInventoryItem}
           />
@@ -1307,6 +1333,240 @@ function BulkQueueCard({
             {row.psaItem.certNumber ? <span>Cert {row.psaItem.certNumber}</span> : null}
           </div>
         ) : null}
+      </div>
+    </article>
+  );
+}
+
+function InventoryCsvImportPanel({
+  collectionId,
+  onCreateItem
+}: {
+  collectionId: string;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
+}) {
+  const [csvText, setCsvText] = useState("");
+  const [rows, setRows] = useState<CsvImportPreviewRow[]>([]);
+  const [status, setStatus] = useState<"idle" | "adding">("idle");
+  const [error, setError] = useState("");
+
+  const counts = summarizeCsvImportRows(rows);
+  const readyRows = rows.filter((row) => row.status === "ready");
+
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setCsvText(await file.text());
+    setRows([]);
+    setError("");
+  }
+
+  function handlePreview() {
+    try {
+      const parsedRows = parseInventoryCsvImport(csvText);
+      setRows(parsedRows);
+      setError(parsedRows.length === 0 ? "No importable rows found." : "");
+    } catch (previewError) {
+      setRows([]);
+      setError(previewError instanceof Error ? previewError.message : "Unable to parse CSV.");
+    }
+  }
+
+  async function handleImportReady() {
+    if (readyRows.length === 0) {
+      return;
+    }
+
+    setStatus("adding");
+    setError("");
+
+    for (const row of readyRows) {
+      setRows((current) =>
+        current.map((candidate) =>
+          candidate.id === row.id ? { ...candidate, status: "adding" } : candidate
+        )
+      );
+
+      try {
+        const item = await onCreateItem(collectionId, row.payload);
+
+        setRows((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: item ? "added" : "skipped",
+                  errors: item ? [] : ["Import cancelled."]
+                }
+              : candidate
+          )
+        );
+      } catch (importError) {
+        setRows((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: "error",
+                  errors: [
+                    importError instanceof Error ? importError.message : "Unable to import row."
+                  ]
+                }
+              : candidate
+          )
+        );
+      }
+
+      await delay(100);
+    }
+
+    setStatus("idle");
+  }
+
+  function skipRow(rowId: string) {
+    setRows((current) =>
+      current.map((row) =>
+        row.id === rowId ? { ...row, status: "skipped", errors: ["Skipped."] } : row
+      )
+    );
+  }
+
+  return (
+    <section className="manual-panel bulk-panel" aria-label="CSV inventory import">
+      <div className="bulk-header">
+        <div>
+          <p className="eyebrow">CSV import</p>
+          <h3>Preview inventory rows</h3>
+        </div>
+        <p className="lookup-note">Use the inventory export format or matching column names.</p>
+      </div>
+
+      <div className="bulk-input-grid">
+        <label>
+          Paste CSV
+          <textarea
+            disabled={status !== "idle"}
+            onChange={(event) => {
+              setCsvText(event.target.value);
+              setRows([]);
+              setError("");
+            }}
+            placeholder={"name,set_code,card_number,language,item_type,quantity\nPikachu,base1,58/102,en,raw,1"}
+            value={csvText}
+          />
+        </label>
+        <div className="bulk-file-box">
+          <label>
+            Upload .csv
+            <input
+              accept=".csv,text/csv"
+              disabled={status !== "idle"}
+              onChange={handleFileUpload}
+              type="file"
+            />
+          </label>
+          <p>
+            {rows.length > 0
+              ? `${counts.ready} ready, ${counts.error} need edits`
+              : "Preview before importing"}
+          </p>
+        </div>
+      </div>
+
+      <div className="bulk-actions">
+        <button
+          className="primary-button"
+          disabled={status !== "idle" || csvText.trim().length === 0}
+          onClick={handlePreview}
+          type="button"
+        >
+          Preview CSV
+        </button>
+        <button
+          disabled={status !== "idle" || readyRows.length === 0}
+          onClick={handleImportReady}
+          type="button"
+        >
+          {status === "adding" ? "Importing..." : `Import ready (${readyRows.length})`}
+        </button>
+        <button
+          disabled={status !== "idle"}
+          onClick={() => {
+            setCsvText("");
+            setRows([]);
+            setError("");
+          }}
+          type="button"
+        >
+          Clear import
+        </button>
+      </div>
+
+      {rows.length > 0 ? (
+        <div className="bulk-progress">
+          <span>{counts.ready} ready</span>
+          <span>{counts.error} errors</span>
+          <span>{counts.added} added</span>
+          <span>{counts.skipped} skipped</span>
+        </div>
+      ) : null}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {rows.length > 0 ? (
+        <div className="bulk-results">
+          {rows.map((row) => (
+            <CsvImportRowCard key={row.id} row={row} onSkip={skipRow} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CsvImportRowCard({
+  row,
+  onSkip
+}: {
+  row: CsvImportPreviewRow;
+  onSkip: (rowId: string) => void;
+}) {
+  const rowClass = row.status === "ready" ? "selected" : row.status === "error" ? "failed" : row.status;
+
+  return (
+    <article className={`bulk-row ${rowClass}`}>
+      <div className="bulk-row-thumb" aria-hidden="true">
+        {row.payload.imageUrl ? <img alt="" src={row.payload.imageUrl} /> : <FileText size={28} />}
+      </div>
+      <div className="bulk-row-body">
+        <div className="bulk-row-header">
+          <div>
+            <p className="eyebrow">Line {row.lineNumber} · {row.status}</p>
+            <h4>{row.payload.name || "Missing name"}</h4>
+            <p>{[row.payload.setCode, row.payload.cardNumber, row.payload.setName].filter(Boolean).join(" · ")}</p>
+          </div>
+          {["ready", "error"].includes(row.status) ? (
+            <button onClick={() => onSkip(row.id)} type="button">
+              Skip
+            </button>
+          ) : null}
+        </div>
+
+        <div className="inventory-meta">
+          <span>{row.payload.language.toUpperCase()}</span>
+          <span>{row.payload.itemType}</span>
+          <span>Qty {row.payload.quantity}</span>
+          {row.payload.grader ? <span>{row.payload.grader} {row.payload.grade}</span> : null}
+        </div>
+
+        {row.errors.length > 0 ? <p className="form-error">{row.errors.join(" ")}</p> : null}
       </div>
     </article>
   );
@@ -2724,6 +2984,317 @@ function summarizeBulkQueue(queue: BulkQueueRow[]) {
       skipped: 0
     }
   );
+}
+
+function parseInventoryCsvImport(value: string): CsvImportPreviewRow[] {
+  const records = parseCsvRecords(value).filter((record) =>
+    record.cells.some((cell) => cell.trim().length > 0)
+  );
+
+  if (records.length === 0) {
+    return [];
+  }
+
+  const headers = records[0].cells.map(normalizeCsvHeader);
+  const seenHeaders = new Set<string>();
+
+  for (const header of headers) {
+    if (!header) {
+      continue;
+    }
+
+    if (seenHeaders.has(header)) {
+      throw new Error(`CSV has duplicate column "${header}".`);
+    }
+
+    seenHeaders.add(header);
+  }
+
+  return records.slice(1).map((record) => createCsvImportPreviewRow(headers, record));
+}
+
+function createCsvImportPreviewRow(
+  headers: string[],
+  record: { cells: string[]; lineNumber: number }
+): CsvImportPreviewRow {
+  const raw = headers.reduce<Record<string, string>>((row, header, index) => {
+    if (header) {
+      row[header] = record.cells[index]?.trim() ?? "";
+    }
+
+    return row;
+  }, {});
+  const itemType = csvItemType(csvValue(raw, "item_type", "type"));
+  const language = csvLanguage(csvValue(raw, "language", "lang"));
+  const quantity = csvInteger(csvValue(raw, "quantity", "qty"), 1);
+  const conditionScore = csvOptionalNumber(csvValue(raw, "condition_score", "score"));
+  const purchasePriceCents = csvOptionalCents(
+    csvValue(raw, "purchase_price_cents"),
+    csvValue(raw, "purchase_price", "purchase")
+  );
+  const valueOverrideCents = csvOptionalCents(
+    csvValue(raw, "value_override_cents"),
+    csvValue(raw, "value_override", "value")
+  );
+  const certEstimateCents = csvOptionalCents(csvValue(raw, "cert_estimate_cents"));
+  const payload: CreateInventoryItemRequest = {
+    name: csvValue(raw, "name", "card_name"),
+    setName: csvValue(raw, "set_name"),
+    setCode: csvValue(raw, "set_code"),
+    cardNumber: csvValue(raw, "card_number", "number"),
+    language,
+    rarity: csvValue(raw, "rarity"),
+    imageUrl: csvValue(raw, "image_url"),
+    itemType,
+    quantity,
+    conditionLabel: csvValue(raw, "condition_label", "condition"),
+    conditionScore,
+    variantDetails: csvValue(raw, "variant_details", "variants"),
+    grader: itemType === "graded" ? csvValue(raw, "grader") : "",
+    grade: itemType === "graded" ? csvValue(raw, "grade") : "",
+    certNumber: itemType === "graded" ? csvValue(raw, "cert_number", "cert") : "",
+    certUrl: csvValue(raw, "cert_url"),
+    certSpecId: csvValue(raw, "cert_spec_id"),
+    certCategory: csvValue(raw, "cert_category"),
+    certPopulation: csvValue(raw, "cert_population"),
+    certPopulationHigher: csvValue(raw, "cert_population_higher"),
+    certEstimateCents,
+    certLookupAt: csvValue(raw, "cert_lookup_at"),
+    purchasePriceCents,
+    purchaseDate: csvValue(raw, "purchase_date"),
+    valueOverrideCents,
+    storageLocation: csvValue(raw, "storage_location", "storage"),
+    notes: csvValue(raw, "notes")
+  };
+  const errors = validateCsvImportPayload(payload, raw, record.cells.length > headers.length);
+
+  return {
+    id: crypto.randomUUID(),
+    lineNumber: record.lineNumber,
+    raw,
+    payload,
+    errors,
+    status: errors.length > 0 ? "error" : "ready"
+  };
+}
+
+function validateCsvImportPayload(
+  payload: CreateInventoryItemRequest,
+  raw: Record<string, string>,
+  hasExtraCells: boolean
+) {
+  const errors: string[] = [];
+  const rawLanguage = csvValue(raw, "language", "lang").toLowerCase();
+  const rawItemType = csvValue(raw, "item_type", "type").toLowerCase();
+  const rawQuantity = csvValue(raw, "quantity", "qty");
+
+  if (hasExtraCells) {
+    errors.push("Row has more values than the header row.");
+  }
+
+  if (!payload.name.trim() || payload.name.trim().length < 2) {
+    errors.push("Card name must be at least 2 characters.");
+  }
+
+  if (
+    rawLanguage &&
+    !["en", "english", "ja", "japanese", "other"].includes(rawLanguage)
+  ) {
+    errors.push("Language must be en, ja, or other.");
+  }
+
+  if (rawItemType && !["raw", "graded"].includes(rawItemType)) {
+    errors.push("Item type must be raw or graded.");
+  }
+
+  if (
+    (rawQuantity && !Number.isInteger(Number(rawQuantity))) ||
+    !Number.isInteger(payload.quantity) ||
+    payload.quantity < 1 ||
+    payload.quantity > 999
+  ) {
+    errors.push("Quantity must be between 1 and 999.");
+  }
+
+  if (
+    payload.conditionScore !== undefined &&
+    (!Number.isFinite(payload.conditionScore) ||
+      payload.conditionScore < 1 ||
+      payload.conditionScore > 10)
+  ) {
+    errors.push("Condition score must be between 1 and 10.");
+  }
+
+  if (payload.itemType === "graded" && !payload.grader?.trim()) {
+    errors.push("Graded rows need a grader.");
+  }
+
+  if (!isValidOptionalCents(payload.purchasePriceCents)) {
+    errors.push("Purchase price must be a positive amount.");
+  }
+
+  if (!isValidOptionalCents(payload.valueOverrideCents)) {
+    errors.push("Value override must be a positive amount.");
+  }
+
+  if (!isValidOptionalCents(payload.certEstimateCents)) {
+    errors.push("Cert estimate must be a positive amount.");
+  }
+
+  return errors;
+}
+
+function parseCsvRecords(value: string) {
+  const records: Array<{ cells: string[]; lineNumber: number }> = [];
+  let cells: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  let lineNumber = 1;
+  let rowLineNumber = 1;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const next = value[index + 1];
+
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        cell += char;
+
+        if (char === "\n") {
+          lineNumber += 1;
+        }
+      }
+
+      continue;
+    }
+
+    if (char === '"' && cell.length === 0) {
+      inQuotes = true;
+      continue;
+    }
+
+    if (char === ",") {
+      cells.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (char === "\n" || char === "\r") {
+      cells.push(cell);
+      records.push({ cells, lineNumber: rowLineNumber });
+      cells = [];
+      cell = "";
+
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+
+      lineNumber += 1;
+      rowLineNumber = lineNumber;
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (inQuotes) {
+    throw new Error("CSV has an unclosed quoted field.");
+  }
+
+  if (cell.length > 0 || cells.length > 0) {
+    cells.push(cell);
+    records.push({ cells, lineNumber: rowLineNumber });
+  }
+
+  return records;
+}
+
+function summarizeCsvImportRows(rows: CsvImportPreviewRow[]) {
+  return rows.reduce(
+    (summary, row) => {
+      summary[row.status] += 1;
+      return summary;
+    },
+    {
+      ready: 0,
+      error: 0,
+      adding: 0,
+      added: 0,
+      skipped: 0
+    }
+  );
+}
+
+function csvValue(raw: Record<string, string>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = raw[normalizeCsvHeader(key)];
+
+    if (value) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function normalizeCsvHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function csvLanguage(value: string): CardLanguage {
+  const language = value.trim().toLowerCase();
+
+  if (language === "ja" || language === "japanese") {
+    return "ja";
+  }
+
+  if (language === "other") {
+    return "other";
+  }
+
+  return "en";
+}
+
+function csvItemType(value: string): InventoryItemType {
+  return value.trim().toLowerCase() === "graded" ? "graded" : "raw";
+}
+
+function csvInteger(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function csvOptionalNumber(value: string) {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  return Number(value);
+}
+
+function csvOptionalCents(centsValue: string, moneyValue = "") {
+  if (centsValue.trim()) {
+    return Number(centsValue);
+  }
+
+  if (!moneyValue.trim()) {
+    return undefined;
+  }
+
+  return Math.round(Number(moneyValue.replace(/[$,]/g, "")) * 100);
+}
+
+function isValidOptionalCents(value: number | undefined) {
+  return value === undefined || (Number.isInteger(value) && value >= 0);
 }
 
 function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterState) {

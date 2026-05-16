@@ -337,6 +337,12 @@ small {
   background: var(--accent);
 }
 
+.secondary-button {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--panel);
+}
+
 .data-action-status {
   margin: -10px 0 0;
   color: var(--teal);

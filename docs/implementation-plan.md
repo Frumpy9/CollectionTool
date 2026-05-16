@@ -35,6 +35,8 @@
 - [x] Merged graded-card details into `main`.
 - [x] Added collection inventory CSV export.
 - [x] Added admin SQLite backup-now action under `data/backups`.
+- [x] Added CSV import preview for manual inventory rows.
+- [x] Documented SQLite backup restore steps.
 
 ## Branch Roadmap
 
@@ -123,10 +125,10 @@
 ### 7. Backups And Export
 
 - [x] Add CSV export for inventory.
-- [ ] Add CSV import for manual inventory.
+- [x] Add CSV import for manual inventory.
 - [ ] Add scheduled SQLite backups under `/data/backups`.
 - [x] Add admin “backup now” button.
-- [ ] Document restore steps.
+- [x] Document restore steps.
 
 ### 8. Polish And Public Repo Readiness
 
