@@ -142,6 +142,7 @@ export type CardLookupCandidate = {
   rarity: string | null;
   imageUrl: string | null;
   item: CreateInventoryItemRequest;
+  score: number;
 };
 
 export type CardLookupResponse = {
