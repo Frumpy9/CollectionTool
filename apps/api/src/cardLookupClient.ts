@@ -214,13 +214,22 @@ async function fetchTcgdexCardById(language: "en" | "ja", cardId: string | undef
 
 function buildPokemonTcgQuery(parsed: ParsedCardQuery, query: string) {
   if (parsed.kind === "set-number" && parsed.setCode && parsed.cardNumber) {
-    return `set.id:${escapePokemonTcgTerm(parsed.setCode)} number:${escapePokemonTcgTerm(
-      parsed.printedNumber ?? parsed.cardNumber
-    )}`;
+    return [
+      `set.id:${escapePokemonTcgTerm(parsed.setCode)}`,
+      `number:${escapePokemonTcgTerm(parsed.printedNumber ?? parsed.cardNumber)}`,
+      printedTotalQuery(parsed)
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   if (parsed.kind === "number" && parsed.cardNumber) {
-    return `number:${escapePokemonTcgTerm(parsed.printedNumber ?? parsed.cardNumber)}`;
+    return [
+      `number:${escapePokemonTcgTerm(parsed.printedNumber ?? parsed.cardNumber)}`,
+      printedTotalQuery(parsed)
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   if (query.length >= 2) {
@@ -232,6 +241,10 @@ function buildPokemonTcgQuery(parsed: ParsedCardQuery, query: string) {
 
 function pokemonTcgPageSize(parsed: ParsedCardQuery) {
   return parsed.kind === "number" && parsed.setTotal ? 50 : 12;
+}
+
+function printedTotalQuery(parsed: ParsedCardQuery) {
+  return parsed.setTotal ? `set.printedTotal:${escapePokemonTcgTerm(parsed.setTotal)}` : null;
 }
 
 function mapPokemonTcgCard(card: PokemonTcgCard, parsed: ParsedCardQuery): CardLookupCandidate {
@@ -259,7 +272,8 @@ function mapPokemonTcgCard(card: PokemonTcgCard, parsed: ParsedCardQuery): CardL
     language: "en",
     rarity: card.rarity ?? null,
     imageUrl,
-    item
+    item,
+    score: scoreGenericCard(card.set?.id, card.number, parsed, card.set?.printedTotal)
   };
 }
 
@@ -293,7 +307,8 @@ function mapTcgdexCard(
     language,
     rarity: card.rarity ?? null,
     imageUrl,
-    item
+    item,
+    score: scoreGenericCard(card.set?.id, card.localId, parsed)
   };
 }
 
@@ -348,6 +363,12 @@ function dedupeCandidates(candidates: CardLookupCandidate[]) {
         return confidenceDelta;
       }
 
+      const scoreDelta = right.score - left.score;
+
+      if (scoreDelta !== 0) {
+        return scoreDelta;
+      }
+
       return sourceRank(left.source) - sourceRank(right.source);
     });
 }
@@ -386,9 +407,45 @@ function buildParsedFallbackCandidate(parsed: ParsedCardQuery): CardLookupCandid
       language: "ja",
       rarity: null,
       imageUrl: null,
-      item
+      item,
+      score: 0
     }
   ];
+}
+
+function scoreGenericCard(
+  setCode: string | undefined,
+  cardNumber: string | undefined,
+  parsed: ParsedCardQuery,
+  printedTotal?: number
+) {
+  const normalizedSetCode = setCode?.toLowerCase();
+  const normalizedCardNumber = cardNumber?.toLowerCase();
+  const parsedSetCode = parsed.setCode?.toLowerCase();
+  const parsedCardNumber = parsed.cardNumber?.toLowerCase();
+  const parsedPrintedNumber = parsed.printedNumber?.toLowerCase();
+  const parsedLocalId = parsed.localId?.toLowerCase();
+  const normalizedPrintedTotal = printedTotal ? String(printedTotal).toLowerCase() : null;
+  const parsedSetTotal = parsed.setTotal?.toLowerCase() ?? null;
+  let score = 0;
+
+  if (numberMatches(normalizedCardNumber, parsedCardNumber, parsedPrintedNumber, parsedLocalId)) {
+    score += 50;
+  }
+
+  if (parsedSetTotal && normalizedPrintedTotal === parsedSetTotal) {
+    score += 100;
+  }
+
+  if (parsedSetCode && normalizedSetCode === parsedSetCode) {
+    score += 150;
+  }
+
+  if (parsed.kind === "name") {
+    score += 10;
+  }
+
+  return score;
 }
 
 function confidenceForCard(
