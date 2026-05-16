@@ -110,6 +110,7 @@ h3 {
 .nav-item,
 .system-card,
 .command-panel,
+.filter-panel,
 .stat-tile,
 .empty-state,
 .manual-panel,
@@ -317,6 +318,12 @@ small {
   width: 42px;
 }
 
+.icon-button.active {
+  border-color: rgba(213, 47, 58, 0.34);
+  color: var(--accent);
+  background: #fff6f6;
+}
+
 .primary-button {
   gap: 8px;
   padding: 0 16px;
@@ -368,6 +375,99 @@ small {
   color: var(--ink);
   background: var(--panel-strong);
   font-weight: 800;
+}
+
+.filter-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.filter-panel-header,
+.inventory-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.filter-panel-header h3 {
+  margin-bottom: 0;
+}
+
+.filter-panel-header p:last-child,
+.inventory-list-header p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.filter-grid label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.filter-grid input,
+.filter-grid select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.filter-variants,
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filter-variants button,
+.active-filters button,
+.inventory-list-header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 11px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.filter-variants button.selected {
+  border-color: rgba(37, 99, 235, 0.34);
+  color: var(--blue);
+  background: #eef5ff;
+}
+
+.active-filters button {
+  color: #1f3d5a;
+  background: #eef5ff;
+}
+
+.active-filters .clear-filter-button,
+.inventory-list-header button {
+  color: #a11d2a;
+  background: #fff6f6;
 }
 
 .manual-panel {
@@ -572,6 +672,11 @@ small {
   padding: 34px;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.filtered-empty {
+  display: block;
+  min-height: 170px;
 }
 
 .inventory-grid {
@@ -909,6 +1014,7 @@ small {
   .manual-form,
   .cert-result,
   .lookup-controls,
+  .filter-grid,
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -921,6 +1027,8 @@ small {
 @media (max-width: 640px) {
   .topbar,
   .topbar-actions,
+  .filter-panel-header,
+  .inventory-list-header,
   .mode-actions {
     align-items: stretch;
     flex-direction: column;
@@ -938,6 +1046,7 @@ small {
   .cert-form,
   .cert-result,
   .lookup-controls,
+  .filter-grid,
   .stats-grid {
     grid-template-columns: 1fr;
   }

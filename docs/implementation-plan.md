@@ -25,6 +25,7 @@
 - [x] Added delete item flow with confirmation.
 - [x] Added edit item flow for card details, grading, values, storage, notes, and images.
 - [x] Added multi-select variants for standard, holo/foil, reverse holo, stamped, and related card variants.
+- [x] Added local inventory search, filters, active filter chips, and sorting.
 
 ## Branch Roadmap
 
@@ -48,8 +49,9 @@
 - [x] Add edit item flow.
 - [x] Add delete item flow with confirmation.
 - [ ] Add duplicate/quantity merge behavior for manually entered cards.
-- [ ] Add filters for raw/graded, language, condition, set code, storage, and value.
-- [ ] Add collection search over local card name, set code, card number, cert number, and notes.
+- [x] Add filters for raw/graded, language, condition, storage, variants, and value.
+- [x] Add collection search over local card name, set code, card number, cert number, storage, variants, and notes.
+- [x] Add local inventory sorting by newest, name, set/code, value, and quantity.
 
 ### 2. Card Lookup Without Paid APIs
 
