@@ -4,6 +4,7 @@ import type {
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryItemType,
+  UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
@@ -82,6 +83,36 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
     const item = createInventoryItem(database, collectionId, input);
 
     reply.code(201);
+    return { item };
+  });
+
+  app.patch("/api/collections/:collectionId/items/:itemId", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId, itemId } = request.params as {
+      collectionId: string;
+      itemId: string;
+    };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to edit cards." };
+    }
+
+    const input = normalizeCreateInput(request.body as UpdateInventoryItemRequest);
+    const item = updateInventoryItem(database, collectionId, itemId, input);
+
+    if (!item) {
+      reply.code(404);
+      return { error: "Inventory item not found." };
+    }
+
     return { item };
   });
 
@@ -234,6 +265,104 @@ function createInventoryItem(
   }
 
   return listInventoryItems(database, collectionId).find((item) => item.id === itemId);
+}
+
+function updateInventoryItem(
+  database: AppDatabase,
+  collectionId: string,
+  itemId: string,
+  input: UpdateInventoryItemRequest
+) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT card_id
+        FROM owned_items
+        WHERE id = ? AND collection_id = ?
+      `
+    )
+    .get(itemId, collectionId) as { card_id: string } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  database.connection.exec("BEGIN");
+  try {
+    database.connection
+      .prepare(
+        `
+          UPDATE cards
+          SET
+            name = ?,
+            set_name = ?,
+            set_code = ?,
+            card_number = ?,
+            language = ?,
+            rarity = ?,
+            image_url = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `
+      )
+      .run(
+        input.name.trim(),
+        nullIfBlank(input.setName),
+        nullIfBlank(input.setCode),
+        nullIfBlank(input.cardNumber),
+        input.language,
+        nullIfBlank(input.rarity),
+        nullIfBlank(input.imageUrl),
+        row.card_id
+      );
+
+    database.connection
+      .prepare(
+        `
+          UPDATE owned_items
+          SET
+            item_type = ?,
+            quantity = ?,
+            condition_label = ?,
+            condition_score = ?,
+            variant_details = ?,
+            grader = ?,
+            grade = ?,
+            cert_number = ?,
+            purchase_price_cents = ?,
+            purchase_date = ?,
+            value_override_cents = ?,
+            storage_location = ?,
+            notes = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND collection_id = ?
+        `
+      )
+      .run(
+        input.itemType,
+        input.quantity,
+        nullIfBlank(input.conditionLabel),
+        input.conditionScore ?? null,
+        nullIfBlank(input.variantDetails),
+        nullIfBlank(input.grader),
+        nullIfBlank(input.grade),
+        nullIfBlank(input.certNumber),
+        input.purchasePriceCents ?? null,
+        nullIfBlank(input.purchaseDate),
+        input.valueOverrideCents ?? null,
+        nullIfBlank(input.storageLocation),
+        nullIfBlank(input.notes),
+        itemId,
+        collectionId
+      );
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  return listInventoryItems(database, collectionId).find((item) => item.id === itemId) ?? null;
 }
 
 function updateInventoryItemImage(

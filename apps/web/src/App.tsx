@@ -986,14 +986,18 @@ function InventoryItemDetail({
   onUpdated: (item: InventoryItem) => void;
 }) {
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
+  const [itemType, setItemType] = useState<InventoryItemType>(item.itemType);
+  const [language, setLanguage] = useState<CardLanguage>(item.card.language);
   const [status, setStatus] = useState<"idle" | "saving" | "deleting">("idle");
   const [error, setError] = useState("");
 
   useEffect(() => {
     setImageUrl(item.card.imageUrl ?? "");
+    setItemType(item.itemType);
+    setLanguage(item.card.language);
     setError("");
     setStatus("idle");
-  }, [item.id, item.card.imageUrl]);
+  }, [item]);
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1004,8 +1008,27 @@ function InventoryItemDetail({
       const formData = new FormData(event.currentTarget);
       const imageFile = singleFileFromForm(formData.get("imageFile"));
       const nextImageUrl = imageFile ? await uploadCardImage(collectionId, imageFile) : imageUrl;
-      const response = await api.updateInventoryItemImage(collectionId, item.id, {
-        imageUrl: nextImageUrl
+      const response = await api.updateInventoryItem(collectionId, item.id, {
+        name: String(formData.get("name") ?? ""),
+        setName: String(formData.get("setName") ?? ""),
+        setCode: String(formData.get("setCode") ?? ""),
+        cardNumber: String(formData.get("cardNumber") ?? ""),
+        language,
+        rarity: String(formData.get("rarity") ?? ""),
+        imageUrl: nextImageUrl,
+        itemType,
+        quantity: Number(formData.get("quantity") ?? 1),
+        conditionLabel: String(formData.get("conditionLabel") ?? ""),
+        conditionScore: optionalNumber(formData.get("conditionScore")),
+        variantDetails: String(formData.get("variantDetails") ?? ""),
+        grader: itemType === "graded" ? String(formData.get("grader") ?? "") : "",
+        grade: itemType === "graded" ? String(formData.get("grade") ?? "") : "",
+        certNumber: itemType === "graded" ? String(formData.get("certNumber") ?? "") : "",
+        purchasePriceCents: moneyToCents(formData.get("purchasePrice")),
+        purchaseDate: String(formData.get("purchaseDate") ?? ""),
+        valueOverrideCents: moneyToCents(formData.get("valueOverride")),
+        storageLocation: String(formData.get("storageLocation") ?? ""),
+        notes: String(formData.get("notes") ?? "")
       });
 
       onUpdated(response.item);
@@ -1095,7 +1118,122 @@ function InventoryItemDetail({
               {item.certNumber ? <span>Cert {item.certNumber}</span> : null}
             </div>
 
-            <form className="image-edit-form" onSubmit={handleSave}>
+            <form className="image-edit-form detail-edit-form" key={item.id} onSubmit={handleSave}>
+              <label>
+                Card name
+                <input defaultValue={item.card.name} name="name" required />
+              </label>
+              <label>
+                Type
+                <select
+                  name="itemType"
+                  onChange={(event) => setItemType(event.target.value as InventoryItemType)}
+                  value={itemType}
+                >
+                  <option value="raw">Raw</option>
+                  <option value="graded">Graded</option>
+                </select>
+              </label>
+              <label>
+                Language
+                <select
+                  name="language"
+                  onChange={(event) => setLanguage(event.target.value as CardLanguage)}
+                  value={language}
+                >
+                  <option value="en">English</option>
+                  <option value="ja">Japanese</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <label>
+                Quantity
+                <input defaultValue={item.quantity} min="1" name="quantity" required type="number" />
+              </label>
+              <label>
+                Set code
+                <input defaultValue={item.card.setCode ?? ""} name="setCode" />
+              </label>
+              <label>
+                Card #
+                <input defaultValue={item.card.cardNumber ?? ""} name="cardNumber" />
+              </label>
+              <label>
+                Set name
+                <input defaultValue={item.card.setName ?? ""} name="setName" />
+              </label>
+              <label>
+                Rarity
+                <input defaultValue={item.card.rarity ?? ""} name="rarity" />
+              </label>
+              <label>
+                Condition
+                <select defaultValue={item.conditionLabel ?? ""} name="conditionLabel">
+                  <option value="">Unknown</option>
+                  <option value="Near Mint">Near Mint</option>
+                  <option value="Lightly Played">Lightly Played</option>
+                  <option value="Moderately Played">Moderately Played</option>
+                  <option value="Heavily Played">Heavily Played</option>
+                  <option value="Damaged">Damaged</option>
+                </select>
+              </label>
+              <label>
+                Score
+                <input
+                  defaultValue={item.conditionScore ?? ""}
+                  max="10"
+                  min="1"
+                  name="conditionScore"
+                  step="0.5"
+                  type="number"
+                />
+              </label>
+              {itemType === "graded" ? (
+                <>
+                  <label>
+                    Grader
+                    <select defaultValue={item.grader ?? ""} name="grader" required>
+                      <option value="">Choose</option>
+                      <option value="PSA">PSA</option>
+                      <option value="CGC">CGC</option>
+                      <option value="BGS">BGS</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </label>
+                  <label>
+                    Grade
+                    <input defaultValue={item.grade ?? ""} name="grade" required />
+                  </label>
+                  <label>
+                    Cert #
+                    <input defaultValue={item.certNumber ?? ""} name="certNumber" />
+                  </label>
+                </>
+              ) : null}
+              <label>
+                Value $
+                <input
+                  defaultValue={centsToMoneyInput(item.valueOverrideCents)}
+                  inputMode="decimal"
+                  name="valueOverride"
+                />
+              </label>
+              <label>
+                Purchase $
+                <input
+                  defaultValue={centsToMoneyInput(item.purchasePriceCents)}
+                  inputMode="decimal"
+                  name="purchasePrice"
+                />
+              </label>
+              <label>
+                Purchase date
+                <input defaultValue={item.purchaseDate ?? ""} name="purchaseDate" type="date" />
+              </label>
+              <label>
+                Storage
+                <input defaultValue={item.storageLocation ?? ""} name="storageLocation" />
+              </label>
               <label>
                 Image URL
                 <input
@@ -1112,11 +1250,19 @@ function InventoryItemDetail({
                   type="file"
                 />
               </label>
+              <label>
+                Variants
+                <input defaultValue={item.variantDetails ?? ""} name="variantDetails" />
+              </label>
+              <label>
+                Notes
+                <textarea defaultValue={item.notes ?? ""} name="notes" />
+              </label>
               {error ? <p className="form-error">{error}</p> : null}
               <div className="detail-actions">
-                <button className="primary-button" disabled={status === "saving"} type="submit">
+                <button className="primary-button" disabled={status !== "idle"} type="submit">
                   <Upload size={18} aria-hidden="true" />
-                  {status === "saving" ? "Saving..." : "Save image"}
+                  {status === "saving" ? "Saving..." : "Save changes"}
                 </button>
                 <button disabled={status !== "idle"} onClick={handleClear} type="button">
                   Clear image
@@ -1190,6 +1336,10 @@ function moneyToCents(value: FormDataEntryValue | null) {
   }
 
   return Math.round(Number(text) * 100);
+}
+
+function centsToMoneyInput(cents: number | null) {
+  return cents === null ? "" : (cents / 100).toFixed(2);
 }
 
 function singleFileFromForm(value: FormDataEntryValue | null) {

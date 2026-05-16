@@ -742,7 +742,9 @@ small {
   font-weight: 800;
 }
 
-.image-edit-form input {
+.image-edit-form input,
+.image-edit-form select,
+.image-edit-form textarea {
   min-height: 46px;
   width: 100%;
   border: 1px solid var(--line);
@@ -750,6 +752,21 @@ small {
   padding: 0 12px;
   color: var(--ink);
   background: var(--panel-strong);
+}
+
+.image-edit-form textarea {
+  min-height: 90px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+.detail-edit-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-edit-form .form-error,
+.detail-edit-form .detail-actions {
+  grid-column: 1 / -1;
 }
 
 .detail-actions {
@@ -937,6 +954,10 @@ small {
 
   .detail-image {
     max-width: 210px;
+  }
+
+  .detail-edit-form {
+    grid-template-columns: 1fr;
   }
 }
 
