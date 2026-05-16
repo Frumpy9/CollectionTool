@@ -173,6 +173,7 @@ export type RefreshJustTcgPricingResponse = {
 export type SelectJustTcgPricingRequest = {
   sourceCardId: string;
   sourceVariantId: string;
+  candidate?: JustTcgPricingCandidate;
 };
 
 export type CardImageUploadRequest = {

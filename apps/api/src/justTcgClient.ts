@@ -39,10 +39,7 @@ type JustTcgListResponse = {
 };
 
 export type JustTcgPricingCandidateWithPayload = JustTcgPricingCandidate & {
-  rawPayload: {
-    card: JustTcgCard;
-    variant: JustTcgVariant;
-  };
+  rawPayload: unknown;
 };
 
 export type JustTcgPricingLookupResult =

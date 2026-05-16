@@ -106,17 +106,20 @@ export async function registerPricingRoutes(
         return { error: "Choose a JustTCG card and variant before saving." };
       }
 
-      const candidate = await findJustTcgPricingCandidateByIds({
-        apiKey: config.justTcgApiKey,
-        item,
-        sourceCardId,
-        sourceVariantId
-      }).catch((error) => {
-        reply.code(statusCodeForPricingError(error));
-        return {
-          error: error instanceof Error ? error.message : "Unable to save JustTCG pricing."
-        };
-      });
+      const selectedCandidate = candidateFromSelection(input, sourceCardId, sourceVariantId);
+      const candidate =
+        selectedCandidate ??
+        (await findJustTcgPricingCandidateByIds({
+          apiKey: config.justTcgApiKey,
+          item,
+          sourceCardId,
+          sourceVariantId
+        }).catch((error) => {
+          reply.code(statusCodeForPricingError(error));
+          return {
+            error: error instanceof Error ? error.message : "Unable to save JustTCG pricing."
+          };
+        }));
 
       if (candidate && "error" in candidate) {
         return candidate;
@@ -255,6 +258,27 @@ function toPublicCandidate(candidate: JustTcgPricingCandidateWithPayload): JustT
     currency: candidate.currency,
     confidence: candidate.confidence,
     score: candidate.score
+  };
+}
+
+function candidateFromSelection(
+  input: SelectJustTcgPricingRequest,
+  sourceCardId: string,
+  sourceVariantId: string
+): JustTcgPricingCandidateWithPayload | null {
+  if (
+    !input.candidate ||
+    input.candidate.sourceCardId !== sourceCardId ||
+    input.candidate.sourceVariantId !== sourceVariantId
+  ) {
+    return null;
+  }
+
+  return {
+    ...input.candidate,
+    rawPayload: {
+      selectedCandidate: input.candidate
+    }
   };
 }
 

@@ -2291,12 +2291,14 @@ function GradedCertSummary({
 
 function RawMarketPriceSummary({
   candidates,
+  error,
   isRefreshing,
   item,
   onRefresh,
   onSelectCandidate
 }: {
   candidates: JustTcgPricingCandidate[];
+  error: string;
   isRefreshing: boolean;
   item: InventoryItem;
   onRefresh: () => void;
@@ -2359,6 +2361,8 @@ function RawMarketPriceSummary({
         </p>
       )}
 
+      {error ? <p className="form-error">{error}</p> : null}
+
       {candidates.length > 0 ? (
         <div className="price-candidate-list">
           {candidates.map((candidate) => (
@@ -2412,6 +2416,7 @@ function InventoryItemDetail({
     "idle"
   );
   const [pricingCandidates, setPricingCandidates] = useState<JustTcgPricingCandidate[]>([]);
+  const [pricingError, setPricingError] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -2419,6 +2424,7 @@ function InventoryItemDetail({
     setItemType(item.itemType);
     setLanguage(item.card.language);
     setPricingCandidates([]);
+    setPricingError("");
     setError("");
     setStatus("idle");
   }, [item]);
@@ -2543,7 +2549,7 @@ function InventoryItemDetail({
       return;
     }
 
-    setError("");
+    setPricingError("");
     setPricingCandidates([]);
     setStatus("pricing");
 
@@ -2557,10 +2563,10 @@ function InventoryItemDetail({
       setPricingCandidates(response.status === "needs-review" ? response.candidates : []);
 
       if (response.status === "needs-review") {
-        setError(response.message);
+        setPricingError(response.message);
       }
     } catch (pricingError) {
-      setError(
+      setPricingError(
         pricingError instanceof Error ? pricingError.message : "Unable to refresh JustTCG pricing."
       );
     } finally {
@@ -2569,13 +2575,14 @@ function InventoryItemDetail({
   }
 
   async function handleSelectRawPrice(candidate: JustTcgPricingCandidate) {
-    setError("");
+    setPricingError("");
     setStatus("pricing");
 
     try {
       const response = await api.selectJustTcgPricing(collectionId, item.id, {
         sourceCardId: candidate.sourceCardId,
-        sourceVariantId: candidate.sourceVariantId
+        sourceVariantId: candidate.sourceVariantId,
+        candidate
       });
 
       if (response.item) {
@@ -2584,7 +2591,7 @@ function InventoryItemDetail({
 
       setPricingCandidates([]);
     } catch (pricingError) {
-      setError(
+      setPricingError(
         pricingError instanceof Error ? pricingError.message : "Unable to save JustTCG pricing."
       );
     } finally {
@@ -2646,6 +2653,7 @@ function InventoryItemDetail({
             {itemType === "raw" ? (
               <RawMarketPriceSummary
                 candidates={pricingCandidates}
+                error={pricingError}
                 isRefreshing={status === "pricing"}
                 item={item}
                 onRefresh={handleRefreshRawPrice}
