@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   Database,
+  FileText,
   Gem,
   Grid2X2,
   Image as ImageIcon,
@@ -60,6 +61,19 @@ type InventoryFilterChip = {
   key: string;
   label: string;
   onRemove: () => void;
+};
+
+type BulkMode = "cards" | "psa";
+type BulkRowStatus = "pending" | "searching" | "selected" | "needs-review" | "failed" | "added" | "skipped";
+
+type BulkQueueRow = {
+  id: string;
+  term: string;
+  status: BulkRowStatus;
+  candidates: CardLookupCandidate[];
+  selectedCandidateId: string;
+  psaItem: CreateInventoryItemRequest | null;
+  message: string;
 };
 
 const roadmapItems = [
@@ -228,7 +242,9 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | null>(null);
+  const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | "bulk" | null>(
+    null
+  );
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
@@ -487,6 +503,13 @@ function WorkspaceShell({
               <ShieldCheck size={18} aria-hidden="true" />
               Cert
             </button>
+            <button
+              type="button"
+              onClick={() => setActivePanel((panel) => (panel === "bulk" ? null : "bulk"))}
+            >
+              <FileText size={18} aria-hidden="true" />
+              Bulk
+            </button>
             <button type="button">
               <Camera size={18} aria-hidden="true" />
               Scan
@@ -537,6 +560,15 @@ function WorkspaceShell({
             onAdded={(item) => {
               setInventory((current) => summarizeInventory([item, ...current.items]));
               setActivePanel(null);
+            }}
+          />
+        ) : null}
+
+        {activePanel === "bulk" && activeCollection ? (
+          <BulkLookupPanel
+            collectionId={activeCollection.id}
+            onAdded={(items) => {
+              setInventory((current) => summarizeInventory([...items, ...current.items]));
             }}
           />
         ) : null}
@@ -760,6 +792,349 @@ function CardLookupPanel({
         </>
       ) : null}
     </section>
+  );
+}
+
+function BulkLookupPanel({
+  collectionId,
+  onAdded
+}: {
+  collectionId: string;
+  onAdded: (items: InventoryItem[]) => void;
+}) {
+  const [mode, setMode] = useState<BulkMode>("cards");
+  const [bulkText, setBulkText] = useState("");
+  const [queue, setQueue] = useState<BulkQueueRow[]>([]);
+  const [status, setStatus] = useState<"idle" | "searching" | "adding">("idle");
+  const [currentTerm, setCurrentTerm] = useState("");
+  const [error, setError] = useState("");
+
+  const counts = summarizeBulkQueue(queue);
+  const canSearch = status === "idle" && parseBulkTerms(bulkText).length > 0;
+  const selectedRows = queue.filter((row) => row.status === "selected");
+
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setBulkText(await file.text());
+  }
+
+  async function handleSearch() {
+    const terms = parseBulkTerms(bulkText);
+
+    if (terms.length === 0) {
+      setError("Add at least one line to search.");
+      return;
+    }
+
+    const nextQueue = terms.map((term) => createBulkRow(term));
+    setQueue(nextQueue);
+    setStatus("searching");
+    setError("");
+
+    for (const row of nextQueue) {
+      setCurrentTerm(row.term);
+      setQueue((current) =>
+        current.map((candidate) =>
+          candidate.id === row.id ? { ...candidate, status: "searching" } : candidate
+        )
+      );
+
+      try {
+        const searchedRow =
+          mode === "cards" ? await searchBulkCardRow(row) : await searchBulkPsaRow(row);
+        setQueue((current) =>
+          current.map((candidate) => (candidate.id === row.id ? searchedRow : candidate))
+        );
+      } catch (searchError) {
+        setQueue((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: "failed",
+                  message:
+                    searchError instanceof Error ? searchError.message : "Unable to search this line."
+                }
+              : candidate
+          )
+        );
+      }
+
+      await delay(250);
+    }
+
+    setCurrentTerm("");
+    setStatus("idle");
+  }
+
+  async function handleAddSelected() {
+    const rowsToAdd = queue.filter((row) => row.status === "selected");
+
+    if (rowsToAdd.length === 0) {
+      return;
+    }
+
+    setStatus("adding");
+    setError("");
+
+    const addedItems: InventoryItem[] = [];
+
+    for (const row of rowsToAdd) {
+      try {
+        const payload = bulkRowPayload(row, mode);
+        const response = await api.createInventoryItem(collectionId, payload);
+        addedItems.push(response.item);
+        setQueue((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? { ...candidate, status: "added", message: "Added to inventory." }
+              : candidate
+          )
+        );
+      } catch (addError) {
+        setQueue((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: "failed",
+                  message: addError instanceof Error ? addError.message : "Unable to add this row."
+                }
+              : candidate
+          )
+        );
+      }
+
+      await delay(100);
+    }
+
+    if (addedItems.length > 0) {
+      onAdded(addedItems);
+    }
+
+    setStatus("idle");
+  }
+
+  function handleModeChange(nextMode: BulkMode) {
+    setMode(nextMode);
+    setQueue([]);
+    setError("");
+    setCurrentTerm("");
+  }
+
+  function updateSelectedCandidate(rowId: string, candidateId: string) {
+    setQueue((current) =>
+      current.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              selectedCandidateId: candidateId,
+              status: candidateId ? "selected" : "needs-review",
+              message: candidateId ? "Selected for bulk add." : "Choose a candidate."
+            }
+          : row
+      )
+    );
+  }
+
+  function skipRow(rowId: string) {
+    setQueue((current) =>
+      current.map((row) =>
+        row.id === rowId ? { ...row, status: "skipped", message: "Skipped." } : row
+      )
+    );
+  }
+
+  return (
+    <section className="manual-panel bulk-panel" aria-label="Bulk lookup">
+      <div className="bulk-header">
+        <div>
+          <p className="eyebrow">Bulk lookup</p>
+          <h3>Search a newline list</h3>
+        </div>
+        <div className="bulk-mode-switch" aria-label="Bulk mode">
+          <button
+            className={mode === "cards" ? "selected" : ""}
+            disabled={status !== "idle"}
+            onClick={() => handleModeChange("cards")}
+            type="button"
+          >
+            Card search list
+          </button>
+          <button
+            className={mode === "psa" ? "selected" : ""}
+            disabled={status !== "idle"}
+            onClick={() => handleModeChange("psa")}
+            type="button"
+          >
+            PSA cert list
+          </button>
+        </div>
+      </div>
+
+      <div className="bulk-input-grid">
+        <label>
+          Paste lines
+          <textarea
+            disabled={status !== "idle"}
+            onChange={(event) => setBulkText(event.target.value)}
+            placeholder={mode === "cards" ? "123/162\n165/132\n001/202" : "59711010\n55238572"}
+            value={bulkText}
+          />
+        </label>
+        <div className="bulk-file-box">
+          <label>
+            Upload .txt
+            <input
+              accept=".txt,text/plain"
+              disabled={status !== "idle"}
+              onChange={handleFileUpload}
+              type="file"
+            />
+          </label>
+          <p>
+            {parseBulkTerms(bulkText).length} unique line
+            {parseBulkTerms(bulkText).length === 1 ? "" : "s"} ready
+          </p>
+        </div>
+      </div>
+
+      <div className="bulk-actions">
+        <button className="primary-button" disabled={!canSearch} onClick={handleSearch} type="button">
+          {status === "searching" ? "Searching..." : "Start bulk lookup"}
+        </button>
+        <button disabled={status !== "idle" || selectedRows.length === 0} onClick={handleAddSelected} type="button">
+          {status === "adding" ? "Adding..." : `Add selected (${selectedRows.length})`}
+        </button>
+        <button
+          disabled={status !== "idle" || queue.length === 0}
+          onClick={() =>
+            setQueue((current) =>
+              current.map((row) =>
+                row.status === "failed" ? { ...row, status: "skipped", message: "Skipped." } : row
+              )
+            )
+          }
+          type="button"
+        >
+          Skip failed
+        </button>
+        <button
+          disabled={status !== "idle"}
+          onClick={() => {
+            setBulkText("");
+            setQueue([]);
+            setError("");
+            setCurrentTerm("");
+          }}
+          type="button"
+        >
+          Clear list
+        </button>
+      </div>
+
+      {queue.length > 0 ? (
+        <div className="bulk-progress">
+          <span>
+            {counts.done} / {queue.length} searched
+          </span>
+          <span>{counts.selected} ready</span>
+          <span>{counts.review} review</span>
+          <span>{counts.failed} failed</span>
+          <span>{counts.skipped} skipped</span>
+          {currentTerm ? <strong>Searching {currentTerm}</strong> : null}
+        </div>
+      ) : null}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {queue.length > 0 ? (
+        <div className="bulk-results">
+          {queue.map((row) => (
+            <BulkQueueCard
+              key={row.id}
+              mode={mode}
+              row={row}
+              onSelectCandidate={updateSelectedCandidate}
+              onSkip={skipRow}
+            />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function BulkQueueCard({
+  mode,
+  row,
+  onSelectCandidate,
+  onSkip
+}: {
+  mode: BulkMode;
+  row: BulkQueueRow;
+  onSelectCandidate: (rowId: string, candidateId: string) => void;
+  onSkip: (rowId: string) => void;
+}) {
+  const selectedCandidate = row.candidates.find((candidate) => candidate.id === row.selectedCandidateId);
+
+  return (
+    <article className={`bulk-row ${row.status}`}>
+      <div className="bulk-row-header">
+        <div>
+          <p className="eyebrow">{row.status}</p>
+          <h4>{row.term}</h4>
+          <p>{row.message}</p>
+        </div>
+        {["selected", "needs-review", "failed"].includes(row.status) ? (
+          <button onClick={() => onSkip(row.id)} type="button">
+            Skip
+          </button>
+        ) : null}
+      </div>
+
+      {mode === "cards" && row.candidates.length > 0 ? (
+        <>
+          <label className="bulk-select">
+            Candidate
+            <select
+              disabled={["added", "skipped", "searching"].includes(row.status)}
+              onChange={(event) => onSelectCandidate(row.id, event.target.value)}
+              value={row.selectedCandidateId}
+            >
+              <option value="">Choose a match</option>
+              {row.candidates.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name} · {[candidate.setCode, candidate.cardNumber, candidate.setName]
+                    .filter(Boolean)
+                    .join(" · ")} · {candidate.confidence}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedCandidate ? (
+            <div className="inventory-meta">
+              <span>{selectedCandidate.language.toUpperCase()}</span>
+              <span>{selectedCandidate.confidence}</span>
+              {selectedCandidate.rarity ? <span>{selectedCandidate.rarity}</span> : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {mode === "psa" && row.psaItem ? (
+        <div className="inventory-meta">
+          <span>{row.psaItem.name}</span>
+          {row.psaItem.grade ? <span>PSA {row.psaItem.grade}</span> : null}
+          {row.psaItem.certNumber ? <span>Cert {row.psaItem.certNumber}</span> : null}
+        </div>
+      ) : null}
+    </article>
   );
 }
 
@@ -1667,6 +2042,153 @@ function removeInventoryItem(
   return summarizeInventory(inventory.items.filter((item) => item.id !== removedItemId));
 }
 
+function parseBulkTerms(value: string) {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+
+  for (const line of value.split(/\r?\n/)) {
+    const term = line.trim();
+
+    if (!term || seen.has(term)) {
+      continue;
+    }
+
+    seen.add(term);
+    terms.push(term);
+  }
+
+  return terms;
+}
+
+function createBulkRow(term: string): BulkQueueRow {
+  return {
+    id: crypto.randomUUID(),
+    term,
+    status: "pending",
+    candidates: [],
+    selectedCandidateId: "",
+    psaItem: null,
+    message: "Waiting to search."
+  };
+}
+
+async function searchBulkCardRow(row: BulkQueueRow): Promise<BulkQueueRow> {
+  const result = await api.lookupCards({
+    query: row.term,
+    language: "all"
+  });
+  const exactCandidates = result.candidates.filter((candidate) => candidate.confidence === "exact");
+
+  if (exactCandidates.length === 1) {
+    return {
+      ...row,
+      candidates: result.candidates,
+      selectedCandidateId: exactCandidates[0].id,
+      status: "selected",
+      message: "One exact match auto-selected."
+    };
+  }
+
+  if (result.candidates.length > 0) {
+    return {
+      ...row,
+      candidates: result.candidates,
+      selectedCandidateId: "",
+      status: "needs-review",
+      message:
+        exactCandidates.length > 1
+          ? "Multiple exact matches. Choose the right card."
+          : "Choose the best available match."
+    };
+  }
+
+  return {
+    ...row,
+    status: "failed",
+    message: "No matches found."
+  };
+}
+
+async function searchBulkPsaRow(row: BulkQueueRow): Promise<BulkQueueRow> {
+  const result = await api.lookupPsaCert({ certNumber: row.term });
+
+  if (result.item) {
+    return {
+      ...row,
+      status: "selected",
+      psaItem: result.item,
+      message: "Valid PSA cert staged for import."
+    };
+  }
+
+  return {
+    ...row,
+    status: "failed",
+    message: result.serverMessage || "PSA cert did not return an importable card."
+  };
+}
+
+function bulkRowPayload(row: BulkQueueRow, mode: BulkMode): CreateInventoryItemRequest {
+  if (mode === "psa" && row.psaItem) {
+    return row.psaItem;
+  }
+
+  const selectedCandidate = row.candidates.find(
+    (candidate) => candidate.id === row.selectedCandidateId
+  );
+
+  if (!selectedCandidate) {
+    throw new Error("Choose a card before adding this row.");
+  }
+
+  return {
+    ...selectedCandidate.item,
+    itemType: "raw",
+    notes: [
+      selectedCandidate.item.notes,
+      `Bulk import term: ${row.term}`,
+      `Lookup confidence: ${selectedCandidate.confidence}`
+    ]
+      .filter(Boolean)
+      .join("\n")
+  };
+}
+
+function summarizeBulkQueue(queue: BulkQueueRow[]) {
+  return queue.reduce(
+    (summary, row) => {
+      if (!["pending", "searching"].includes(row.status)) {
+        summary.done += 1;
+      }
+
+      if (row.status === "selected") {
+        summary.selected += 1;
+      }
+
+      if (row.status === "needs-review") {
+        summary.review += 1;
+      }
+
+      if (row.status === "failed") {
+        summary.failed += 1;
+      }
+
+      if (row.status === "skipped") {
+        summary.skipped += 1;
+      }
+
+      return summary;
+    },
+    {
+      done: 0,
+      selected: 0,
+      review: 0,
+      failed: 0,
+      skipped: 0
+    }
+  );
+}
+
 function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterState) {
   const queryTokens = normalizeSearchText(filters.query).split(" ").filter(Boolean);
   const filtered = items.filter((item) => {
@@ -1947,6 +2469,10 @@ async function uploadCardImage(collectionId: string, file: File) {
   });
 
   return response.imageUrl;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function readFileAsBase64(file: File) {

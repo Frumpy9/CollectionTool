@@ -588,6 +588,141 @@ small {
   gap: 12px;
 }
 
+.bulk-panel {
+  gap: 16px;
+}
+
+.bulk-header,
+.bulk-actions,
+.bulk-progress,
+.bulk-row-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bulk-mode-switch {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.bulk-mode-switch button,
+.bulk-actions button,
+.bulk-row-header button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  font-weight: 800;
+}
+
+.bulk-mode-switch button.selected {
+  border-color: rgba(37, 99, 235, 0.34);
+  color: var(--blue);
+  background: #eef5ff;
+}
+
+.bulk-input-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.35fr);
+  gap: 14px;
+}
+
+.bulk-input-grid label,
+.bulk-file-box label,
+.bulk-select {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.bulk-input-grid textarea,
+.bulk-input-grid input,
+.bulk-select select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.bulk-input-grid textarea {
+  min-height: 150px;
+  padding-top: 10px;
+  resize: vertical;
+}
+
+.bulk-file-box {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.bulk-file-box p,
+.bulk-row-header p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.bulk-progress {
+  justify-content: flex-start;
+}
+
+.bulk-progress span,
+.bulk-progress strong {
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: #1f3d5a;
+  background: #eef5ff;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.bulk-results {
+  display: grid;
+  gap: 10px;
+}
+
+.bulk-row {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.bulk-row.selected {
+  border-color: rgba(37, 99, 235, 0.28);
+}
+
+.bulk-row.needs-review {
+  border-color: rgba(183, 121, 31, 0.42);
+}
+
+.bulk-row.failed {
+  border-color: rgba(213, 47, 58, 0.34);
+}
+
+.bulk-row.added {
+  border-color: rgba(15, 118, 110, 0.34);
+}
+
+.bulk-row h4 {
+  margin: 0 0 4px;
+  font-size: 1.08rem;
+}
+
 .lookup-card {
   display: grid;
   grid-template-columns: 90px minmax(0, 1fr) auto;
@@ -1007,6 +1142,7 @@ small {
   }
 
   .command-panel,
+  .bulk-input-grid,
   .empty-state {
     grid-template-columns: 1fr;
   }
@@ -1027,6 +1163,8 @@ small {
 @media (max-width: 640px) {
   .topbar,
   .topbar-actions,
+  .bulk-header,
+  .bulk-actions,
   .filter-panel-header,
   .inventory-list-header,
   .mode-actions {
