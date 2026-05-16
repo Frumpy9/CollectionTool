@@ -116,6 +116,35 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
 
     return { item };
   });
+
+  app.delete("/api/collections/:collectionId/items/:itemId", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId, itemId } = request.params as {
+      collectionId: string;
+      itemId: string;
+    };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to delete cards." };
+    }
+
+    const deleted = deleteInventoryItem(database, collectionId, itemId);
+
+    if (!deleted) {
+      reply.code(404);
+      return { error: "Inventory item not found." };
+    }
+
+    return { ok: true };
+  });
 }
 
 function createInventoryItem(
@@ -238,6 +267,36 @@ function updateInventoryItemImage(
     .run(imageUrl, row.card_id);
 
   return listInventoryItems(database, collectionId).find((item) => item.id === itemId) ?? null;
+}
+
+function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId: string) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT card_id
+        FROM owned_items
+        WHERE id = ? AND collection_id = ?
+      `
+    )
+    .get(itemId, collectionId) as { card_id: string } | undefined;
+
+  if (!row) {
+    return false;
+  }
+
+  database.connection.exec("BEGIN");
+  try {
+    database.connection
+      .prepare("DELETE FROM owned_items WHERE id = ? AND collection_id = ?")
+      .run(itemId, collectionId);
+    database.connection.prepare("DELETE FROM cards WHERE id = ?").run(row.card_id);
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  return true;
 }
 
 function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {

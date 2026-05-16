@@ -22,6 +22,7 @@
 - [x] Added authenticated local image serving from app data storage.
 - [x] Added free card lookup for set/card-number and name searches.
 - [x] Added lookup result picker that can add raw or graded inventory items.
+- [x] Added delete item flow with confirmation.
 
 ## Branch Roadmap
 
@@ -43,7 +44,7 @@
 ### 1. Local Inventory Improvements
 
 - [ ] Add edit item flow.
-- [ ] Add delete item flow with confirmation.
+- [x] Add delete item flow with confirmation.
 - [ ] Add duplicate/quantity merge behavior for manually entered cards.
 - [ ] Add filters for raw/graded, language, condition, set code, storage, and value.
 - [ ] Add collection search over local card name, set code, card number, cert number, and notes.
