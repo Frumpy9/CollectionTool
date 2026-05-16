@@ -12,6 +12,8 @@ export type AppConfig = {
   cookieSecure: boolean;
   psaAccessToken: string;
   pokemonTcgApiKey: string;
+  uploadsPath: string;
+  maxImageUploadBytes: number;
 };
 
 export function loadConfig(): AppConfig {
@@ -23,6 +25,17 @@ export function loadConfig(): AppConfig {
     sessionSecret: process.env.SESSION_SECRET ?? "dev-only-change-me",
     cookieSecure: (process.env.APP_URL ?? "").startsWith("https://"),
     psaAccessToken: process.env.PSA_ACCESS_TOKEN ?? "",
-    pokemonTcgApiKey: process.env.POKEMONTCG_API_KEY ?? ""
+    pokemonTcgApiKey: process.env.POKEMONTCG_API_KEY ?? "",
+    uploadsPath: process.env.UPLOADS_PATH ?? "./data/uploads",
+    maxImageUploadBytes: positiveIntegerFromEnv(
+      process.env.MAX_IMAGE_UPLOAD_BYTES,
+      6 * 1024 * 1024
+    )
   };
+}
+
+function positiveIntegerFromEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }

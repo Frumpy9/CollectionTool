@@ -3,7 +3,8 @@ import type {
   CardLanguage,
   CreateInventoryItemRequest,
   InventoryItem,
-  InventoryItemType
+  InventoryItemType,
+  UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
@@ -81,6 +82,38 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
     const item = createInventoryItem(database, collectionId, input);
 
     reply.code(201);
+    return { item };
+  });
+
+  app.patch("/api/collections/:collectionId/items/:itemId/image", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId, itemId } = request.params as {
+      collectionId: string;
+      itemId: string;
+    };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to update card images." };
+    }
+
+    const imageUrl = normalizeImageUrl(
+      (request.body as UpdateInventoryItemImageRequest).imageUrl
+    );
+    const item = updateInventoryItemImage(database, collectionId, itemId, imageUrl);
+
+    if (!item) {
+      reply.code(404);
+      return { error: "Inventory item not found." };
+    }
+
     return { item };
   });
 }
@@ -172,6 +205,39 @@ function createInventoryItem(
   }
 
   return listInventoryItems(database, collectionId).find((item) => item.id === itemId);
+}
+
+function updateInventoryItemImage(
+  database: AppDatabase,
+  collectionId: string,
+  itemId: string,
+  imageUrl: string | null
+) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT card_id
+        FROM owned_items
+        WHERE id = ? AND collection_id = ?
+      `
+    )
+    .get(itemId, collectionId) as { card_id: string } | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  database.connection
+    .prepare(
+      `
+        UPDATE cards
+        SET image_url = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+    )
+    .run(imageUrl, row.card_id);
+
+  return listInventoryItems(database, collectionId).find((item) => item.id === itemId) ?? null;
 }
 
 function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {
@@ -329,4 +395,26 @@ function normalizeCents(value: number | undefined) {
 function nullIfBlank(value: string | undefined | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeImageUrl(value: string | undefined | null) {
+  const imageUrl = nullIfBlank(value);
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  if (imageUrl.length > 2048) {
+    throw new Error("Image URL is too long.");
+  }
+
+  if (
+    imageUrl.startsWith("/uploads/card-images/") ||
+    imageUrl.startsWith("https://") ||
+    imageUrl.startsWith("http://")
+  ) {
+    return imageUrl;
+  }
+
+  throw new Error("Image URL must be a local upload or an HTTP/HTTPS URL.");
 }

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite node dist/server.js",
+    "dev": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite UPLOADS_PATH=../../data/uploads node dist/server.js",
     "dev:watch": "tsx watch src/server.ts",
     "seed:dev-admin": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite node dist/scripts/seedDevAdmin.js",
     "build": "tsc -p tsconfig.json",

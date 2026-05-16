@@ -9,6 +9,7 @@ Milestone 1 is focused on the working app shell:
 - React/Vite web app
 - Fastify API with `/health`
 - SQLite migration runner
+- Local card image uploads stored outside git
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
@@ -46,6 +47,7 @@ docker compose up --build
 ```
 
 The SQLite database is stored in the `collection-data` Docker volume at `/data/collection.sqlite`.
+Uploaded card images are stored in the same volume under `/data/uploads`.
 
 ## Secrets
 

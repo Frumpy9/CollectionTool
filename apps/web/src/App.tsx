@@ -6,12 +6,15 @@ import {
   Database,
   Gem,
   Grid2X2,
+  Image as ImageIcon,
   ListFilter,
   Plus,
   Search,
   ShieldCheck,
   Sparkles,
-  Tags
+  Tags,
+  Upload,
+  X
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type {
@@ -176,6 +179,7 @@ function WorkspaceShell({
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
   const [activePanel, setActivePanel] = useState<"manual" | "cert" | null>(null);
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
 
   useEffect(() => {
     if (!activeCollection) {
@@ -374,7 +378,7 @@ function WorkspaceShell({
         </section>
 
         {inventory.items.length > 0 ? (
-          <InventoryGrid items={inventory.items} />
+          <InventoryGrid items={inventory.items} onSelect={setSelectedItem} />
         ) : (
           <section className="empty-state" id="collection">
             <div className="empty-visual" aria-hidden="true">
@@ -398,6 +402,18 @@ function WorkspaceShell({
             <span key={item}>{item}</span>
           ))}
         </section>
+
+        {activeCollection && selectedItem ? (
+          <InventoryItemDetail
+            collectionId={activeCollection.id}
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            onUpdated={(updatedItem) => {
+              setInventory((current) => updateInventoryItem(current, updatedItem));
+              setSelectedItem(updatedItem);
+            }}
+          />
+        ) : null}
       </section>
     </main>
   );
@@ -545,6 +561,12 @@ function ManualAddPanel({
     };
 
     try {
+      const imageFile = singleFileFromForm(formData.get("imageFile"));
+
+      if (imageFile) {
+        payload.imageUrl = await uploadCardImage(collectionId, imageFile);
+      }
+
       const response = await api.createInventoryItem(collectionId, payload);
       onAdded(response.item);
       event.currentTarget.reset();
@@ -669,6 +691,10 @@ function ManualAddPanel({
           <input name="imageUrl" placeholder="Optional local/reference image URL" />
         </label>
         <label className="wide-field">
+          Upload image
+          <input accept="image/jpeg,image/png,image/webp,image/gif" name="imageFile" type="file" />
+        </label>
+        <label className="wide-field">
           Variants
           <input name="variantDetails" placeholder="Reverse holo, stamped, print line, etc." />
         </label>
@@ -685,11 +711,30 @@ function ManualAddPanel({
   );
 }
 
-function InventoryGrid({ items }: { items: InventoryItem[] }) {
+function InventoryGrid({
+  items,
+  onSelect
+}: {
+  items: InventoryItem[];
+  onSelect: (item: InventoryItem) => void;
+}) {
   return (
     <section className="inventory-grid" id="collection" aria-label="Collection cards">
       {items.map((item) => (
-        <article className="inventory-card" key={item.id}>
+        <article
+          aria-label={`Open ${item.card.name} details`}
+          className="inventory-card"
+          key={item.id}
+          onClick={() => onSelect(item)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelect(item);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
           <div className="inventory-image" aria-hidden="true">
             {item.card.imageUrl ? <img alt="" src={item.card.imageUrl} /> : <Gem size={38} />}
           </div>
@@ -728,6 +773,143 @@ function InventoryGrid({ items }: { items: InventoryItem[] }) {
   );
 }
 
+function InventoryItemDetail({
+  collectionId,
+  item,
+  onClose,
+  onUpdated
+}: {
+  collectionId: string;
+  item: InventoryItem;
+  onClose: () => void;
+  onUpdated: (item: InventoryItem) => void;
+}) {
+  const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
+  const [status, setStatus] = useState<"idle" | "saving">("idle");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setImageUrl(item.card.imageUrl ?? "");
+    setError("");
+    setStatus("idle");
+  }, [item.id, item.card.imageUrl]);
+
+  async function handleSave(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setStatus("saving");
+
+    try {
+      const formData = new FormData(event.currentTarget);
+      const imageFile = singleFileFromForm(formData.get("imageFile"));
+      const nextImageUrl = imageFile ? await uploadCardImage(collectionId, imageFile) : imageUrl;
+      const response = await api.updateInventoryItemImage(collectionId, item.id, {
+        imageUrl: nextImageUrl
+      });
+
+      onUpdated(response.item);
+      event.currentTarget.reset();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save image.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleClear() {
+    setError("");
+    setStatus("saving");
+
+    try {
+      const response = await api.updateInventoryItemImage(collectionId, item.id, {
+        imageUrl: ""
+      });
+
+      onUpdated(response.item);
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "Unable to clear image.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  return (
+    <div className="detail-backdrop" role="presentation" onClick={onClose}>
+      <section
+        aria-label={`${item.card.name} details`}
+        className="detail-panel"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="detail-header">
+          <div>
+            <p className="eyebrow">
+              {item.card.language.toUpperCase()} · {item.itemType}
+            </p>
+            <h3>{item.card.name}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Close details">
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="detail-content">
+          <div className="detail-image">
+            {item.card.imageUrl ? (
+              <img alt={`${item.card.name} card art`} src={item.card.imageUrl} />
+            ) : (
+              <ImageIcon size={46} aria-hidden="true" />
+            )}
+          </div>
+
+          <div className="detail-copy">
+            <div className="inventory-meta">
+              <span>Qty {item.quantity}</span>
+              {item.card.setCode ? <span>{item.card.setCode}</span> : null}
+              {item.card.cardNumber ? <span>{item.card.cardNumber}</span> : null}
+              {item.card.setName ? <span>{item.card.setName}</span> : null}
+              {item.grader && item.grade ? (
+                <span>
+                  {item.grader} {item.grade}
+                </span>
+              ) : null}
+              {item.certNumber ? <span>Cert {item.certNumber}</span> : null}
+            </div>
+
+            <form className="image-edit-form" onSubmit={handleSave}>
+              <label>
+                Image URL
+                <input
+                  onChange={(event) => setImageUrl(event.target.value)}
+                  placeholder="/uploads/card-images/example.png or https://..."
+                  value={imageUrl}
+                />
+              </label>
+              <label>
+                Upload image
+                <input
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  name="imageFile"
+                  type="file"
+                />
+              </label>
+              {error ? <p className="form-error">{error}</p> : null}
+              <div className="detail-actions">
+                <button className="primary-button" disabled={status === "saving"} type="submit">
+                  <Upload size={18} aria-hidden="true" />
+                  {status === "saving" ? "Saving..." : "Save image"}
+                </button>
+                <button disabled={status === "saving"} onClick={handleClear} type="button">
+                  Clear image
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function summarizeInventory(items: InventoryItem[]): InventoryListResponse {
   return {
     items,
@@ -742,6 +924,15 @@ function summarizeInventory(items: InventoryItem[]): InventoryListResponse {
       { itemCount: 0, cardCount: 0, estimatedValueCents: 0 }
     )
   };
+}
+
+function updateInventoryItem(
+  inventory: InventoryListResponse,
+  updatedItem: InventoryItem
+): InventoryListResponse {
+  return summarizeInventory(
+    inventory.items.map((item) => (item.id === updatedItem.id ? updatedItem : item))
+  );
 }
 
 function formatCurrency(cents: number) {
@@ -764,6 +955,35 @@ function moneyToCents(value: FormDataEntryValue | null) {
   }
 
   return Math.round(Number(text) * 100);
+}
+
+function singleFileFromForm(value: FormDataEntryValue | null) {
+  return value instanceof File && value.size > 0 ? value : null;
+}
+
+async function uploadCardImage(collectionId: string, file: File) {
+  const dataBase64 = await readFileAsBase64(file);
+  const response = await api.uploadCardImage({
+    collectionId,
+    fileName: file.name,
+    mimeType: file.type,
+    dataBase64
+  });
+
+  return response.imageUrl;
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.addEventListener("load", () => {
+      const result = String(reader.result ?? "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    });
+    reader.addEventListener("error", () => reject(new Error("Unable to read image file.")));
+    reader.readAsDataURL(file);
+  });
 }
 
 function LoadingScreen() {

@@ -1,11 +1,14 @@
 import type {
   AuthMeResponse,
   BootstrapStatusResponse,
+  CardImageUploadRequest,
+  CardImageUploadResponse,
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryListResponse,
   PsaCertLookupRequest,
-  PsaCertLookupResponse
+  PsaCertLookupResponse,
+  UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
 
 type AuthPayload = {
@@ -59,6 +62,20 @@ export const api = {
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateInventoryItemImage: (
+    collectionId: string,
+    itemId: string,
+    payload: UpdateInventoryItemImageRequest
+  ) =>
+    request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items/${itemId}/image`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  uploadCardImage: (payload: CardImageUploadRequest) =>
+    request<CardImageUploadResponse>("/api/uploads/card-image", {
       method: "POST",
       body: JSON.stringify(payload)
     }),

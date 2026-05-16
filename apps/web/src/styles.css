@@ -489,6 +489,17 @@ small {
   gap: 16px;
   padding: 14px;
   border-radius: 8px;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
+}
+
+.inventory-card:hover,
+.inventory-card:focus-visible {
+  border-color: rgba(37, 99, 235, 0.36);
+  outline: none;
+  transform: translateY(-1px);
 }
 
 .inventory-image {
@@ -554,6 +565,108 @@ small {
   color: #234;
   background: var(--panel-strong);
   font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(23, 32, 38, 0.38);
+}
+
+.detail-panel {
+  display: grid;
+  gap: 22px;
+  width: min(100%, 820px);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.detail-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.detail-header h3 {
+  margin-bottom: 0;
+}
+
+.detail-content {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 22px;
+}
+
+.detail-image {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 63 / 88;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--blue);
+  background: var(--panel-strong);
+  overflow: hidden;
+}
+
+.detail-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.detail-copy,
+.image-edit-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.image-edit-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.image-edit-form input {
+  min-height: 46px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detail-actions button:not(.primary-button) {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 14px;
+  color: var(--ink);
+  background: var(--panel-strong);
   font-weight: 800;
 }
 
@@ -696,6 +809,18 @@ small {
 
   .empty-visual {
     min-height: 220px;
+  }
+
+  .detail-backdrop {
+    padding: 12px;
+  }
+
+  .detail-content {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-image {
+    max-width: 210px;
   }
 }
 
