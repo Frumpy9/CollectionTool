@@ -382,8 +382,9 @@ function mapTcgdexCard(
 ): CardLookupCandidate {
   const sourceId = card.id ?? [card.set?.id, card.localId].filter(Boolean).join("-");
   const imageUrl = card.image ? `${card.image}/high.webp` : null;
+  const name = translateCardName(card.name ?? "Unknown card", language);
   const item = buildInventoryItem({
-    name: card.name ?? "Unknown card",
+    name,
     setName: card.set?.name ?? null,
     setCode: card.set?.id ?? null,
     cardNumber: card.localId ?? null,
@@ -398,7 +399,7 @@ function mapTcgdexCard(
     source: "tcgdex",
     sourceId,
     confidence: confidenceForCard(card.set?.id, card.localId, parsed),
-    name: card.name ?? "Unknown card",
+    name,
     setName: card.set?.name ?? null,
     setCode: card.set?.id ?? null,
     cardNumber: card.localId ?? null,
@@ -1006,6 +1007,10 @@ async function fetchEnglishPokemonSpeciesName(dexId: string) {
   const englishName = payload.names?.find((name) => name.language?.name === "en")?.name;
 
   return englishName ?? null;
+}
+
+function translateCardName(name: string, language: CardLanguage) {
+  return language === "ja" ? translateJapaneseCardName(name, null) : name;
 }
 
 function translateJapaneseCardName(japaneseName: string, dexEnglishName: string | null) {
