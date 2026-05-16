@@ -1085,55 +1085,67 @@ function BulkQueueCard({
 
   return (
     <article className={`bulk-row ${row.status}`}>
-      <div className="bulk-row-header">
-        <div>
-          <p className="eyebrow">{row.status}</p>
-          <h4>{row.term}</h4>
-          <p>{row.message}</p>
-        </div>
-        {["selected", "needs-review", "failed"].includes(row.status) ? (
-          <button onClick={() => onSkip(row.id)} type="button">
-            Skip
-          </button>
-        ) : null}
+      <div className="bulk-row-thumb" aria-hidden="true">
+        {selectedCandidate?.imageUrl ? (
+          <img alt="" src={selectedCandidate.imageUrl} />
+        ) : row.psaItem?.imageUrl ? (
+          <img alt="" src={row.psaItem.imageUrl} />
+        ) : (
+          <Gem size={28} />
+        )}
       </div>
 
-      {mode === "cards" && row.candidates.length > 0 ? (
-        <>
-          <label className="bulk-select">
-            Candidate
-            <select
-              disabled={["added", "skipped", "searching"].includes(row.status)}
-              onChange={(event) => onSelectCandidate(row.id, event.target.value)}
-              value={row.selectedCandidateId}
-            >
-              <option value="">Choose a match</option>
-              {row.candidates.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name} · {[candidate.setCode, candidate.cardNumber, candidate.setName]
-                    .filter(Boolean)
-                    .join(" · ")} · {candidate.confidence}
-                </option>
-              ))}
-            </select>
-          </label>
-          {selectedCandidate ? (
-            <div className="inventory-meta">
-              <span>{selectedCandidate.language.toUpperCase()}</span>
-              <span>{selectedCandidate.confidence}</span>
-              {selectedCandidate.rarity ? <span>{selectedCandidate.rarity}</span> : null}
-            </div>
+      <div className="bulk-row-body">
+        <div className="bulk-row-header">
+          <div>
+            <p className="eyebrow">{row.status}</p>
+            <h4>{row.term}</h4>
+            <p>{row.message}</p>
+          </div>
+          {["selected", "needs-review", "failed"].includes(row.status) ? (
+            <button onClick={() => onSkip(row.id)} type="button">
+              Skip
+            </button>
           ) : null}
-        </>
-      ) : null}
-
-      {mode === "psa" && row.psaItem ? (
-        <div className="inventory-meta">
-          <span>{row.psaItem.name}</span>
-          {row.psaItem.grade ? <span>PSA {row.psaItem.grade}</span> : null}
-          {row.psaItem.certNumber ? <span>Cert {row.psaItem.certNumber}</span> : null}
         </div>
-      ) : null}
+
+        {mode === "cards" && row.candidates.length > 0 ? (
+          <>
+            <label className="bulk-select">
+              Candidate
+              <select
+                disabled={["added", "skipped", "searching"].includes(row.status)}
+                onChange={(event) => onSelectCandidate(row.id, event.target.value)}
+                value={row.selectedCandidateId}
+              >
+                <option value="">Choose a match</option>
+                {row.candidates.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.name} · {[candidate.setCode, candidate.cardNumber, candidate.setName]
+                      .filter(Boolean)
+                      .join(" · ")} · {candidate.confidence}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedCandidate ? (
+              <div className="inventory-meta">
+                <span>{selectedCandidate.language.toUpperCase()}</span>
+                <span>{selectedCandidate.confidence}</span>
+                {selectedCandidate.rarity ? <span>{selectedCandidate.rarity}</span> : null}
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {mode === "psa" && row.psaItem ? (
+          <div className="inventory-meta">
+            <span>{row.psaItem.name}</span>
+            {row.psaItem.grade ? <span>PSA {row.psaItem.grade}</span> : null}
+            {row.psaItem.certNumber ? <span>Cert {row.psaItem.certNumber}</span> : null}
+          </div>
+        ) : null}
+      </div>
     </article>
   );
 }
