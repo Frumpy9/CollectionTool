@@ -768,6 +768,12 @@ small {
   font-weight: 800;
 }
 
+.detail-actions .danger-button {
+  border-color: rgba(213, 47, 58, 0.34);
+  color: #a11d2a;
+  background: #fff6f6;
+}
+
 .empty-visual {
   position: relative;
   min-height: 250px;

@@ -465,6 +465,10 @@ function WorkspaceShell({
             collectionId={activeCollection.id}
             item={selectedItem}
             onClose={() => setSelectedItem(null)}
+            onDeleted={(itemId) => {
+              setInventory((current) => removeInventoryItem(current, itemId));
+              setSelectedItem(null);
+            }}
             onUpdated={(updatedItem) => {
               setInventory((current) => updateInventoryItem(current, updatedItem));
               setSelectedItem(updatedItem);
@@ -972,15 +976,17 @@ function InventoryItemDetail({
   collectionId,
   item,
   onClose,
+  onDeleted,
   onUpdated
 }: {
   collectionId: string;
   item: InventoryItem;
   onClose: () => void;
+  onDeleted: (itemId: string) => void;
   onUpdated: (item: InventoryItem) => void;
 }) {
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
-  const [status, setStatus] = useState<"idle" | "saving">("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "deleting">("idle");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1024,6 +1030,25 @@ function InventoryItemDetail({
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : "Unable to clear image.");
     } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleDelete() {
+    const confirmed = window.confirm(`Delete ${item.card.name} from this collection?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError("");
+    setStatus("deleting");
+
+    try {
+      await api.deleteInventoryItem(collectionId, item.id);
+      onDeleted(item.id);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete card.");
       setStatus("idle");
     }
   }
@@ -1093,8 +1118,16 @@ function InventoryItemDetail({
                   <Upload size={18} aria-hidden="true" />
                   {status === "saving" ? "Saving..." : "Save image"}
                 </button>
-                <button disabled={status === "saving"} onClick={handleClear} type="button">
+                <button disabled={status !== "idle"} onClick={handleClear} type="button">
                   Clear image
+                </button>
+                <button
+                  className="danger-button"
+                  disabled={status !== "idle"}
+                  onClick={handleDelete}
+                  type="button"
+                >
+                  {status === "deleting" ? "Deleting..." : "Delete card"}
                 </button>
               </div>
             </form>
@@ -1128,6 +1161,13 @@ function updateInventoryItem(
   return summarizeInventory(
     inventory.items.map((item) => (item.id === updatedItem.id ? updatedItem : item))
   );
+}
+
+function removeInventoryItem(
+  inventory: InventoryListResponse,
+  removedItemId: string
+): InventoryListResponse {
+  return summarizeInventory(inventory.items.filter((item) => item.id !== removedItemId));
 }
 
 function formatCurrency(cents: number) {

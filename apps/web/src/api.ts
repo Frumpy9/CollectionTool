@@ -81,6 +81,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
+  deleteInventoryItem: (collectionId: string, itemId: string) =>
+    request<{ ok: true }>(`/api/collections/${collectionId}/items/${itemId}`, {
+      method: "DELETE"
+    }),
   uploadCardImage: (payload: CardImageUploadRequest) =>
     request<CardImageUploadResponse>("/api/uploads/card-image", {
       method: "POST",
