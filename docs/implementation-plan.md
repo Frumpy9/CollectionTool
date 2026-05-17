@@ -32,6 +32,18 @@
 - [x] Fixed graded-cert metadata migration id collision and added self-healing cert column setup.
 - [x] Removed PSA estimate UI because the public PSA API did not return estimate values in testing.
 - [x] Verified detail modal closes after saving card edits.
+- [x] Merged graded-card details into `main`.
+- [x] Added collection inventory CSV export.
+- [x] Added admin SQLite backup-now action under `data/backups`.
+- [x] Added CSV import preview for manual inventory rows.
+- [x] Documented SQLite backup restore steps.
+- [x] Added scheduled SQLite backups with retention.
+- [x] Added legacy JustTCG raw-card pricing refresh and market-value storage.
+- [x] Added PokemonPriceTracker graded-card pricing refresh and market-value storage.
+- [x] Promoted PokemonPriceTracker to sole raw and graded pricing source.
+- [x] Added confirmed pricing source matches and on-demand PokemonPriceTracker history cache.
+- [x] Added selection-mode bulk price queue with pause/resume handling for API limits.
+- [x] Added selection-mode bulk variant editing with market-price clearing.
 
 ## Branch Roadmap
 
@@ -46,7 +58,7 @@
 - [x] `feature/psa-cert-import`
 - [ ] `feature/pricing-comps`
 - [ ] `feature/scanning`
-- [ ] `feature/backups-export`
+- [x] `feature/backups-export`
 - [ ] `feature/polish-tests`
 
 ## Next Recommended Milestones
@@ -104,7 +116,8 @@
 ### 5. Pricing And Comps
 
 - [ ] Add manual value override history.
-- [ ] Add guide price storage.
+- [x] Add guide price storage.
+- [x] Add PokemonPriceTracker raw-card guide price refresh.
 - [ ] Add eBay US sold-comp search/parsing as best-effort personal-use scraping.
 - [ ] Add comp confidence scoring.
 - [ ] Add daily refresh plus manual refresh button.
@@ -119,11 +132,11 @@
 
 ### 7. Backups And Export
 
-- [ ] Add CSV export for collections and inventory.
-- [ ] Add CSV import for manual inventory.
-- [ ] Add scheduled SQLite backups under `/data/backups`.
-- [ ] Add admin “backup now” button.
-- [ ] Document restore steps.
+- [x] Add CSV export for inventory.
+- [x] Add CSV import for manual inventory.
+- [x] Add scheduled SQLite backups under `/data/backups`.
+- [x] Add admin “backup now” button.
+- [x] Document restore steps.
 
 ### 8. Polish And Public Repo Readiness
 
@@ -147,16 +160,17 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 - [x] PSA Public API account/token for cert lookup.
 - [x] Optional PokemonTCG.io free API key for English fallback and higher rate limits.
+- [x] PokemonPriceTracker API key for primary raw/graded market pricing.
+- [x] JustTCG is deprecated; old saved prices remain readable but no API key is used.
 - [ ] No TCGdex API key required.
 - [ ] No eBay API key planned for v1 sold comps.
 - [ ] No CGC API key planned; use best-effort public lookup with manual fallback.
 
 ## End Of Night Checkpoint
 
-- Current working branch: `codex/graded-card-details`.
-- Bulk lookup is merged into `main`.
-- Duplicate/quantity merge is committed on `codex/duplicate-quantity-merge`.
-- Graded cert details are committed on `codex/graded-card-details`.
+- Current working branch: `codex/backups-export`.
+- Bulk lookup, duplicate/quantity merge, and graded-card details are merged into local `main`.
+- Backups/export is in progress on `codex/backups-export`.
 - The current dev database has the graded cert metadata columns applied.
 - Verified in browser: PSA cert refresh persists population/pop higher/spec/category and Save changes closes the detail modal.
 - PSA estimate is intentionally not shown because the public PSA lookup response did not include it for cert `59711010`.

@@ -11,10 +11,12 @@ Milestone 1 is focused on the working app shell:
 - SQLite migration runner
 - Local card image uploads stored outside git
 - Free card lookup through PokemonTCG.io and TCGdex
+- Inventory CSV export/import preview
+- SQLite backup-now and scheduled backup flow under `data/backups`
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
-Later milestones add accounts, collections, TCGdex lookup, PSA/CGC cert workflows, eBay sold comps, camera scanning, backups, and import/export.
+Later milestones add CGC cert workflows, pricing comps, camera scanning, and deeper import/export tools.
 
 ## Requirements
 
@@ -50,14 +52,22 @@ docker compose up --build
 The SQLite database is stored in the `collection-data` Docker volume at `/data/collection.sqlite`.
 Uploaded card images are stored in the same volume under `/data/uploads`.
 
+## Backups And Restore
+
+Use the in-app backup button before large imports or cleanup sessions. Local backups are written under `data/backups`; Docker backups are written under `/data/backups`.
+
+Restore steps are documented in [docs/backup-restore.md](docs/backup-restore.md).
+
 ## Secrets
 
-Do not commit `.env`, database files, cached images, backups, sessions, or logs. PSA credentials, session secrets, tunnel tokens, and optional PokemonTCG.io keys belong only in runtime environment variables.
+Do not commit `.env`, database files, cached images, backups, sessions, or logs. PSA credentials, session secrets, tunnel tokens, and optional PokemonTCG.io/PokemonPriceTracker keys belong only in runtime environment variables.
 
 ## Data Sources
 
 - TCGdex: primary card metadata source, no API key required.
 - PokemonTCG.io: optional free API key for English-card fallback and higher rate limits.
+- PokemonPriceTracker: paid API key and primary source for raw and graded market pricing.
+- JustTCG: deprecated; old saved prices remain readable, but the app no longer calls JustTCG.
 - PSA Public API: free PSA account/API token required for cert lookup.
 - eBay sold comps: best-effort personal-use sold-search parsing because official sold-history API access is limited/restricted.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.

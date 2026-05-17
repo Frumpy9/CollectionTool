@@ -114,6 +114,7 @@ const migrations: Migration[] = [
         card_number TEXT,
         language TEXT NOT NULL CHECK (language IN ('en', 'ja', 'other')) DEFAULT 'en',
         rarity TEXT,
+        release_year TEXT,
         image_url TEXT,
         source TEXT NOT NULL DEFAULT 'manual',
         source_id TEXT,
@@ -211,6 +212,201 @@ const migrations: Migration[] = [
       SET value = '7', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 8,
+    name: "raw_market_prices",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_market_prices (
+        owned_item_id TEXT PRIMARY KEY REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg')),
+        source_card_id TEXT NOT NULL,
+        source_variant_id TEXT NOT NULL,
+        matched_name TEXT NOT NULL,
+        matched_set_name TEXT,
+        matched_card_number TEXT,
+        condition_label TEXT,
+        printing TEXT,
+        language TEXT,
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        currency TEXT NOT NULL DEFAULT 'USD',
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'possible')),
+        looked_up_at TEXT NOT NULL,
+        raw_payload TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_market_prices_source_card
+      ON item_market_prices(source, source_card_id);
+
+      UPDATE app_metadata
+      SET value = '8', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 9,
+    name: "graded_market_price_source",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_market_prices_next (
+        owned_item_id TEXT PRIMARY KEY REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg', 'pokemonpricetracker')),
+        source_card_id TEXT NOT NULL,
+        source_variant_id TEXT NOT NULL,
+        matched_name TEXT NOT NULL,
+        matched_set_name TEXT,
+        matched_card_number TEXT,
+        condition_label TEXT,
+        printing TEXT,
+        language TEXT,
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        currency TEXT NOT NULL DEFAULT 'USD',
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'possible')),
+        looked_up_at TEXT NOT NULL,
+        raw_payload TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      INSERT OR IGNORE INTO item_market_prices_next (
+        owned_item_id,
+        source,
+        source_card_id,
+        source_variant_id,
+        matched_name,
+        matched_set_name,
+        matched_card_number,
+        condition_label,
+        printing,
+        language,
+        price_cents,
+        currency,
+        confidence,
+        looked_up_at,
+        raw_payload,
+        created_at,
+        updated_at
+      )
+      SELECT
+        owned_item_id,
+        source,
+        source_card_id,
+        source_variant_id,
+        matched_name,
+        matched_set_name,
+        matched_card_number,
+        condition_label,
+        printing,
+        language,
+        price_cents,
+        currency,
+        confidence,
+        looked_up_at,
+        raw_payload,
+        created_at,
+        updated_at
+      FROM item_market_prices;
+
+      DROP TABLE item_market_prices;
+      ALTER TABLE item_market_prices_next RENAME TO item_market_prices;
+
+      CREATE INDEX IF NOT EXISTS idx_item_market_prices_source_card
+      ON item_market_prices(source, source_card_id);
+
+      UPDATE app_metadata
+      SET value = '9', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 10,
+    name: "bulk_price_queue",
+    sql: `
+      CREATE TABLE IF NOT EXISTS bulk_price_queue (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        mode TEXT NOT NULL CHECK (mode IN ('auto', 'raw', 'graded')) DEFAULT 'auto',
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'saved', 'needs-review', 'skipped', 'rate-limited', 'failed', 'cancelled')) DEFAULT 'queued',
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        include_existing INTEGER NOT NULL DEFAULT 0 CHECK (include_existing IN (0, 1)),
+        message TEXT,
+        next_attempt_at TEXT,
+        started_at TEXT,
+        finished_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_bulk_price_queue_collection_status
+      ON bulk_price_queue(collection_id, status, next_attempt_at);
+
+      CREATE INDEX IF NOT EXISTS idx_bulk_price_queue_item
+      ON bulk_price_queue(collection_id, owned_item_id);
+
+      UPDATE app_metadata
+      SET value = '10', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 11,
+    name: "pricing_source_matches",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_price_source_matches (
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg', 'pokemonpricetracker')),
+        source_card_id TEXT NOT NULL,
+        source_variant_id TEXT NOT NULL,
+        match_kind TEXT NOT NULL CHECK (match_kind IN ('automatic', 'manual')),
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'possible')),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (owned_item_id, source)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_price_source_matches_source_card
+      ON item_price_source_matches(source, source_card_id);
+
+      UPDATE app_metadata
+      SET value = '11', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 12,
+    name: "pricing_history_cache",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_price_history (
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg', 'pokemonpricetracker')),
+        price_kind TEXT NOT NULL CHECK (price_kind IN ('raw', 'graded')),
+        history_date TEXT NOT NULL,
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (owned_item_id, source, price_kind, history_date)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_price_history_item_date
+      ON item_price_history(owned_item_id, history_date);
+
+      UPDATE app_metadata
+      SET value = '12', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 13,
+    name: "card_release_year",
+    sql: `
+      ALTER TABLE cards ADD COLUMN release_year TEXT;
+
+      UPDATE app_metadata
+      SET value = '13', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 
@@ -258,12 +454,35 @@ export function openDatabase(databasePath: string): AppDatabase {
   }
 
   ensureOwnedItemCertMetadataColumns(connection);
+  ensureCardReleaseYearColumn(connection);
 
   return {
     path: databasePath,
     connection,
     migrationsApplied
   };
+}
+
+function ensureCardReleaseYearColumn(connection: DatabaseSync) {
+  const columns = new Set(
+    connection
+      .prepare("PRAGMA table_info(cards)")
+      .all()
+      .map((column) => String((column as { name: string }).name))
+  );
+
+  if (columns.has("release_year")) {
+    return;
+  }
+
+  connection.exec("BEGIN");
+  try {
+    connection.exec("ALTER TABLE cards ADD COLUMN release_year TEXT;");
+    connection.exec("COMMIT");
+  } catch (error) {
+    connection.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function ensureOwnedItemCertMetadataColumns(connection: DatabaseSync) {

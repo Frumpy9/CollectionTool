@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type {
+  BulkDeleteInventoryItemsRequest,
+  BulkUpdateInventoryVariantsRequest,
   CardLanguage,
   CreateInventoryItemRequest,
+  InventoryMarketPriceSource,
   InventoryItem,
   InventoryItemType,
+  MarketPriceConfidence,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
@@ -26,6 +30,16 @@ type InventoryRow = {
   purchase_price_cents: number | null;
   purchase_date: string | null;
   value_override_cents: number | null;
+  market_price_cents: number | null;
+  market_price_source: InventoryMarketPriceSource | null;
+  market_price_updated_at: string | null;
+  market_price_confidence: MarketPriceConfidence | null;
+  market_price_matched_name: string | null;
+  market_price_matched_set_name: string | null;
+  market_price_matched_card_number: string | null;
+  market_price_condition: string | null;
+  market_price_printing: string | null;
+  market_price_raw_payload: string | null;
   storage_location: string | null;
   notes: string | null;
   cert_url: string | null;
@@ -42,6 +56,7 @@ type InventoryRow = {
   card_number: string | null;
   language: CardLanguage;
   rarity: string | null;
+  release_year: string | null;
   image_url: string | null;
 };
 
@@ -68,6 +83,32 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
       items,
       summary: summarizeItems(items)
     };
+  });
+
+  app.get("/api/collections/:collectionId/items/export.csv", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId } = request.params as { collectionId: string };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role) {
+      reply.code(403);
+      return { error: "You do not have access to this collection." };
+    }
+
+    const items = listInventoryItems(database, collectionId);
+    const fileName = `pokemon-vault-inventory-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    reply
+      .type("text/csv; charset=utf-8")
+      .header("Content-Disposition", `attachment; filename="${fileName}"`);
+
+    return toInventoryCsv(items);
   });
 
   app.post("/api/collections/:collectionId/items", async (request, reply) => {
@@ -183,6 +224,191 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
 
     return { ok: true };
   });
+
+  app.post("/api/collections/:collectionId/items/bulk/delete", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId } = request.params as { collectionId: string };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to delete cards." };
+    }
+
+    const itemIds = uniqueItemIds((request.body as BulkDeleteInventoryItemsRequest).itemIds);
+
+    if (itemIds.length === 0) {
+      reply.code(400);
+      return { error: "Select at least one card before deleting." };
+    }
+
+    const deletedItemIds: string[] = [];
+    const notFoundItemIds: string[] = [];
+
+    for (const itemId of itemIds) {
+      if (deleteInventoryItem(database, collectionId, itemId)) {
+        deletedItemIds.push(itemId);
+      } else {
+        notFoundItemIds.push(itemId);
+      }
+    }
+
+    return {
+      deletedItemIds,
+      notFoundItemIds
+    };
+  });
+
+  app.post("/api/collections/:collectionId/items/bulk/variants", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId } = request.params as { collectionId: string };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to edit cards." };
+    }
+
+    const input = request.body as BulkUpdateInventoryVariantsRequest;
+    const itemIds = uniqueItemIds(input.itemIds);
+    const variants = normalizeVariants(input.variants);
+
+    if (itemIds.length === 0) {
+      reply.code(400);
+      return { error: "Select at least one card before editing variants." };
+    }
+
+    if (!["set", "add", "remove"].includes(input.mode)) {
+      reply.code(400);
+      return { error: "Choose a valid variant edit mode." };
+    }
+
+    if (input.mode !== "set" && variants.length === 0) {
+      reply.code(400);
+      return { error: "Choose at least one variant to add or remove." };
+    }
+
+    const result = bulkUpdateInventoryVariants(database, collectionId, {
+      itemIds,
+      mode: input.mode,
+      variants,
+      clearMarketPrices: input.clearMarketPrices !== false
+    });
+
+    return result;
+  });
+}
+
+const inventoryCsvColumns = [
+  "inventory_id",
+  "card_id",
+  "name",
+  "set_name",
+  "set_code",
+  "card_number",
+  "language",
+  "rarity",
+  "image_url",
+  "item_type",
+  "quantity",
+  "condition_label",
+  "condition_score",
+  "variant_details",
+  "grader",
+  "grade",
+  "cert_number",
+  "cert_url",
+  "cert_spec_id",
+  "cert_category",
+  "cert_population",
+  "cert_population_higher",
+  "cert_lookup_at",
+  "purchase_price_cents",
+  "purchase_date",
+  "value_override_cents",
+  "market_price_cents",
+  "market_price_source",
+  "market_price_updated_at",
+  "market_price_confidence",
+  "market_price_matched_name",
+  "market_price_matched_set_name",
+  "market_price_matched_card_number",
+  "market_price_condition",
+  "market_price_printing",
+  "storage_location",
+  "notes",
+  "created_at"
+] as const;
+
+function toInventoryCsv(items: InventoryItem[]) {
+  const rows = items.map((item) => [
+    item.id,
+    item.cardId,
+    item.card.name,
+    item.card.setName,
+    item.card.setCode,
+    item.card.cardNumber,
+    item.card.language,
+    item.card.rarity,
+    item.card.imageUrl,
+    item.itemType,
+    item.quantity,
+    item.conditionLabel,
+    item.conditionScore,
+    item.variantDetails,
+    item.grader,
+    item.grade,
+    item.certNumber,
+    item.certUrl,
+    item.certSpecId,
+    item.certCategory,
+    item.certPopulation,
+    item.certPopulationHigher,
+    item.certLookupAt,
+    item.purchasePriceCents,
+    item.purchaseDate,
+    item.valueOverrideCents,
+    item.marketPriceCents,
+    item.marketPriceSource,
+    item.marketPriceUpdatedAt,
+    item.marketPriceConfidence,
+    item.marketPriceMatchedName,
+    item.marketPriceMatchedSetName,
+    item.marketPriceMatchedCardNumber,
+    item.marketPriceCondition,
+    item.marketPricePrinting,
+    item.storageLocation,
+    item.notes,
+    item.createdAt
+  ]);
+
+  return [inventoryCsvColumns, ...rows].map((row) => row.map(toCsvCell).join(",")).join("\n");
+}
+
+function toCsvCell(value: string | number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  const text = String(value);
+
+  if (!/[",\n\r]/.test(text)) {
+    return text;
+  }
+
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 function createInventoryItem(
@@ -206,9 +432,10 @@ function createInventoryItem(
             card_number,
             language,
             rarity,
+            release_year,
             image_url
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `
       )
       .run(
@@ -219,6 +446,7 @@ function createInventoryItem(
         nullIfBlank(input.cardNumber),
         input.language,
         nullIfBlank(input.rarity),
+        releaseYearForInput(input),
         nullIfBlank(input.imageUrl)
       );
 
@@ -297,12 +525,42 @@ function updateInventoryItem(
   const row = database.connection
     .prepare(
       `
-        SELECT card_id
-        FROM owned_items
-        WHERE id = ? AND collection_id = ?
+        SELECT
+          oi.card_id,
+          oi.item_type,
+          oi.condition_label,
+          oi.variant_details,
+          oi.grader,
+          oi.grade,
+          oi.cert_number,
+          c.name,
+          c.set_name,
+          c.set_code,
+          c.card_number,
+          c.language,
+          c.release_year
+        FROM owned_items oi
+        JOIN cards c ON c.id = oi.card_id
+        WHERE oi.id = ? AND oi.collection_id = ?
       `
     )
-    .get(itemId, collectionId) as { card_id: string } | undefined;
+    .get(itemId, collectionId) as
+    | {
+        card_id: string;
+        item_type: string;
+        condition_label: string | null;
+        variant_details: string | null;
+        grader: string | null;
+        grade: string | null;
+        cert_number: string | null;
+        name: string;
+        set_name: string | null;
+        set_code: string | null;
+        card_number: string | null;
+        language: string;
+        release_year: string | null;
+      }
+    | undefined;
 
   if (!row) {
     return null;
@@ -321,6 +579,7 @@ function updateInventoryItem(
             card_number = ?,
             language = ?,
             rarity = ?,
+            release_year = ?,
             image_url = ?,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
@@ -333,6 +592,7 @@ function updateInventoryItem(
         nullIfBlank(input.cardNumber),
         input.language,
         nullIfBlank(input.rarity),
+        releaseYearForInput(input),
         nullIfBlank(input.imageUrl),
         row.card_id
       );
@@ -390,6 +650,10 @@ function updateInventoryItem(
         itemId,
         collectionId
       );
+
+    if (hasPricingIdentityChanged(row, input)) {
+      clearPricingSourceMatches(database, itemId);
+    }
 
     database.connection.exec("COMMIT");
   } catch (error) {
@@ -463,7 +727,208 @@ function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId
   return true;
 }
 
-function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {
+function bulkUpdateInventoryVariants(
+  database: AppDatabase,
+  collectionId: string,
+  input: {
+    itemIds: string[];
+    mode: "set" | "add" | "remove";
+    variants: string[];
+    clearMarketPrices: boolean;
+  }
+) {
+  const updatedItemIds: string[] = [];
+  const notFoundItemIds: string[] = [];
+  const clearedMarketPriceItemIds: string[] = [];
+  const currentVariantStatement = database.connection.prepare(
+    `
+      SELECT variant_details
+      FROM owned_items
+      WHERE id = ? AND collection_id = ?
+    `
+  );
+  const updateVariantStatement = database.connection.prepare(
+    `
+      UPDATE owned_items
+      SET variant_details = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND collection_id = ?
+    `
+  );
+  const marketPriceStatement = database.connection.prepare(
+    `
+      SELECT owned_item_id
+      FROM item_market_prices
+      WHERE owned_item_id = ?
+    `
+  );
+  const clearMarketPriceStatement = database.connection.prepare(
+    `
+      DELETE FROM item_market_prices
+      WHERE owned_item_id = ?
+    `
+  );
+
+  database.connection.exec("BEGIN");
+  try {
+    for (const itemId of input.itemIds) {
+      const row = currentVariantStatement.get(itemId, collectionId) as
+        | { variant_details: string | null }
+        | undefined;
+
+      if (!row) {
+        notFoundItemIds.push(itemId);
+        continue;
+      }
+
+      const nextVariants = applyVariantEdit(
+        parseVariantDetails(row.variant_details),
+        input.variants,
+        input.mode
+      );
+      const nextVariantDetails = nextVariants.length > 0 ? nextVariants.join(", ") : null;
+
+      updateVariantStatement.run(nextVariantDetails, itemId, collectionId);
+      updatedItemIds.push(itemId);
+
+      if (input.clearMarketPrices && marketPriceStatement.get(itemId)) {
+        clearMarketPriceStatement.run(itemId);
+        clearedMarketPriceItemIds.push(itemId);
+      }
+
+      clearPricingSourceMatches(database, itemId);
+    }
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  const updatedIdSet = new Set(updatedItemIds);
+  const items = listInventoryItems(database, collectionId).filter((item) => updatedIdSet.has(item.id));
+
+  return {
+    items,
+    updatedItemIds,
+    notFoundItemIds,
+    clearedMarketPriceItemIds
+  };
+}
+
+function applyVariantEdit(
+  currentVariants: string[],
+  selectedVariants: string[],
+  mode: "set" | "add" | "remove"
+) {
+  if (mode === "set") {
+    return selectedVariants;
+  }
+
+  if (mode === "add") {
+    return uniqueVariants([...currentVariants, ...selectedVariants]);
+  }
+
+  const selectedKeys = new Set(selectedVariants.map(normalizeVariantKey));
+  return currentVariants.filter((variant) => !selectedKeys.has(normalizeVariantKey(variant)));
+}
+
+function parseVariantDetails(value: string | null) {
+  return normalizeVariants(value?.split(",") ?? []);
+}
+
+function normalizeVariants(variants: string[] | undefined) {
+  return uniqueVariants(
+    (Array.isArray(variants) ? variants : [])
+      .map((variant) => String(variant).trim())
+      .filter(Boolean)
+  );
+}
+
+function uniqueVariants(variants: string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const variant of variants) {
+    const key = normalizeVariantKey(variant);
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(variant);
+  }
+
+  return unique;
+}
+
+function normalizeVariantKey(variant: string) {
+  return variant.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function hasPricingIdentityChanged(
+  current: {
+    item_type: string;
+    condition_label: string | null;
+    variant_details: string | null;
+    grader: string | null;
+    grade: string | null;
+    cert_number: string | null;
+    name: string;
+    set_name: string | null;
+    set_code: string | null;
+    card_number: string | null;
+    language: string;
+  },
+  input: UpdateInventoryItemRequest
+) {
+  return (
+    normalizeIdentityValue(current.name) !== normalizeIdentityValue(input.name) ||
+    normalizeIdentityValue(current.set_name) !== normalizeIdentityValue(input.setName) ||
+    normalizeIdentityValue(current.set_code) !== normalizeIdentityValue(input.setCode) ||
+    normalizeIdentityValue(current.card_number) !== normalizeIdentityValue(input.cardNumber) ||
+    current.language !== input.language ||
+    current.item_type !== input.itemType ||
+    normalizeIdentityValue(current.condition_label) !==
+      normalizeIdentityValue(input.conditionLabel) ||
+    normalizeIdentityValue(current.variant_details) !==
+      normalizeIdentityValue(input.variantDetails) ||
+    normalizeIdentityValue(current.grader) !== normalizeIdentityValue(input.grader) ||
+    normalizeIdentityValue(current.grade) !== normalizeIdentityValue(input.grade) ||
+    normalizeIdentityValue(current.cert_number) !== normalizeIdentityValue(input.certNumber)
+  );
+}
+
+function normalizeIdentityValue(value: string | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function clearPricingSourceMatches(database: AppDatabase, itemId: string) {
+  database.connection
+    .prepare("DELETE FROM item_price_source_matches WHERE owned_item_id = ?")
+    .run(itemId);
+  database.connection.prepare("DELETE FROM item_price_history WHERE owned_item_id = ?").run(itemId);
+}
+
+function uniqueItemIds(itemIds: string[] | undefined) {
+  const seen = new Set<string>();
+
+  return (Array.isArray(itemIds) ? itemIds : [])
+    .map((itemId) => String(itemId).trim())
+    .filter((itemId) => {
+      if (!itemId || seen.has(itemId)) {
+        return false;
+      }
+
+      seen.add(itemId);
+      return true;
+    });
+}
+
+export function listInventoryItems(database: AppDatabase, collectionId: string): InventoryItem[] {
   const rows = database.connection
     .prepare(
       `
@@ -482,6 +947,16 @@ function listInventoryItems(database: AppDatabase, collectionId: string): Invent
           oi.purchase_price_cents,
           oi.purchase_date,
           oi.value_override_cents,
+          imp.price_cents AS market_price_cents,
+          imp.source AS market_price_source,
+          imp.looked_up_at AS market_price_updated_at,
+          imp.confidence AS market_price_confidence,
+          imp.matched_name AS market_price_matched_name,
+          imp.matched_set_name AS market_price_matched_set_name,
+          imp.matched_card_number AS market_price_matched_card_number,
+          imp.condition_label AS market_price_condition,
+          imp.printing AS market_price_printing,
+          imp.raw_payload AS market_price_raw_payload,
           oi.storage_location,
           oi.notes,
           oi.cert_url,
@@ -498,9 +973,11 @@ function listInventoryItems(database: AppDatabase, collectionId: string): Invent
           c.card_number,
           c.language,
           c.rarity,
+          c.release_year,
           c.image_url
         FROM owned_items oi
         INNER JOIN cards c ON c.id = oi.card_id
+        LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
         WHERE oi.collection_id = ?
         ORDER BY oi.created_at DESC
       `
@@ -526,6 +1003,16 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
     purchasePriceCents: row.purchase_price_cents,
     purchaseDate: row.purchase_date,
     valueOverrideCents: row.value_override_cents,
+    marketPriceCents: Number.isFinite(row.market_price_cents) ? row.market_price_cents : null,
+    marketPriceSource: row.market_price_source ?? null,
+    marketPriceUpdatedAt: row.market_price_updated_at ?? null,
+    marketPriceConfidence: row.market_price_confidence ?? null,
+    marketPriceMatchedName: row.market_price_matched_name ?? null,
+    marketPriceMatchedSetName: row.market_price_matched_set_name ?? null,
+    marketPriceMatchedCardNumber: row.market_price_matched_card_number ?? null,
+    marketPriceCondition: row.market_price_condition ?? null,
+    marketPricePrinting: row.market_price_printing ?? null,
+    marketPriceSaleCount: marketPriceSaleCount(row.market_price_raw_payload),
     storageLocation: row.storage_location,
     notes: row.notes,
     certUrl: row.cert_url ?? null,
@@ -543,9 +1030,36 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
       cardNumber: row.card_number,
       language: row.language,
       rarity: row.rarity,
+      releaseYear: row.release_year ?? inferredReleaseYear(row),
       imageUrl: row.image_url
     }
   };
+}
+
+function marketPriceSaleCount(rawPayload: string | null) {
+  if (!rawPayload) {
+    return null;
+  }
+
+  type MarketPricePayload = {
+    gradeSummary?: {
+      count?: unknown;
+    };
+    selectedCandidate?: {
+      saleCount?: unknown;
+    };
+  };
+  let payload: MarketPricePayload;
+
+  try {
+    payload = JSON.parse(rawPayload) as MarketPricePayload;
+  } catch {
+    return null;
+  }
+
+  const count = Number(payload.gradeSummary?.count ?? payload.selectedCandidate?.saleCount);
+
+  return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
 function summarizeItems(items: InventoryItem[]) {
@@ -554,7 +1068,8 @@ function summarizeItems(items: InventoryItem[]) {
       summary.itemCount += 1;
       summary.cardCount += item.quantity;
       summary.estimatedValueCents +=
-        (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+        (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) *
+        item.quantity;
       return summary;
     },
     {
@@ -604,8 +1119,82 @@ function normalizeCreateInput(input: CreateInventoryItemRequest): CreateInventor
     conditionScore,
     purchasePriceCents: normalizeCents(input.purchasePriceCents),
     valueOverrideCents: normalizeCents(input.valueOverrideCents),
-    certEstimateCents: normalizeCents(input.certEstimateCents)
+    certEstimateCents: normalizeCents(input.certEstimateCents),
+    releaseYear: releaseYearForInput(input) ?? undefined
   };
+}
+
+function releaseYearForInput(input: CreateInventoryItemRequest | UpdateInventoryItemRequest) {
+  return normalizeReleaseYear(input.releaseYear) ?? inferredReleaseYearFromValues([
+    input.certCategory,
+    input.setName,
+    input.setCode,
+    input.name,
+    input.variantDetails
+  ]);
+}
+
+function inferredReleaseYear(row: InventoryRow) {
+  return inferredReleaseYearFromValues([
+    row.cert_category,
+    row.set_name,
+    row.set_code,
+    row.name,
+    row.variant_details
+  ]);
+}
+
+function inferredReleaseYearFromValues(values: Array<string | null | undefined>) {
+  const directYear = values.map(extractYear).find(Boolean);
+
+  if (directYear) {
+    return directYear;
+  }
+
+  const text = values
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return knownSetReleaseYear(text);
+}
+
+function extractYear(value: string | null | undefined) {
+  const match = String(value ?? "").match(/\b(19[5-9]\d|20[0-4]\d)\b/);
+  return match?.[1] ?? null;
+}
+
+function normalizeReleaseYear(value: string | null | undefined) {
+  const year = extractYear(value);
+  return year ?? null;
+}
+
+function knownSetReleaseYear(text: string) {
+  const knownSets: Array<[RegExp, string]> = [
+    [/\b(base set|base1)\b/, "1999"],
+    [/\b(jungle|base2)\b/, "1999"],
+    [/\b(fossil|base3)\b/, "1999"],
+    [/\b(team rocket|base5)\b/, "2000"],
+    [/\b(gym heroes|gym1)\b/, "2000"],
+    [/\b(neo destiny|neo4)\b/, "2002"],
+    [/\b(expedition|ecard1)\b/, "2002"],
+    [/\b(pop series 2|pop2)\b/, "2005"],
+    [/\b(evolutions|xy12)\b/, "2016"],
+    [/\b(generations|g1)\b/, "2016"],
+    [/\b(celestial storm|sm7)\b/, "2018"],
+    [/\b(forbidden light|sm6)\b/, "2018"],
+    [/\b(hidden fates|sm115)\b/, "2019"],
+    [/\b(sm210|hif elite trainer box|hidden fates elite trainer box)\b/, "2019"],
+    [/\b(sword shield|sword & shield|swsh1)\b/, "2020"],
+    [/\b(25th anniversary collection|s8a)\b/, "2021"],
+    [/\b(vmax climax|vmaxクライマックス|s8b)\b/, "2021"],
+    [/\b(pokemon go|pokémon go|s10b)\b/, "2022"],
+    [/\b(151|sv3\.5|scarlet violet 151|scarlet & violet 151)\b/, "2023"],
+    [/\b(phantasmal flames|me2)\b/, "2025"],
+    [/\b(mega brave|m1l)\b/, "2025"]
+  ];
+
+  return knownSets.find(([pattern]) => pattern.test(text))?.[1] ?? null;
 }
 
 function normalizeLanguage(language: CardLanguage): CardLanguage {

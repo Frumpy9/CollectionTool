@@ -1,28 +1,38 @@
 import {
+  AlertTriangle,
   BarChart3,
   Camera,
   ChevronDown,
+  CheckCircle2,
   CircleDollarSign,
+  Clock3,
   Database,
+  Download,
   ExternalLink,
   FileText,
   Gem,
   Grid2X2,
+  HardDriveDownload,
   Image as ImageIcon,
   ListFilter,
+  Play,
   Plus,
   RefreshCw,
   Search,
   ShieldCheck,
   Sparkles,
   Tags,
+  Trash2,
   Upload,
-  X
+  X,
+  XCircle
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthMeResponse,
   AuthUser,
+  BulkPriceQueueResponse,
+  BulkVariantEditMode,
   CardLanguage,
   CardLookupCandidate,
   CardLookupResponse,
@@ -31,6 +41,8 @@ import type {
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
+  PricingCandidate,
+  PricingHistoryPoint,
   PsaCertLookupResponse
 } from "@collection-tool/shared";
 import { api } from "./api";
@@ -78,6 +90,17 @@ type BulkQueueRow = {
   message: string;
 };
 
+type CsvImportRowStatus = "ready" | "error" | "adding" | "added" | "skipped";
+
+type CsvImportPreviewRow = {
+  id: string;
+  lineNumber: number;
+  raw: Record<string, string>;
+  payload: CreateInventoryItemRequest;
+  errors: string[];
+  status: CsvImportRowStatus;
+};
+
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
 
 type PendingDuplicateDecision = {
@@ -102,6 +125,7 @@ const variantOptions = [
   "Reverse Holo",
   "Stamped",
   "1st Edition",
+  "Shadowless",
   "Promo",
   "Error",
   "Misprint",
@@ -253,11 +277,12 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [activePanel, setActivePanel] = useState<"lookup" | "manual" | "cert" | "bulk" | null>(
-    null
-  );
+  const [activePanel, setActivePanel] = useState<
+    "lookup" | "manual" | "cert" | "bulk" | "import" | null
+  >(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showDataMenu, setShowDataMenu] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
     useState<InventoryFilterState>(defaultInventoryFilters);
   const [lookupQuery, setLookupQuery] = useState("");
@@ -265,8 +290,28 @@ function WorkspaceShell({
   const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
   const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
   const [lookupError, setLookupError] = useState("");
+  const [exportStatus, setExportStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [backupStatus, setBackupStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [dataActionMessage, setDataActionMessage] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
+  const [bulkPriceQueue, setBulkPriceQueue] = useState<BulkPriceQueueResponse | null>(null);
+  const [bulkPriceStatus, setBulkPriceStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [bulkPriceMessage, setBulkPriceMessage] = useState("");
+  const [bulkPriceIncludeExisting, setBulkPriceIncludeExisting] = useState(false);
+  const [bulkVariantEditorOpen, setBulkVariantEditorOpen] = useState(false);
+  const [bulkVariantStatus, setBulkVariantStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [bulkVariantMessage, setBulkVariantMessage] = useState("");
+  const [bulkVariantMode, setBulkVariantMode] = useState<BulkVariantEditMode>("add");
+  const [bulkVariantValues, setBulkVariantValues] = useState<string[]>([]);
+  const [bulkVariantClearMarketPrices, setBulkVariantClearMarketPrices] = useState(true);
   const [duplicateDecision, setDuplicateDecision] = useState<PendingDuplicateDecision | null>(null);
   const inventoryRef = useRef(inventory);
+  const activeBulkPriceJobCount = bulkPriceQueue
+    ? bulkPriceQueue.summary.queued +
+      bulkPriceQueue.summary.running +
+      bulkPriceQueue.summary.rateLimited
+    : 0;
 
   useEffect(() => {
     if (!activeCollection) {
@@ -298,8 +343,67 @@ function WorkspaceShell({
   }, [activeCollection?.id]);
 
   useEffect(() => {
+    if (!activeCollection || activeBulkPriceJobCount === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      if (bulkPriceStatus === "loading") {
+        return;
+      }
+
+      api
+        .getBulkPriceQueue(activeCollection.id)
+        .then((response) => {
+          if (!cancelled) {
+            applyBulkPriceQueueResponse(response);
+          }
+        })
+        .catch(() => {
+          // Keep the last visible queue state; action handlers still surface errors.
+        });
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeCollection?.id, activeBulkPriceJobCount, bulkPriceStatus]);
+
+  useEffect(() => {
     inventoryRef.current = inventory;
   }, [inventory]);
+
+  useEffect(() => {
+    if (!activeCollection) {
+      return;
+    }
+
+    let cancelled = false;
+
+    api
+      .getBulkPriceQueue(activeCollection.id)
+      .then((response) => {
+        if (!cancelled) {
+          setBulkPriceQueue(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBulkPriceQueue(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCollection?.id]);
+
+  useEffect(() => {
+    const availableItemIds = new Set(inventory.items.map((item) => item.id));
+    setSelectedItemIds((current) => current.filter((itemId) => availableItemIds.has(itemId)));
+  }, [inventory.items]);
 
   function requestDuplicateDecision(
     existingItem: InventoryItem,
@@ -307,7 +411,7 @@ function WorkspaceShell({
   ) {
     return new Promise<DuplicateDecisionChoice>((resolve) => {
       setDuplicateDecision({
-        id: crypto.randomUUID(),
+        id: createClientId(),
         existingItem,
         payload,
         resolve
@@ -353,6 +457,14 @@ function WorkspaceShell({
     () => filterInventoryItems(inventory.items, inventoryFilters),
     [inventory.items, inventoryFilters]
   );
+  const selectedItemIdSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
+  const selectedItems = useMemo(
+    () => inventory.items.filter((item) => selectedItemIdSet.has(item.id)),
+    [inventory.items, selectedItemIdSet]
+  );
+  const selectedMissingPriceCount = selectedItems.filter(
+    (item) => item.marketPriceCents === null
+  ).length;
   const filterOptions = useMemo(() => getInventoryFilterOptions(inventory.items), [inventory.items]);
   const activeFilterChips = useMemo(
     () =>
@@ -441,6 +553,312 @@ function WorkspaceShell({
     }
   }
 
+  async function handleExportInventoryCsv() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setExportStatus("loading");
+    setBackupStatus("idle");
+    setDataActionMessage("");
+
+    try {
+      const { blob, fileName } = await api.exportInventoryCsv(activeCollection.id);
+      downloadBlob(blob, fileName);
+      setExportStatus("idle");
+      setShowDataMenu(false);
+      setDataActionMessage(`Exported ${fileName}.`);
+    } catch (error) {
+      setExportStatus("error");
+      setDataActionMessage(error instanceof Error ? error.message : "Unable to export inventory.");
+    }
+  }
+
+  async function handleCreateSqliteBackup() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBackupStatus("loading");
+    setExportStatus("idle");
+    setDataActionMessage("");
+
+    try {
+      const response = await api.createSqliteBackup(activeCollection.id);
+      setBackupStatus("idle");
+      setShowDataMenu(false);
+      setDataActionMessage(
+        `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`
+      );
+    } catch (error) {
+      setBackupStatus("error");
+      setDataActionMessage(error instanceof Error ? error.message : "Unable to create backup.");
+    }
+  }
+
+  function toggleSelectionMode() {
+    setSelectionMode((isSelecting) => {
+      if (isSelecting) {
+        setSelectedItemIds([]);
+        setBulkVariantEditorOpen(false);
+        setBulkVariantMessage("");
+      }
+
+      return !isSelecting;
+    });
+  }
+
+  function toggleSelectedItem(itemId: string) {
+    setSelectedItemIds((current) =>
+      current.includes(itemId)
+        ? current.filter((selectedItemId) => selectedItemId !== itemId)
+        : [...current, itemId]
+    );
+  }
+
+  function selectVisibleItems() {
+    setSelectedItemIds(filteredItems.map((item) => item.id));
+  }
+
+  function applyBulkPriceQueueResponse(response: BulkPriceQueueResponse) {
+    setBulkPriceQueue(response);
+    const updatedItems = response.jobs
+      .map((job) => job.item)
+      .filter((item): item is InventoryItem => Boolean(item));
+
+    if (updatedItems.length > 0) {
+      setInventory((current) => {
+        const updatedById = new Map(updatedItems.map((item) => [item.id, item]));
+        return summarizeInventory(
+          current.items.map((item) => updatedById.get(item.id) ?? item)
+        );
+      });
+    }
+  }
+
+  async function handleQueueBulkPriceRefresh() {
+    if (!activeCollection || selectedItemIds.length === 0) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.enqueueBulkPriceRefresh(activeCollection.id, {
+        itemIds: selectedItems
+          .filter((item) => bulkPriceIncludeExisting || item.marketPriceCents === null)
+          .map((item) => item.id),
+        mode: "auto",
+        includeExisting: bulkPriceIncludeExisting
+      });
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(
+        error instanceof Error ? error.message : "Unable to queue bulk price refresh."
+      );
+    }
+  }
+
+  async function handleResumeBulkPriceQueue() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.resumeBulkPriceQueue(activeCollection.id);
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to resume queue.");
+    }
+  }
+
+  async function handleCancelBulkPriceQueue() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.cancelBulkPriceQueue(activeCollection.id);
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to cancel queue.");
+    }
+  }
+
+  async function handleRetryFailedBulkPriceQueue() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.retryFailedBulkPriceQueue(activeCollection.id);
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to retry failed jobs.");
+    }
+  }
+
+  async function handleClearCompletedBulkPriceQueue() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.clearCompletedBulkPriceQueue(activeCollection.id);
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to clear queue.");
+    }
+  }
+
+  async function handleBulkDeleteSelected() {
+    if (!activeCollection || selectedItemIds.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${selectedItemIds.length} selected card${
+        selectedItemIds.length === 1 ? "" : "s"
+      } from this collection? This cannot be undone.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.bulkDeleteInventoryItems(activeCollection.id, {
+        itemIds: selectedItemIds
+      });
+      setInventory((current) =>
+        summarizeInventory(
+          current.items.filter((item) => !response.deletedItemIds.includes(item.id))
+        )
+      );
+      setSelectedItemIds((current) =>
+        current.filter((itemId) => !response.deletedItemIds.includes(itemId))
+      );
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(
+        `Deleted ${response.deletedItemIds.length} card${
+          response.deletedItemIds.length === 1 ? "" : "s"
+        }.${
+          response.notFoundItemIds.length > 0
+            ? ` ${response.notFoundItemIds.length} selected card${
+                response.notFoundItemIds.length === 1 ? " was" : "s were"
+              } already gone.`
+            : ""
+        }`
+      );
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to delete selected cards.");
+    }
+  }
+
+  function toggleBulkVariantValue(variant: string) {
+    setBulkVariantValues((current) =>
+      current.includes(variant)
+        ? current.filter((selected) => selected !== variant)
+        : [...current, variant]
+    );
+  }
+
+  async function handleBulkUpdateVariants() {
+    if (!activeCollection || selectedItemIds.length === 0) {
+      return;
+    }
+
+    if (bulkVariantMode !== "set" && bulkVariantValues.length === 0) {
+      setBulkVariantStatus("error");
+      setBulkVariantMessage("Choose at least one variant to add or remove.");
+      return;
+    }
+
+    const actionLabel =
+      bulkVariantMode === "set" ? "replace variants for" : `${bulkVariantMode} variants on`;
+    const confirmed = window.confirm(
+      `Bulk ${actionLabel} ${selectedItemIds.length} selected card${
+        selectedItemIds.length === 1 ? "" : "s"
+      }?${bulkVariantClearMarketPrices ? " Saved market prices will be cleared." : ""}`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkVariantStatus("loading");
+    setBulkVariantMessage("");
+
+    try {
+      const response = await api.bulkUpdateInventoryVariants(activeCollection.id, {
+        itemIds: selectedItemIds,
+        mode: bulkVariantMode,
+        variants: bulkVariantValues,
+        clearMarketPrices: bulkVariantClearMarketPrices
+      });
+      const updatedById = new Map(response.items.map((item) => [item.id, item]));
+
+      setInventory((current) =>
+        summarizeInventory(current.items.map((item) => updatedById.get(item.id) ?? item))
+      );
+      setBulkVariantStatus("idle");
+      setBulkVariantMessage(
+        `Updated ${response.updatedItemIds.length} card${
+          response.updatedItemIds.length === 1 ? "" : "s"
+        }.${
+          response.clearedMarketPriceItemIds.length > 0
+            ? ` Cleared ${response.clearedMarketPriceItemIds.length} saved market price${
+                response.clearedMarketPriceItemIds.length === 1 ? "" : "s"
+              }.`
+            : ""
+        }${
+          response.notFoundItemIds.length > 0
+            ? ` ${response.notFoundItemIds.length} selected card${
+                response.notFoundItemIds.length === 1 ? " was" : "s were"
+              } already gone.`
+            : ""
+        }`
+      );
+    } catch (error) {
+      setBulkVariantStatus("error");
+      setBulkVariantMessage(
+        error instanceof Error ? error.message : "Unable to update selected variants."
+      );
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Collection navigation">
@@ -517,25 +935,88 @@ function WorkspaceShell({
             <h2 id="workspace-title">Collection workspace</h2>
           </div>
           <div className="topbar-actions">
+            <div className="data-menu-wrap">
+              <button
+                className={`primary-button secondary-button ${showDataMenu ? "active" : ""}`}
+                type="button"
+                aria-expanded={showDataMenu}
+                aria-haspopup="menu"
+                disabled={!activeCollection}
+                onClick={() => setShowDataMenu((isOpen) => !isOpen)}
+              >
+                <Database size={18} aria-hidden="true" />
+                Data
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {showDataMenu ? (
+                <div className="data-menu" role="menu" aria-label="Data actions">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={exportStatus === "loading"}
+                    onClick={handleExportInventoryCsv}
+                  >
+                    <Download size={18} aria-hidden="true" />
+                    {exportStatus === "loading" ? "Exporting..." : "Export CSV"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={backupStatus === "loading"}
+                    onClick={handleCreateSqliteBackup}
+                  >
+                    <HardDriveDownload size={18} aria-hidden="true" />
+                    {backupStatus === "loading" ? "Backing up..." : "Back up SQLite"}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setActivePanel((panel) => (panel === "import" ? null : "import"));
+                      setShowDataMenu(false);
+                    }}
+                  >
+                    <Upload size={18} aria-hidden="true" />
+                    Import CSV
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button
               className={`icon-button ${showFilters ? "active" : ""}`}
               type="button"
               aria-label="Filter collection"
               aria-expanded={showFilters}
-              onClick={() => setShowFilters((isOpen) => !isOpen)}
+              onClick={() => {
+                setShowFilters((isOpen) => !isOpen);
+                setShowDataMenu(false);
+              }}
             >
               <ListFilter size={20} aria-hidden="true" />
             </button>
             <button
               className="primary-button"
               type="button"
-              onClick={() => setActivePanel((panel) => (panel === "manual" ? null : "manual"))}
+              onClick={() => {
+                setActivePanel((panel) => (panel === "manual" ? null : "manual"));
+                setShowDataMenu(false);
+              }}
             >
               <Plus size={18} aria-hidden="true" />
               Add card
             </button>
           </div>
         </header>
+
+        {dataActionMessage ? (
+          <p
+            className={`data-action-status ${
+              exportStatus === "error" || backupStatus === "error" ? "error" : "ok"
+            }`}
+          >
+            {dataActionMessage}
+          </p>
+        ) : null}
 
         <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
           <div className="search-control">
@@ -636,6 +1117,13 @@ function WorkspaceShell({
           />
         ) : null}
 
+        {activePanel === "import" && activeCollection ? (
+          <InventoryCsvImportPanel
+            collectionId={activeCollection.id}
+            onCreateItem={createOrMergeInventoryItem}
+          />
+        ) : null}
+
         {inventoryStatus === "error" ? <p className="form-error">{inventoryError}</p> : null}
 
         <section className="stats-grid" aria-label="Collection summary">
@@ -658,14 +1146,68 @@ function WorkspaceShell({
                 Showing <strong>{filteredItems.length}</strong> of{" "}
                 <strong>{inventory.items.length}</strong>
               </p>
-              {hasActiveInventoryFilters ? (
-                <button type="button" onClick={() => setInventoryFilters(defaultInventoryFilters)}>
-                  Clear filters
+              <div className="inventory-list-actions">
+                {hasActiveInventoryFilters ? (
+                  <button type="button" onClick={() => setInventoryFilters(defaultInventoryFilters)}>
+                    Clear filters
+                  </button>
+                ) : null}
+                <button type="button" onClick={toggleSelectionMode}>
+                  {selectionMode ? "Cancel select" : "Select"}
                 </button>
-              ) : null}
+              </div>
             </div>
+            {selectionMode ? (
+              <BulkSelectionBar
+                includeExisting={bulkPriceIncludeExisting}
+                isWorking={bulkPriceStatus === "loading"}
+                missingPriceCount={selectedMissingPriceCount}
+                selectedCount={selectedItemIds.length}
+                visibleCount={filteredItems.length}
+                onClear={() => setSelectedItemIds([])}
+                onDeleteSelected={handleBulkDeleteSelected}
+                onEditVariants={() => setBulkVariantEditorOpen((isOpen) => !isOpen)}
+                onIncludeExistingChange={setBulkPriceIncludeExisting}
+                onQueuePriceRefresh={handleQueueBulkPriceRefresh}
+                onSelectVisible={selectVisibleItems}
+              />
+            ) : null}
+            {selectionMode && bulkVariantEditorOpen ? (
+              <BulkVariantEditor
+                clearMarketPrices={bulkVariantClearMarketPrices}
+                isWorking={bulkVariantStatus === "loading"}
+                message={bulkVariantMessage}
+                mode={bulkVariantMode}
+                selectedCount={selectedItemIds.length}
+                selectedVariants={bulkVariantValues}
+                status={bulkVariantStatus}
+                onClearMarketPricesChange={setBulkVariantClearMarketPrices}
+                onModeChange={setBulkVariantMode}
+                onSubmit={handleBulkUpdateVariants}
+                onToggleVariant={toggleBulkVariantValue}
+              />
+            ) : null}
+            {bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
+              <BulkPriceQueuePanel
+                isWorking={bulkPriceStatus === "loading"}
+                message={bulkPriceMessage}
+                queue={bulkPriceQueue}
+                status={bulkPriceStatus}
+                onCancel={handleCancelBulkPriceQueue}
+                onClearCompleted={handleClearCompletedBulkPriceQueue}
+                onOpenItem={(item) => setSelectedItem(item)}
+                onResume={handleResumeBulkPriceQueue}
+                onRetryFailed={handleRetryFailedBulkPriceQueue}
+              />
+            ) : null}
             {filteredItems.length > 0 ? (
-              <InventoryGrid items={filteredItems} onSelect={setSelectedItem} />
+              <InventoryGrid
+                isSelecting={selectionMode}
+                items={filteredItems}
+                selectedItemIds={selectedItemIdSet}
+                onSelect={setSelectedItem}
+                onToggleSelected={toggleSelectedItem}
+              />
             ) : (
               <section className="empty-state filtered-empty" id="collection">
                 <div className="empty-copy">
@@ -708,6 +1250,11 @@ function WorkspaceShell({
             onDeleted={(itemId) => {
               setInventory((current) => removeInventoryItem(current, itemId));
               setSelectedItem(null);
+            }}
+            onPriceQueued={(queue, message) => {
+              applyBulkPriceQueueResponse(queue);
+              setBulkPriceMessage(message);
+              setBulkPriceStatus("idle");
             }}
             onUpdated={(updatedItem) => {
               setInventory((current) => updateInventoryItem(current, updatedItem));
@@ -1236,6 +1783,240 @@ function BulkQueueCard({
   );
 }
 
+function InventoryCsvImportPanel({
+  collectionId,
+  onCreateItem
+}: {
+  collectionId: string;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
+}) {
+  const [csvText, setCsvText] = useState("");
+  const [rows, setRows] = useState<CsvImportPreviewRow[]>([]);
+  const [status, setStatus] = useState<"idle" | "adding">("idle");
+  const [error, setError] = useState("");
+
+  const counts = summarizeCsvImportRows(rows);
+  const readyRows = rows.filter((row) => row.status === "ready");
+
+  async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setCsvText(await file.text());
+    setRows([]);
+    setError("");
+  }
+
+  function handlePreview() {
+    try {
+      const parsedRows = parseInventoryCsvImport(csvText);
+      setRows(parsedRows);
+      setError(parsedRows.length === 0 ? "No importable rows found." : "");
+    } catch (previewError) {
+      setRows([]);
+      setError(previewError instanceof Error ? previewError.message : "Unable to parse CSV.");
+    }
+  }
+
+  async function handleImportReady() {
+    if (readyRows.length === 0) {
+      return;
+    }
+
+    setStatus("adding");
+    setError("");
+
+    for (const row of readyRows) {
+      setRows((current) =>
+        current.map((candidate) =>
+          candidate.id === row.id ? { ...candidate, status: "adding" } : candidate
+        )
+      );
+
+      try {
+        const item = await onCreateItem(collectionId, row.payload);
+
+        setRows((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: item ? "added" : "skipped",
+                  errors: item ? [] : ["Import cancelled."]
+                }
+              : candidate
+          )
+        );
+      } catch (importError) {
+        setRows((current) =>
+          current.map((candidate) =>
+            candidate.id === row.id
+              ? {
+                  ...candidate,
+                  status: "error",
+                  errors: [
+                    importError instanceof Error ? importError.message : "Unable to import row."
+                  ]
+                }
+              : candidate
+          )
+        );
+      }
+
+      await delay(100);
+    }
+
+    setStatus("idle");
+  }
+
+  function skipRow(rowId: string) {
+    setRows((current) =>
+      current.map((row) =>
+        row.id === rowId ? { ...row, status: "skipped", errors: ["Skipped."] } : row
+      )
+    );
+  }
+
+  return (
+    <section className="manual-panel bulk-panel" aria-label="CSV inventory import">
+      <div className="bulk-header">
+        <div>
+          <p className="eyebrow">CSV import</p>
+          <h3>Preview inventory rows</h3>
+        </div>
+        <p className="lookup-note">Use the inventory export format or matching column names.</p>
+      </div>
+
+      <div className="bulk-input-grid">
+        <label>
+          Paste CSV
+          <textarea
+            disabled={status !== "idle"}
+            onChange={(event) => {
+              setCsvText(event.target.value);
+              setRows([]);
+              setError("");
+            }}
+            placeholder={"name,set_code,card_number,language,item_type,quantity\nPikachu,base1,58/102,en,raw,1"}
+            value={csvText}
+          />
+        </label>
+        <div className="bulk-file-box">
+          <label>
+            Upload .csv
+            <input
+              accept=".csv,text/csv"
+              disabled={status !== "idle"}
+              onChange={handleFileUpload}
+              type="file"
+            />
+          </label>
+          <p>
+            {rows.length > 0
+              ? `${counts.ready} ready, ${counts.error} need edits`
+              : "Preview before importing"}
+          </p>
+        </div>
+      </div>
+
+      <div className="bulk-actions">
+        <button
+          className="primary-button"
+          disabled={status !== "idle" || csvText.trim().length === 0}
+          onClick={handlePreview}
+          type="button"
+        >
+          Preview CSV
+        </button>
+        <button
+          disabled={status !== "idle" || readyRows.length === 0}
+          onClick={handleImportReady}
+          type="button"
+        >
+          {status === "adding" ? "Importing..." : `Import ready (${readyRows.length})`}
+        </button>
+        <button
+          disabled={status !== "idle"}
+          onClick={() => {
+            setCsvText("");
+            setRows([]);
+            setError("");
+          }}
+          type="button"
+        >
+          Clear import
+        </button>
+      </div>
+
+      {rows.length > 0 ? (
+        <div className="bulk-progress">
+          <span>{counts.ready} ready</span>
+          <span>{counts.error} errors</span>
+          <span>{counts.added} added</span>
+          <span>{counts.skipped} skipped</span>
+        </div>
+      ) : null}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {rows.length > 0 ? (
+        <div className="bulk-results">
+          {rows.map((row) => (
+            <CsvImportRowCard key={row.id} row={row} onSkip={skipRow} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CsvImportRowCard({
+  row,
+  onSkip
+}: {
+  row: CsvImportPreviewRow;
+  onSkip: (rowId: string) => void;
+}) {
+  const rowClass = row.status === "ready" ? "selected" : row.status === "error" ? "failed" : row.status;
+
+  return (
+    <article className={`bulk-row ${rowClass}`}>
+      <div className="bulk-row-thumb" aria-hidden="true">
+        {row.payload.imageUrl ? <img alt="" src={row.payload.imageUrl} /> : <FileText size={28} />}
+      </div>
+      <div className="bulk-row-body">
+        <div className="bulk-row-header">
+          <div>
+            <p className="eyebrow">Line {row.lineNumber} · {row.status}</p>
+            <h4>{row.payload.name || "Missing name"}</h4>
+            <p>{[row.payload.setCode, row.payload.cardNumber, row.payload.setName].filter(Boolean).join(" · ")}</p>
+          </div>
+          {["ready", "error"].includes(row.status) ? (
+            <button onClick={() => onSkip(row.id)} type="button">
+              Skip
+            </button>
+          ) : null}
+        </div>
+
+        <div className="inventory-meta">
+          <span>{row.payload.language.toUpperCase()}</span>
+          <span>{row.payload.itemType}</span>
+          <span>Qty {row.payload.quantity}</span>
+          {row.payload.grader ? <span>{row.payload.grader} {row.payload.grade}</span> : null}
+        </div>
+
+        {row.errors.length > 0 ? <p className="form-error">{row.errors.join(" ")}</p> : null}
+      </div>
+    </article>
+  );
+}
+
 function PsaCertPanel({
   collectionId,
   onCreateItem,
@@ -1374,6 +2155,7 @@ function ManualAddPanel({
       cardNumber: String(formData.get("cardNumber") ?? ""),
       language,
       rarity: String(formData.get("rarity") ?? ""),
+      releaseYear: String(formData.get("releaseYear") ?? ""),
       imageUrl: String(formData.get("imageUrl") ?? ""),
       itemType,
       quantity: Number(formData.get("quantity") ?? 1),
@@ -1510,6 +2292,10 @@ function ManualAddPanel({
         <label>
           Value $
           <input inputMode="decimal" name="valueOverride" placeholder="Optional" />
+        </label>
+        <label>
+          Release year
+          <input inputMode="numeric" maxLength={4} name="releaseYear" placeholder="Optional" />
         </label>
         <label>
           Purchase date
@@ -1715,30 +2501,385 @@ function InventoryFilterPanel({
   );
 }
 
-function InventoryGrid({
-  items,
-  onSelect
+function BulkSelectionBar({
+  includeExisting,
+  isWorking,
+  missingPriceCount,
+  selectedCount,
+  visibleCount,
+  onClear,
+  onDeleteSelected,
+  onEditVariants,
+  onIncludeExistingChange,
+  onQueuePriceRefresh,
+  onSelectVisible
 }: {
+  includeExisting: boolean;
+  isWorking: boolean;
+  missingPriceCount: number;
+  selectedCount: number;
+  visibleCount: number;
+  onClear: () => void;
+  onDeleteSelected: () => void;
+  onEditVariants: () => void;
+  onIncludeExistingChange: (includeExisting: boolean) => void;
+  onQueuePriceRefresh: () => void;
+  onSelectVisible: () => void;
+}) {
+  const queuedCount = includeExisting ? selectedCount : missingPriceCount;
+
+  return (
+    <section className="bulk-selection-bar" aria-label="Bulk selection actions">
+      <div>
+        <strong>{selectedCount} selected</strong>
+        <span>
+          {queuedCount} will be queued for price refresh
+          {includeExisting ? "" : " (missing prices only)"}
+        </span>
+      </div>
+      <div className="bulk-selection-actions">
+        <label className="inline-checkbox">
+          <input
+            checked={includeExisting}
+            onChange={(event) => onIncludeExistingChange(event.target.checked)}
+            type="checkbox"
+          />
+          Refresh existing prices
+        </label>
+        <button disabled={visibleCount === 0 || isWorking} onClick={onSelectVisible} type="button">
+          Select visible
+        </button>
+        <button disabled={selectedCount === 0 || isWorking} onClick={onClear} type="button">
+          Clear selection
+        </button>
+        <button disabled={selectedCount === 0 || isWorking} onClick={onEditVariants} type="button">
+          Edit variants
+        </button>
+        <button
+          className="danger-button"
+          disabled={selectedCount === 0 || isWorking}
+          onClick={onDeleteSelected}
+          type="button"
+        >
+          Delete selected
+        </button>
+        <button disabled={queuedCount === 0 || isWorking} onClick={onQueuePriceRefresh} type="button">
+          {isWorking ? "Queueing..." : "Queue price refresh"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function BulkVariantEditor({
+  clearMarketPrices,
+  isWorking,
+  message,
+  mode,
+  selectedCount,
+  selectedVariants,
+  status,
+  onClearMarketPricesChange,
+  onModeChange,
+  onSubmit,
+  onToggleVariant
+}: {
+  clearMarketPrices: boolean;
+  isWorking: boolean;
+  message: string;
+  mode: BulkVariantEditMode;
+  selectedCount: number;
+  selectedVariants: string[];
+  status: "idle" | "loading" | "error";
+  onClearMarketPricesChange: (clearMarketPrices: boolean) => void;
+  onModeChange: (mode: BulkVariantEditMode) => void;
+  onSubmit: () => void;
+  onToggleVariant: (variant: string) => void;
+}) {
+  const canSubmit = selectedCount > 0 && !isWorking && (mode === "set" || selectedVariants.length > 0);
+
+  return (
+    <section className="bulk-variant-panel" aria-label="Bulk variant editor">
+      <div className="bulk-queue-header">
+        <div>
+          <p className="eyebrow">Bulk edit variants</p>
+          <h3>{selectedCount} selected</h3>
+        </div>
+        <div className="bulk-mode-switch" aria-label="Variant edit mode">
+          {(["add", "set", "remove"] as BulkVariantEditMode[]).map((option) => (
+            <button
+              className={mode === option ? "selected" : ""}
+              disabled={isWorking}
+              key={option}
+              onClick={() => onModeChange(option)}
+              type="button"
+            >
+              {variantEditModeLabel(option)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="variant-picker">
+        {variantOptions.map((variant) => (
+          <label key={variant}>
+            <input
+              checked={selectedVariants.includes(variant)}
+              disabled={isWorking}
+              onChange={() => onToggleVariant(variant)}
+              type="checkbox"
+            />
+            {variant}
+          </label>
+        ))}
+      </div>
+      <div className="bulk-selection-actions">
+        <label className="inline-checkbox">
+          <input
+            checked={clearMarketPrices}
+            disabled={isWorking}
+            onChange={(event) => onClearMarketPricesChange(event.target.checked)}
+            type="checkbox"
+          />
+          Clear saved market prices
+        </label>
+        <button disabled={!canSubmit} onClick={onSubmit} type="button">
+          {isWorking ? "Saving..." : "Apply variant edit"}
+        </button>
+      </div>
+      {message ? (
+        <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function BulkPriceQueuePanel({
+  isWorking,
+  message,
+  queue,
+  status,
+  onCancel,
+  onClearCompleted,
+  onOpenItem,
+  onResume,
+  onRetryFailed
+}: {
+  isWorking: boolean;
+  message: string;
+  queue: BulkPriceQueueResponse;
+  status: "idle" | "loading" | "error";
+  onCancel: () => void;
+  onClearCompleted: () => void;
+  onOpenItem: (item: InventoryItem) => void;
+  onResume: () => void;
+  onRetryFailed: () => void;
+}) {
+  const activeCount =
+    queue.summary.queued + queue.summary.running + queue.summary.rateLimited;
+  const attentionCount =
+    queue.summary.needsReview + queue.summary.failed + queue.summary.rateLimited;
+  const completedCount =
+    queue.summary.saved + queue.summary.skipped + queue.summary.cancelled;
+  const hasCompleted = completedCount + queue.summary.needsReview + queue.summary.failed > 0;
+  const visibleJobs = queue.jobs.filter(isVisibleBulkQueueJob).slice(0, 8);
+  const primaryState =
+    queue.summary.running > 0
+      ? "Running"
+      : queue.summary.rateLimited > 0
+        ? "Paused"
+        : queue.summary.queued > 0
+          ? "Queued"
+          : attentionCount > 0
+            ? "Needs attention"
+            : "Idle";
+
+  return (
+    <section className="bulk-queue-panel" aria-label="Bulk price queue">
+      <div className="bulk-queue-header">
+        <div>
+          <p className="eyebrow">Price queue</p>
+          <h3>{primaryState}</h3>
+          <p>{queue.summary.total} recent pricing jobs tracked locally</p>
+        </div>
+        <div className="bulk-selection-actions">
+          <button disabled={isWorking} onClick={onResume} type="button">
+            <Play size={16} aria-hidden="true" />
+            {isWorking ? "Working..." : "Resume now"}
+          </button>
+          <button disabled={activeCount === 0 || isWorking} onClick={onCancel} type="button">
+            <XCircle size={16} aria-hidden="true" />
+            Cancel queued
+          </button>
+          <button disabled={queue.summary.failed === 0 || isWorking} onClick={onRetryFailed} type="button">
+            <RefreshCw size={16} aria-hidden="true" />
+            Retry failed
+          </button>
+          <button disabled={!hasCompleted || isWorking} onClick={onClearCompleted} type="button">
+            <Trash2 size={16} aria-hidden="true" />
+            Clear completed
+          </button>
+        </div>
+      </div>
+      <div className="bulk-queue-stats">
+        <div className="bulk-queue-stat active">
+          <Clock3 size={18} aria-hidden="true" />
+          <span>Waiting</span>
+          <strong>{queue.summary.queued + queue.summary.running}</strong>
+        </div>
+        <div className="bulk-queue-stat saved">
+          <CheckCircle2 size={18} aria-hidden="true" />
+          <span>Saved</span>
+          <strong>{queue.summary.saved}</strong>
+        </div>
+        <div className="bulk-queue-stat review">
+          <AlertTriangle size={18} aria-hidden="true" />
+          <span>Needs attention</span>
+          <strong>{attentionCount}</strong>
+        </div>
+        <div className="bulk-queue-stat done">
+          <Trash2 size={18} aria-hidden="true" />
+          <span>Cleared / skipped</span>
+          <strong>{queue.summary.skipped + queue.summary.cancelled}</strong>
+        </div>
+      </div>
+      {message ? (
+        <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+      ) : null}
+      {queue.summary.rateLimited > 0 ? (
+        <p className="lookup-note">
+          Paused by an API limit. The backend will retry eligible jobs automatically; Resume now
+          retries immediately.
+        </p>
+      ) : null}
+      {queue.summary.failed > 0 ? (
+        <p className="lookup-note">
+          Failed jobs are not retried automatically. Use Retry failed after fixing the key or waiting
+          for the request limit to reset.
+        </p>
+      ) : null}
+      <div className="bulk-queue-list-header">
+        <strong>Open jobs</strong>
+        <span>
+          Showing {visibleJobs.length} of {queue.jobs.filter(isVisibleBulkQueueJob).length}
+        </span>
+      </div>
+      <div className="bulk-queue-list">
+        {visibleJobs.length === 0 ? (
+          <p className="bulk-queue-empty">
+            Nothing needs attention right now. Saved jobs stay counted above and can be cleared.
+          </p>
+        ) : null}
+        {visibleJobs.map((job) => (
+          <article className={`bulk-queue-row ${job.status}`} key={job.id}>
+            <div>
+              <div className="bulk-queue-row-title">
+                <strong>{job.item?.card.name ?? "Missing item"}</strong>
+                <span className={`queue-status-pill ${job.status}`}>
+                  {bulkQueueStatusLabel(job.status)}
+                </span>
+              </div>
+              <p>
+                {[
+                  job.item?.card.setName,
+                  job.item?.card.cardNumber,
+                  job.mode
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              {job.message ? <span>{job.message}</span> : null}
+              {job.nextAttemptAt ? <em>{retryLabel(job.nextAttemptAt)}</em> : null}
+            </div>
+            {job.item ? (
+              <button onClick={() => onOpenItem(job.item!)} type="button">
+                Open
+              </button>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function isVisibleBulkQueueJob(job: BulkPriceQueueResponse["jobs"][number]) {
+  return !["saved", "skipped", "cancelled"].includes(job.status);
+}
+
+function bulkQueueStatusLabel(status: string) {
+  switch (status) {
+    case "cancelled":
+      return "Cancelled";
+    case "failed":
+      return "Failed";
+    case "needs-review":
+      return "Review";
+    case "rate-limited":
+      return "Paused";
+    case "running":
+      return "Running";
+    case "saved":
+      return "Saved";
+    case "skipped":
+      return "Skipped";
+    default:
+      return "Queued";
+  }
+}
+
+function InventoryGrid({
+  isSelecting,
+  items,
+  selectedItemIds,
+  onSelect,
+  onToggleSelected
+}: {
+  isSelecting: boolean;
   items: InventoryItem[];
+  selectedItemIds: Set<string>;
   onSelect: (item: InventoryItem) => void;
+  onToggleSelected: (itemId: string) => void;
 }) {
   return (
     <section className="inventory-grid" id="collection" aria-label="Collection cards">
       {items.map((item) => (
         <article
           aria-label={`Open ${item.card.name} details`}
-          className="inventory-card"
+          className={`inventory-card ${isSelecting ? "selecting" : ""} ${
+            selectedItemIds.has(item.id) ? "selected" : ""
+          }`}
           key={item.id}
-          onClick={() => onSelect(item)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
+          onClick={() => {
+            if (isSelecting) {
+              onToggleSelected(item.id);
+            } else {
               onSelect(item);
             }
           }}
-          role="button"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              if (isSelecting) {
+                onToggleSelected(item.id);
+              } else {
+                onSelect(item);
+              }
+            }
+          }}
+          role={isSelecting ? "checkbox" : "button"}
+          aria-checked={isSelecting ? selectedItemIds.has(item.id) : undefined}
           tabIndex={0}
         >
+          {isSelecting ? (
+            <label className="inventory-select-box" onClick={(event) => event.stopPropagation()}>
+              <input
+                checked={selectedItemIds.has(item.id)}
+                onChange={() => onToggleSelected(item.id)}
+                type="checkbox"
+              />
+              <span>Select {item.card.name}</span>
+            </label>
+          ) : null}
           <div className="inventory-image" aria-hidden="true">
             {item.card.imageUrl ? <img alt="" src={item.card.imageUrl} /> : <Gem size={38} />}
           </div>
@@ -1749,7 +2890,7 @@ function InventoryGrid({
               </p>
               <h3>{item.card.name}</h3>
               <p>
-                {[item.card.setCode, item.card.cardNumber, item.card.setName]
+                {[item.card.setCode, item.card.cardNumber, item.card.setName, item.card.releaseYear]
                   .filter(Boolean)
                   .join(" · ") || "Manual card"}
               </p>
@@ -1758,18 +2899,18 @@ function InventoryGrid({
               <span>Qty {item.quantity}</span>
               {item.conditionLabel ? <span>{item.conditionLabel}</span> : null}
               {item.conditionScore ? <span>{item.conditionScore}/10</span> : null}
+              {item.variantDetails ? <span>{item.variantDetails}</span> : null}
               {item.grader && item.grade ? (
                 <span>
                   {item.grader} {item.grade}
                 </span>
               ) : null}
+              {item.marketPriceCents !== null ? (
+                <span>Market {formatCurrency(item.marketPriceCents)}</span>
+              ) : null}
               {item.storageLocation ? <span>{item.storageLocation}</span> : null}
             </div>
-            <strong>
-              {formatCurrency(
-                (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity
-              )}
-            </strong>
+            <strong>{formatCurrency(inventoryItemValue(item))}</strong>
           </div>
         </article>
       ))}
@@ -1923,32 +3064,389 @@ function GradedCertSummary({
   );
 }
 
+function RawMarketPriceSummary({
+  candidates,
+  error,
+  isRefreshing,
+  item,
+  onRefresh,
+  onSelectCandidate
+}: {
+  candidates: PricingCandidate[];
+  error: string;
+  isRefreshing: boolean;
+  item: InventoryItem;
+  onRefresh: () => void;
+  onSelectCandidate: (candidate: PricingCandidate) => void;
+}) {
+  const lookupDate = item.marketPriceUpdatedAt ? new Date(item.marketPriceUpdatedAt) : null;
+  const lookupLabel =
+    lookupDate && !Number.isNaN(lookupDate.getTime())
+      ? lookupDate.toLocaleDateString()
+      : null;
+
+  return (
+    <section className="raw-price-panel" aria-label="Raw market price">
+      <div className="graded-cert-header pricing-panel-header">
+        <div>
+          <p className="eyebrow">Raw market price</p>
+          <h4>
+            {item.marketPriceCents !== null
+              ? formatCurrency(item.marketPriceCents)
+              : "No market price yet"}
+          </h4>
+        </div>
+        <div className="graded-cert-actions pricing-panel-actions">
+          <EbaySoldCompsLink item={item} />
+          <PokemonPriceTrackerLink item={item} />
+          <button disabled={isRefreshing} onClick={onRefresh} type="button">
+            <RefreshCw size={16} aria-hidden="true" />
+            {isRefreshing ? "Refreshing..." : "Refresh raw price"}
+          </button>
+        </div>
+      </div>
+
+      {item.marketPriceCents !== null ? (
+        <>
+          <div className="graded-cert-stats">
+            <div>
+              <span>Source</span>
+              <strong>{marketPriceSourceLabel(item.marketPriceSource)}</strong>
+            </div>
+            <div>
+              <span>Confidence</span>
+              <strong>{item.marketPriceConfidence ?? "Unknown"}</strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{lookupLabel ?? "Unknown"}</strong>
+            </div>
+          </div>
+          <div className="inventory-meta">
+            {item.marketPriceMatchedName ? <span>{item.marketPriceMatchedName}</span> : null}
+            {item.marketPriceMatchedSetName ? <span>{item.marketPriceMatchedSetName}</span> : null}
+            {item.marketPriceMatchedCardNumber ? (
+              <span>{item.marketPriceMatchedCardNumber}</span>
+            ) : null}
+            {item.marketPriceCondition ? <span>{item.marketPriceCondition}</span> : null}
+            {item.marketPricePrinting ? <span>{item.marketPricePrinting}</span> : null}
+          </div>
+        </>
+      ) : (
+        <p className="lookup-note">
+          Refresh with PokemonPriceTracker to store a raw-card market price.
+        </p>
+      )}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {candidates.length > 0 ? (
+        <div className="price-candidate-list">
+          {candidates.map((candidate) => (
+            <article className="price-candidate" key={candidate.sourceVariantId}>
+              <div>
+                <strong>{candidate.matchedName}</strong>
+                <p>
+                  {[candidate.matchedSetName, candidate.matchedCardNumber]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <div className="inventory-meta">
+                  <span>{formatCurrency(candidate.priceCents)}</span>
+                  <span>{candidate.confidence}</span>
+                  {candidate.condition ? <span>{candidate.condition}</span> : null}
+                  {candidate.printing ? <span>{candidate.printing}</span> : null}
+                </div>
+              </div>
+              <button
+                disabled={isRefreshing}
+                onClick={() => onSelectCandidate(candidate)}
+                type="button"
+              >
+                Use this price
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function GradedMarketPriceSummary({
+  candidates,
+  error,
+  isRefreshing,
+  item,
+  onRefresh,
+  onSelectCandidate
+}: {
+  candidates: PricingCandidate[];
+  error: string;
+  isRefreshing: boolean;
+  item: InventoryItem;
+  onRefresh: () => void;
+  onSelectCandidate: (candidate: PricingCandidate) => void;
+}) {
+  const lookupDate = item.marketPriceUpdatedAt ? new Date(item.marketPriceUpdatedAt) : null;
+  const lookupLabel =
+    lookupDate && !Number.isNaN(lookupDate.getTime())
+      ? lookupDate.toLocaleDateString()
+      : null;
+
+  return (
+    <section className="raw-price-panel" aria-label="Graded market price">
+      <div className="graded-cert-header pricing-panel-header">
+        <div>
+          <p className="eyebrow">Graded market price</p>
+          <h4>
+            {item.marketPriceCents !== null
+              ? formatCurrency(item.marketPriceCents)
+              : "No market price yet"}
+          </h4>
+        </div>
+        <div className="graded-cert-actions pricing-panel-actions">
+          <EbaySoldCompsLink item={item} />
+          <PokemonPriceTrackerLink item={item} />
+          <button disabled={isRefreshing} onClick={onRefresh} type="button">
+            <RefreshCw size={16} aria-hidden="true" />
+            {isRefreshing ? "Refreshing..." : "Refresh graded price"}
+          </button>
+        </div>
+      </div>
+
+      {item.marketPriceCents !== null ? (
+        <>
+          <div className="graded-cert-stats">
+            <div>
+              <span>Source</span>
+              <strong>{marketPriceSourceLabel(item.marketPriceSource)}</strong>
+            </div>
+            <div>
+              <span>Confidence</span>
+              <strong>{item.marketPriceConfidence ?? "Unknown"}</strong>
+            </div>
+            <div>
+              <span>Sales</span>
+              <strong>{item.marketPriceSaleCount ?? "Unknown"}</strong>
+            </div>
+            <div>
+              <span>Updated</span>
+              <strong>{lookupLabel ?? "Unknown"}</strong>
+            </div>
+          </div>
+          <div className="inventory-meta">
+            {item.marketPriceMatchedName ? <span>{item.marketPriceMatchedName}</span> : null}
+            {item.marketPriceMatchedSetName ? <span>{item.marketPriceMatchedSetName}</span> : null}
+            {item.marketPriceMatchedCardNumber ? (
+              <span>{item.marketPriceMatchedCardNumber}</span>
+            ) : null}
+            {item.marketPriceCondition ? <span>{item.marketPriceCondition}</span> : null}
+            {item.marketPricePrinting ? <span>{item.marketPricePrinting}</span> : null}
+          </div>
+        </>
+      ) : (
+        <p className="lookup-note">
+          Refresh with PokemonPriceTracker to store an eBay-backed graded-card market price.
+        </p>
+      )}
+
+      {error ? <p className="form-error">{error}</p> : null}
+
+      {candidates.length > 0 ? (
+        <div className="price-candidate-list">
+          {candidates.map((candidate) => (
+            <article
+              className="price-candidate"
+              key={`${candidate.sourceCardId}-${candidate.sourceVariantId}`}
+            >
+              <div>
+                <strong>{candidate.matchedName}</strong>
+                <p>
+                  {[candidate.matchedSetName, candidate.matchedCardNumber]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <div className="inventory-meta">
+                  <span>{formatCurrency(candidate.priceCents)}</span>
+                  <span>{candidate.confidence}</span>
+                  <span>{candidate.grader} {candidate.grade}</span>
+                  <span>{candidate.saleCount} sales</span>
+                  {candidate.medianPriceCents !== null ? (
+                    <span>Median {formatCurrency(candidate.medianPriceCents)}</span>
+                  ) : null}
+                  {candidate.marketTrend ? <span>{candidate.marketTrend}</span> : null}
+                </div>
+              </div>
+              <button
+                disabled={isRefreshing}
+                onClick={() => onSelectCandidate(candidate)}
+                type="button"
+              >
+                Use this price
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function EbaySoldCompsLink({ item }: { item: InventoryItem }) {
+  return (
+    <a
+      href={buildEbaySoldSearchUrl(item)}
+      rel="noreferrer"
+      target="_blank"
+      title="Open eBay sold listings search"
+    >
+      <ExternalLink size={16} aria-hidden="true" />
+      eBay solds
+    </a>
+  );
+}
+
+function PokemonPriceTrackerLink({ item }: { item: InventoryItem }) {
+  return (
+    <a
+      href={buildPokemonPriceTrackerUrl(item)}
+      rel="noreferrer"
+      target="_blank"
+      title="Open PokemonPriceTracker search"
+    >
+      <ExternalLink size={16} aria-hidden="true" />
+      PriceTracker
+    </a>
+  );
+}
+
+function PricingHistoryPanel({
+  days,
+  isLoading,
+  message,
+  points,
+  status,
+  onLoad
+}: {
+  days: number;
+  isLoading: boolean;
+  message: string;
+  points: PricingHistoryPoint[];
+  status: "idle" | "loading" | "error";
+  onLoad: (days: number) => void;
+}) {
+  const minPrice = points.length > 0 ? Math.min(...points.map((point) => point.priceCents)) : 0;
+  const maxPrice = points.length > 0 ? Math.max(...points.map((point) => point.priceCents)) : 0;
+  const range = Math.max(1, maxPrice - minPrice);
+
+  return (
+    <section className="raw-price-panel" aria-label="Market price history">
+      <div className="graded-cert-header">
+        <div>
+          <p className="eyebrow">Price history</p>
+          <h4>{points.length > 0 ? `${points.length} points` : "Not loaded"}</h4>
+        </div>
+        <div className="history-actions">
+          {[7, 30, 90].map((option) => (
+            <button
+              className={days === option ? "active" : ""}
+              disabled={isLoading}
+              key={option}
+              onClick={() => onLoad(option)}
+              type="button"
+            >
+              {option}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {points.length > 0 ? (
+        <div className="price-history-chart" aria-hidden="true">
+          {points.map((point) => {
+            const height = 18 + ((point.priceCents - minPrice) / range) * 82;
+
+            return (
+              <span
+                key={`${point.date}-${point.priceCents}`}
+                style={{ height: `${height}%` }}
+                title={`${point.date}: ${formatCurrency(point.priceCents)}`}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <p className="lookup-note">
+          Load history only when you need it so PokemonPriceTracker credits are used deliberately.
+        </p>
+      )}
+
+      {points.length > 0 ? (
+        <div className="inventory-meta">
+          <span>{formatCurrency(points[0].priceCents)} start</span>
+          <span>{formatCurrency(points[points.length - 1].priceCents)} latest</span>
+          <span>{formatCurrency(minPrice)} low</span>
+          <span>{formatCurrency(maxPrice)} high</span>
+        </div>
+      ) : null}
+
+      {message ? (
+        <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+      ) : null}
+    </section>
+  );
+}
+
 function InventoryItemDetail({
   collectionId,
   item,
   onClose,
   onDeleted,
+  onPriceQueued,
   onUpdated
 }: {
   collectionId: string;
   item: InventoryItem;
   onClose: () => void;
   onDeleted: (itemId: string) => void;
+  onPriceQueued: (queue: BulkPriceQueueResponse, message: string) => void;
   onUpdated: (item: InventoryItem) => void;
 }) {
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
   const [itemType, setItemType] = useState<InventoryItemType>(item.itemType);
   const [language, setLanguage] = useState<CardLanguage>(item.card.language);
-  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing">("idle");
+  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing" | "pricing">(
+    "idle"
+  );
+  const [pricingCandidates, setPricingCandidates] = useState<PricingCandidate[]>([]);
+  const [gradedPricingCandidates, setGradedPricingCandidates] = useState<PricingCandidate[]>([]);
+  const [pricingError, setPricingError] = useState("");
+  const [pricingHistory, setPricingHistory] = useState<PricingHistoryPoint[]>([]);
+  const [pricingHistoryDays, setPricingHistoryDays] = useState(30);
+  const [pricingHistoryStatus, setPricingHistoryStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [pricingHistoryMessage, setPricingHistoryMessage] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setPricingCandidates([]);
+    setGradedPricingCandidates([]);
+    setPricingError("");
+    setPricingHistory([]);
+    setPricingHistoryDays(30);
+    setPricingHistoryStatus("idle");
+    setPricingHistoryMessage("");
+    setError("");
+    setStatus("idle");
+  }, [item.id]);
 
   useEffect(() => {
     setImageUrl(item.card.imageUrl ?? "");
     setItemType(item.itemType);
     setLanguage(item.card.language);
-    setError("");
-    setStatus("idle");
-  }, [item]);
+  }, [item.card.imageUrl, item.card.language, item.itemType]);
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1967,6 +3465,7 @@ function InventoryItemDetail({
         cardNumber: String(formData.get("cardNumber") ?? ""),
         language,
         rarity: String(formData.get("rarity") ?? ""),
+        releaseYear: String(formData.get("releaseYear") ?? ""),
         imageUrl: nextImageUrl,
         itemType,
         quantity: Number(formData.get("quantity") ?? 1),
@@ -2064,6 +3563,164 @@ function InventoryItemDetail({
     }
   }
 
+  async function handleRefreshRawPrice() {
+    if (item.itemType !== "raw") {
+      setError("Raw pricing is only available for raw cards.");
+      return;
+    }
+
+    setPricingError("");
+    setPricingCandidates([]);
+    setGradedPricingCandidates([]);
+    setStatus("pricing");
+
+    try {
+      const response = await api.refreshPricing(collectionId, item.id);
+
+      if (response.status === "queued" && response.queue) {
+        onPriceQueued(response.queue, response.message);
+        setPricingError(response.message);
+        return;
+      }
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setPricingCandidates(
+        response.status === "needs-review"
+          ? response.candidates.filter((candidate) => candidate.priceKind === "raw")
+          : []
+      );
+
+      if (response.status === "needs-review") {
+        setPricingError(response.message);
+      }
+    } catch (pricingError) {
+      setPricingError(
+        pricingError instanceof Error ? pricingError.message : "Unable to refresh raw pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleSelectRawPrice(candidate: PricingCandidate) {
+    setPricingError("");
+    setStatus("pricing");
+
+    try {
+      const response = await api.selectPricing(collectionId, item.id, {
+        sourceCardId: candidate.sourceCardId,
+        sourceVariantId: candidate.sourceVariantId,
+        source: candidate.source,
+        candidate
+      });
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setPricingCandidates([]);
+    } catch (pricingError) {
+      setPricingError(
+        pricingError instanceof Error ? pricingError.message : "Unable to save raw pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleRefreshGradedPrice() {
+    if (item.itemType !== "graded") {
+      setError("PokemonPriceTracker graded pricing is only available for graded cards.");
+      return;
+    }
+
+    setPricingError("");
+    setPricingCandidates([]);
+    setGradedPricingCandidates([]);
+    setStatus("pricing");
+
+    try {
+      const response = await api.refreshPricing(collectionId, item.id);
+
+      if (response.status === "queued" && response.queue) {
+        onPriceQueued(response.queue, response.message);
+        setPricingError(response.message);
+        return;
+      }
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setGradedPricingCandidates(
+        response.status === "needs-review"
+          ? response.candidates.filter((candidate) => candidate.priceKind === "graded")
+          : []
+      );
+
+      if (response.status === "needs-review") {
+        setPricingError(response.message);
+      }
+    } catch (pricingError) {
+      setPricingError(
+        pricingError instanceof Error
+          ? pricingError.message
+          : "Unable to refresh PokemonPriceTracker pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleSelectGradedPrice(candidate: PricingCandidate) {
+    setPricingError("");
+    setStatus("pricing");
+
+    try {
+      const response = await api.selectPricing(collectionId, item.id, {
+        sourceCardId: candidate.sourceCardId,
+        sourceVariantId: candidate.sourceVariantId,
+        source: candidate.source,
+        candidate
+      });
+
+      if (response.item) {
+        onUpdated(response.item);
+      }
+
+      setGradedPricingCandidates([]);
+    } catch (pricingError) {
+      setPricingError(
+        pricingError instanceof Error
+          ? pricingError.message
+          : "Unable to save PokemonPriceTracker pricing."
+      );
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleLoadPricingHistory(days: number) {
+    setPricingHistoryDays(days);
+    setPricingHistoryStatus("loading");
+    setPricingHistoryMessage("");
+
+    try {
+      const response = await api.getPricingHistory(collectionId, item.id, days);
+      setPricingHistory(response.points);
+      setPricingHistoryStatus("idle");
+      setPricingHistoryMessage(response.message);
+    } catch (historyError) {
+      setPricingHistoryStatus("error");
+      setPricingHistoryMessage(
+        historyError instanceof Error ? historyError.message : "Unable to load price history."
+      );
+    }
+  }
+
   return (
     <div className="detail-backdrop" role="presentation" onClick={onClose}>
       <section
@@ -2098,6 +3755,8 @@ function InventoryItemDetail({
               {item.card.setCode ? <span>{item.card.setCode}</span> : null}
               {item.card.cardNumber ? <span>{item.card.cardNumber}</span> : null}
               {item.card.setName ? <span>{item.card.setName}</span> : null}
+              {item.card.releaseYear ? <span>{item.card.releaseYear}</span> : null}
+              {item.variantDetails ? <span>{item.variantDetails}</span> : null}
               {item.grader && item.grade ? (
                 <span>
                   {item.grader} {item.grade}
@@ -2107,10 +3766,42 @@ function InventoryItemDetail({
             </div>
 
             {itemType === "graded" ? (
-              <GradedCertSummary
+              <>
+                <GradedCertSummary
+                  item={item}
+                  isRefreshing={status === "refreshing"}
+                  onRefresh={handleRefreshCert}
+                />
+                <GradedMarketPriceSummary
+                  candidates={gradedPricingCandidates}
+                  error={pricingError}
+                  isRefreshing={status === "pricing"}
+                  item={item}
+                  onRefresh={handleRefreshGradedPrice}
+                  onSelectCandidate={handleSelectGradedPrice}
+                />
+              </>
+            ) : null}
+
+            {itemType === "raw" ? (
+              <RawMarketPriceSummary
+                candidates={pricingCandidates}
+                error={pricingError}
+                isRefreshing={status === "pricing"}
                 item={item}
-                isRefreshing={status === "refreshing"}
-                onRefresh={handleRefreshCert}
+                onRefresh={handleRefreshRawPrice}
+                onSelectCandidate={handleSelectRawPrice}
+              />
+            ) : null}
+
+            {item.marketPriceSource === "pokemonpricetracker" ? (
+              <PricingHistoryPanel
+                days={pricingHistoryDays}
+                isLoading={pricingHistoryStatus === "loading"}
+                message={pricingHistoryMessage}
+                points={pricingHistory}
+                status={pricingHistoryStatus}
+                onLoad={handleLoadPricingHistory}
               />
             ) : null}
 
@@ -2227,6 +3918,15 @@ function InventoryItemDetail({
                 <input defaultValue={item.purchaseDate ?? ""} name="purchaseDate" type="date" />
               </label>
               <label>
+                Release year
+                <input
+                  defaultValue={item.card.releaseYear ?? ""}
+                  inputMode="numeric"
+                  maxLength={4}
+                  name="releaseYear"
+                />
+              </label>
+              <label>
                 Storage
                 <input defaultValue={item.storageLocation ?? ""} name="storageLocation" />
               </label>
@@ -2323,7 +4023,8 @@ function summarizeInventory(items: InventoryItem[]): InventoryListResponse {
         summary.itemCount += 1;
         summary.cardCount += item.quantity;
         summary.estimatedValueCents +=
-          (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+          (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) *
+          item.quantity;
         return summary;
       },
       { itemCount: 0, cardCount: 0, estimatedValueCents: 0 }
@@ -2375,6 +4076,7 @@ function inventoryItemToPayload(item: InventoryItem): CreateInventoryItemRequest
     cardNumber: item.card.cardNumber ?? "",
     language: item.card.language,
     rarity: item.card.rarity ?? "",
+    releaseYear: item.card.releaseYear ?? "",
     imageUrl: item.card.imageUrl ?? "",
     itemType: item.itemType,
     quantity: item.quantity,
@@ -2503,6 +4205,27 @@ function normalizeQuantity(value: unknown) {
   return Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
 }
 
+function createClientId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+      16,
+      20
+    )}-${hex.slice(20)}`;
+  }
+
+  return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function parseBulkTerms(value: string) {
   const seen = new Set<string>();
   const terms: string[] = [];
@@ -2523,7 +4246,7 @@ function parseBulkTerms(value: string) {
 
 function createBulkRow(term: string): BulkQueueRow {
   return {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     term,
     status: "pending",
     candidates: [],
@@ -2650,6 +4373,317 @@ function summarizeBulkQueue(queue: BulkQueueRow[]) {
   );
 }
 
+function parseInventoryCsvImport(value: string): CsvImportPreviewRow[] {
+  const records = parseCsvRecords(value).filter((record) =>
+    record.cells.some((cell) => cell.trim().length > 0)
+  );
+
+  if (records.length === 0) {
+    return [];
+  }
+
+  const headers = records[0].cells.map(normalizeCsvHeader);
+  const seenHeaders = new Set<string>();
+
+  for (const header of headers) {
+    if (!header) {
+      continue;
+    }
+
+    if (seenHeaders.has(header)) {
+      throw new Error(`CSV has duplicate column "${header}".`);
+    }
+
+    seenHeaders.add(header);
+  }
+
+  return records.slice(1).map((record) => createCsvImportPreviewRow(headers, record));
+}
+
+function createCsvImportPreviewRow(
+  headers: string[],
+  record: { cells: string[]; lineNumber: number }
+): CsvImportPreviewRow {
+  const raw = headers.reduce<Record<string, string>>((row, header, index) => {
+    if (header) {
+      row[header] = record.cells[index]?.trim() ?? "";
+    }
+
+    return row;
+  }, {});
+  const itemType = csvItemType(csvValue(raw, "item_type", "type"));
+  const language = csvLanguage(csvValue(raw, "language", "lang"));
+  const quantity = csvInteger(csvValue(raw, "quantity", "qty"), 1);
+  const conditionScore = csvOptionalNumber(csvValue(raw, "condition_score", "score"));
+  const purchasePriceCents = csvOptionalCents(
+    csvValue(raw, "purchase_price_cents"),
+    csvValue(raw, "purchase_price", "purchase")
+  );
+  const valueOverrideCents = csvOptionalCents(
+    csvValue(raw, "value_override_cents"),
+    csvValue(raw, "value_override", "value")
+  );
+  const certEstimateCents = csvOptionalCents(csvValue(raw, "cert_estimate_cents"));
+  const payload: CreateInventoryItemRequest = {
+    name: csvValue(raw, "name", "card_name"),
+    setName: csvValue(raw, "set_name"),
+    setCode: csvValue(raw, "set_code"),
+    cardNumber: csvValue(raw, "card_number", "number"),
+    language,
+    rarity: csvValue(raw, "rarity"),
+    imageUrl: csvValue(raw, "image_url"),
+    itemType,
+    quantity,
+    conditionLabel: csvValue(raw, "condition_label", "condition"),
+    conditionScore,
+    variantDetails: csvValue(raw, "variant_details", "variants"),
+    grader: itemType === "graded" ? csvValue(raw, "grader") : "",
+    grade: itemType === "graded" ? csvValue(raw, "grade") : "",
+    certNumber: itemType === "graded" ? csvValue(raw, "cert_number", "cert") : "",
+    certUrl: csvValue(raw, "cert_url"),
+    certSpecId: csvValue(raw, "cert_spec_id"),
+    certCategory: csvValue(raw, "cert_category"),
+    certPopulation: csvValue(raw, "cert_population"),
+    certPopulationHigher: csvValue(raw, "cert_population_higher"),
+    certEstimateCents,
+    certLookupAt: csvValue(raw, "cert_lookup_at"),
+    purchasePriceCents,
+    purchaseDate: csvValue(raw, "purchase_date"),
+    valueOverrideCents,
+    storageLocation: csvValue(raw, "storage_location", "storage"),
+    notes: csvValue(raw, "notes")
+  };
+  const errors = validateCsvImportPayload(payload, raw, record.cells.length > headers.length);
+
+  return {
+    id: createClientId(),
+    lineNumber: record.lineNumber,
+    raw,
+    payload,
+    errors,
+    status: errors.length > 0 ? "error" : "ready"
+  };
+}
+
+function validateCsvImportPayload(
+  payload: CreateInventoryItemRequest,
+  raw: Record<string, string>,
+  hasExtraCells: boolean
+) {
+  const errors: string[] = [];
+  const rawLanguage = csvValue(raw, "language", "lang").toLowerCase();
+  const rawItemType = csvValue(raw, "item_type", "type").toLowerCase();
+  const rawQuantity = csvValue(raw, "quantity", "qty");
+
+  if (hasExtraCells) {
+    errors.push("Row has more values than the header row.");
+  }
+
+  if (!payload.name.trim() || payload.name.trim().length < 2) {
+    errors.push("Card name must be at least 2 characters.");
+  }
+
+  if (
+    rawLanguage &&
+    !["en", "english", "ja", "japanese", "other"].includes(rawLanguage)
+  ) {
+    errors.push("Language must be en, ja, or other.");
+  }
+
+  if (rawItemType && !["raw", "graded"].includes(rawItemType)) {
+    errors.push("Item type must be raw or graded.");
+  }
+
+  if (
+    (rawQuantity && !Number.isInteger(Number(rawQuantity))) ||
+    !Number.isInteger(payload.quantity) ||
+    payload.quantity < 1 ||
+    payload.quantity > 999
+  ) {
+    errors.push("Quantity must be between 1 and 999.");
+  }
+
+  if (
+    payload.conditionScore !== undefined &&
+    (!Number.isFinite(payload.conditionScore) ||
+      payload.conditionScore < 1 ||
+      payload.conditionScore > 10)
+  ) {
+    errors.push("Condition score must be between 1 and 10.");
+  }
+
+  if (payload.itemType === "graded" && !payload.grader?.trim()) {
+    errors.push("Graded rows need a grader.");
+  }
+
+  if (!isValidOptionalCents(payload.purchasePriceCents)) {
+    errors.push("Purchase price must be a positive amount.");
+  }
+
+  if (!isValidOptionalCents(payload.valueOverrideCents)) {
+    errors.push("Value override must be a positive amount.");
+  }
+
+  if (!isValidOptionalCents(payload.certEstimateCents)) {
+    errors.push("Cert estimate must be a positive amount.");
+  }
+
+  return errors;
+}
+
+function parseCsvRecords(value: string) {
+  const records: Array<{ cells: string[]; lineNumber: number }> = [];
+  let cells: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+  let lineNumber = 1;
+  let rowLineNumber = 1;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    const next = value[index + 1];
+
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        cell += char;
+
+        if (char === "\n") {
+          lineNumber += 1;
+        }
+      }
+
+      continue;
+    }
+
+    if (char === '"' && cell.length === 0) {
+      inQuotes = true;
+      continue;
+    }
+
+    if (char === ",") {
+      cells.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (char === "\n" || char === "\r") {
+      cells.push(cell);
+      records.push({ cells, lineNumber: rowLineNumber });
+      cells = [];
+      cell = "";
+
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+
+      lineNumber += 1;
+      rowLineNumber = lineNumber;
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (inQuotes) {
+    throw new Error("CSV has an unclosed quoted field.");
+  }
+
+  if (cell.length > 0 || cells.length > 0) {
+    cells.push(cell);
+    records.push({ cells, lineNumber: rowLineNumber });
+  }
+
+  return records;
+}
+
+function summarizeCsvImportRows(rows: CsvImportPreviewRow[]) {
+  return rows.reduce(
+    (summary, row) => {
+      summary[row.status] += 1;
+      return summary;
+    },
+    {
+      ready: 0,
+      error: 0,
+      adding: 0,
+      added: 0,
+      skipped: 0
+    }
+  );
+}
+
+function csvValue(raw: Record<string, string>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = raw[normalizeCsvHeader(key)];
+
+    if (value) {
+      return value.trim();
+    }
+  }
+
+  return "";
+}
+
+function normalizeCsvHeader(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function csvLanguage(value: string): CardLanguage {
+  const language = value.trim().toLowerCase();
+
+  if (language === "ja" || language === "japanese") {
+    return "ja";
+  }
+
+  if (language === "other") {
+    return "other";
+  }
+
+  return "en";
+}
+
+function csvItemType(value: string): InventoryItemType {
+  return value.trim().toLowerCase() === "graded" ? "graded" : "raw";
+}
+
+function csvInteger(value: string, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
+
+function csvOptionalNumber(value: string) {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  return Number(value);
+}
+
+function csvOptionalCents(centsValue: string, moneyValue = "") {
+  if (centsValue.trim()) {
+    return Number(centsValue);
+  }
+
+  if (!moneyValue.trim()) {
+    return undefined;
+  }
+
+  return Math.round(Number(moneyValue.replace(/[$,]/g, "")) * 100);
+}
+
+function isValidOptionalCents(value: number | undefined) {
+  return value === undefined || (Number.isInteger(value) && value >= 0);
+}
+
 function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterState) {
   const queryTokens = normalizeSearchText(filters.query).split(" ").filter(Boolean);
   const filtered = items.filter((item) => {
@@ -2669,7 +4703,10 @@ function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterSt
       return false;
     }
 
-    const hasValue = item.valueOverrideCents !== null || item.purchasePriceCents !== null;
+    const hasValue =
+      item.valueOverrideCents !== null ||
+      item.marketPriceCents !== null ||
+      item.purchasePriceCents !== null;
 
     if (filters.valueStatus === "with-value" && !hasValue) {
       return false;
@@ -2841,7 +4878,7 @@ function uniqueSorted(values: Array<string | null>) {
 }
 
 function inventoryItemValue(item: InventoryItem) {
-  return (item.valueOverrideCents ?? item.purchasePriceCents ?? 0) * item.quantity;
+  return (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) * item.quantity;
 }
 
 function normalizeSearchText(value: string) {
@@ -2880,11 +4917,157 @@ function sortLabel(sort: InventorySortMode) {
   return "Newest first";
 }
 
+function variantEditModeLabel(mode: BulkVariantEditMode) {
+  if (mode === "set") {
+    return "Set";
+  }
+
+  if (mode === "remove") {
+    return "Remove";
+  }
+
+  return "Add";
+}
+
 function formatCurrency(cents: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD"
   }).format(cents / 100);
+}
+
+function marketPriceSourceLabel(source: InventoryItem["marketPriceSource"]) {
+  if (source === "justtcg") {
+    return "Legacy JustTCG";
+  }
+
+  if (source === "pokemonpricetracker") {
+    return "PokemonPriceTracker";
+  }
+
+  return "Unknown";
+}
+
+function buildEbaySoldSearchUrl(item: InventoryItem) {
+  const gradeNumber = String(item.grade ?? "").match(/\d+(?:\.\d+)?/)?.[0] ?? "";
+  const gradedTerm =
+    item.itemType === "graded"
+      ? [item.grader, gradeNumber || item.grade].filter(Boolean).join(" ")
+      : "";
+  const cardName = ebaySearchCardName(item.card.name, item.card.cardNumber);
+  const cardNumber = String(item.card.cardNumber ?? "").trim();
+  const query = uniqueSearchTerms([
+    cardName,
+    cardNumber && !normalizeSearchText(cardName).includes(normalizeSearchText(cardNumber))
+      ? cardNumber
+      : "",
+    item.card.language === "ja" ? "Japanese" : "",
+    ebaySearchVariant(item.variantDetails),
+    gradedTerm,
+    "Pokemon"
+  ]).join(" ");
+  const params = new URLSearchParams({
+    _nkw: query,
+    _sacat: "0",
+    LH_Sold: "1",
+    LH_Complete: "1"
+  });
+
+  return `https://www.ebay.com/sch/i.html?${params.toString()}`;
+}
+
+function buildPokemonPriceTrackerUrl(item: InventoryItem) {
+  const params = new URLSearchParams({
+    name: ebaySearchCardName(item.card.name, item.card.cardNumber)
+  });
+
+  return `https://www.pokemonpricetracker.com/pokemon-prices?${params.toString()}`;
+}
+
+function ebaySearchCardName(name: string, cardNumber: string | null | undefined) {
+  const number = String(cardNumber ?? "").trim();
+
+  if (!number) {
+    return name.trim();
+  }
+
+  const escapedNumber = number.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  return name
+    .replace(new RegExp(`\\s*[-–—]?\\s*${escapedNumber}\\s*$`, "i"), "")
+    .trim();
+}
+
+function ebaySearchVariant(value: string | null | undefined) {
+  const normalized = normalizeSearchText(value ?? "");
+
+  if (normalized.includes("1st edition") || normalized.includes("first edition")) {
+    return "1st Edition";
+  }
+
+  if (normalized.includes("shadowless")) {
+    return "Shadowless";
+  }
+
+  if (normalized.includes("reverse")) {
+    return "Reverse Holo";
+  }
+
+  return "";
+}
+
+function uniqueSearchTerms(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const terms: string[] = [];
+
+  for (const value of values) {
+    const term = String(value ?? "").trim();
+    const key = normalizeSearchText(term);
+
+    if (!term || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    terms.push(term);
+  }
+
+  return terms;
+}
+
+function retryLabel(nextAttemptAt: string | null) {
+  if (!nextAttemptAt) {
+    return null;
+  }
+
+  const retryDate = new Date(nextAttemptAt);
+
+  if (Number.isNaN(retryDate.getTime())) {
+    return null;
+  }
+
+  return `retry ${retryDate.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit"
+  })}`;
+}
+
+function formatFileSize(bytes: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    style: "unit",
+    unit: "megabyte"
+  }).format(bytes / 1024 / 1024);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function optionalNumber(value: FormDataEntryValue | null) {
