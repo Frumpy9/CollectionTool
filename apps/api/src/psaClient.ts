@@ -1,6 +1,11 @@
 import type { CreateInventoryItemRequest, PsaCertLookupResponse } from "@collection-tool/shared";
 
 const psaBaseUrl = "https://api.psacard.com/publicapi";
+const psaSubjectAliases: Record<string, string> = {
+  artcn: "articuno",
+  mltrs: "moltres",
+  zpds: "zapdos"
+};
 
 type PsaLookupOptions = {
   accessToken: string;
@@ -139,13 +144,13 @@ function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLook
   const certFromPayload =
     stringify(findValue(payload, ["CertNumber", "CertNo", "certNumber", "certNo"])) ?? certNumber;
   const certUrl = `https://www.psacard.com/cert/${encodeURIComponent(certFromPayload)}/psa`;
-  const name = buildCardName({ year, brand, subject, variety });
+  const name = displayPsaSubject(subject) ?? buildCardName({ year, brand, subject, variety });
 
   const item: CreateInventoryItemRequest = {
     name: name || `PSA Cert ${certFromPayload}`,
     setName: brand ?? undefined,
     cardNumber: cardNumber ?? undefined,
-    language: "en",
+    language: isJapanesePsaLabel(brand, variety) ? "ja" : "en",
     imageUrl: imageUrl ?? undefined,
     itemType: "graded",
     quantity: 1,
@@ -209,6 +214,35 @@ function buildCardName(parts: {
   variety?: string | null;
 }) {
   return [parts.year, parts.brand, parts.subject, parts.variety].filter(Boolean).join(" ");
+}
+
+function displayPsaSubject(subject: string | null) {
+  const normalized = subject
+    ?.replace(/\bFA\s*\/\s*/gi, "")
+    .replace(/\bFULL\s+ART\s*\/\s*/gi, "")
+    .replace(/\bMLTRS\b/gi, "Moltres")
+    .replace(/\bZPDS\b/gi, "Zapdos")
+    .replace(/\bARTCN\b/gi, "Articuno")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized
+    .toLowerCase()
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
+    .replace(/\bVmax\b/g, "VMAX")
+    .replace(/\bVstar\b/g, "VSTAR")
+    .replace(/\bEx\b/g, "EX")
+    .replace(/\bGx\b/g, "GX");
+}
+
+function isJapanesePsaLabel(...values: Array<string | null>) {
+  return values.some((value) => value?.toLowerCase().includes("japanese"));
 }
 
 function findValue(value: unknown, keys: string[]): unknown {
@@ -291,17 +325,17 @@ function selectBestPokemonTcgCard(
   cards: PokemonTcgCard[],
   psaContext: { brand: string | null; subject: string | null }
 ) {
-  let best: { card: PokemonTcgCard; score: number } | null = null;
+  let best: { card: PokemonTcgCard; score: number; subjectMatches: number } | null = null;
 
   for (const card of cards) {
-    const score = scorePokemonTcgCandidate(card, psaContext);
+    const scored = scorePokemonTcgCandidate(card, psaContext);
 
-    if (!best || score > best.score) {
-      best = { card, score };
+    if (!best || scored.score > best.score) {
+      best = { card, ...scored };
     }
   }
 
-  return best && best.score >= 4 ? best.card : null;
+  return best && best.score >= 4 && best.subjectMatches > 0 ? best.card : null;
 }
 
 function scorePokemonTcgCandidate(
@@ -309,11 +343,14 @@ function scorePokemonTcgCandidate(
   psaContext: { brand: string | null; subject: string | null }
 ) {
   const brandTokens = tokenize(psaContext.brand);
-  const subjectTokens = tokenize(psaContext.subject);
+  const subjectTokens = tokenize(psaContext.subject, {
+    ignoreGenericCardTerms: true
+  });
   const setTokens = tokenize([card.set?.name, card.set?.series].filter(Boolean).join(" "));
   const nameTokens = tokenize(card.name);
 
   let score = 0;
+  let subjectMatches = 0;
 
   for (const token of brandTokens) {
     if (setTokens.has(token)) {
@@ -323,22 +360,45 @@ function scorePokemonTcgCandidate(
 
   for (const token of subjectTokens) {
     if (nameTokens.has(token)) {
+      subjectMatches += 1;
       score += token.length >= 4 ? 3 : 1;
     }
   }
 
-  return score;
+  return { score, subjectMatches };
 }
 
-function tokenize(value: string | null | undefined) {
+function tokenize(
+  value: string | null | undefined,
+  options: { ignoreGenericCardTerms?: boolean } = {}
+) {
   const ignored = new Set(["pokemon", "tcg", "cards", "card", "the", "and"]);
+  const genericCardTerms = new Set([
+    "alt",
+    "art",
+    "ex",
+    "fa",
+    "full",
+    "gx",
+    "secret",
+    "shiny",
+    "star",
+    "v",
+    "vmax",
+    "vstar"
+  ]);
 
   return new Set(
     (value ?? "")
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, " ")
       .split(" ")
-      .map((token) => token.trim())
-      .filter((token) => token.length >= 2 && !ignored.has(token))
+      .map((token) => psaSubjectAliases[token.trim()] ?? token.trim())
+      .filter(
+        (token) =>
+          token.length >= 2 &&
+          !ignored.has(token) &&
+          (!options.ignoreGenericCardTerms || !genericCardTerms.has(token))
+      )
   );
 }
