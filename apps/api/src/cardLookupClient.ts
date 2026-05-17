@@ -26,6 +26,7 @@ type PokemonTcgCard = {
     id?: string;
     name?: string;
     series?: string;
+    releaseDate?: string;
     printedTotal?: number;
     total?: number;
   };
@@ -44,6 +45,7 @@ type TcgdexCard = {
   set?: {
     id?: string;
     name?: string;
+    releaseDate?: string;
   };
 };
 
@@ -358,6 +360,7 @@ function mapPokemonTcgCard(card: PokemonTcgCard, parsed: ParsedCardQuery): CardL
     language: "en",
     rarity: card.rarity ?? null,
     imageUrl,
+    releaseYear: releaseYearFromDate(card.set?.releaseDate),
     sourceLabel: `PokemonTCG.io ID: ${card.id}`
   });
 
@@ -394,6 +397,7 @@ function mapTcgdexCard(
     language,
     rarity: card.rarity ?? null,
     imageUrl,
+    releaseYear: releaseYearFromDate(card.set?.releaseDate),
     sourceLabel: `TCGdex ID: ${sourceId}`
   });
 
@@ -844,6 +848,7 @@ function buildInventoryItem(input: {
   language: CardLanguage;
   rarity: string | null;
   imageUrl: string | null;
+  releaseYear?: string | null;
   sourceLabel: string;
 }): CreateInventoryItemRequest {
   return {
@@ -853,11 +858,17 @@ function buildInventoryItem(input: {
     cardNumber: input.cardNumber ?? undefined,
     language: input.language,
     rarity: input.rarity ?? undefined,
+    releaseYear: input.releaseYear ?? undefined,
     imageUrl: input.imageUrl ?? undefined,
     itemType: "raw",
     quantity: 1,
     notes: input.sourceLabel
   };
+}
+
+function releaseYearFromDate(value: string | null | undefined) {
+  const match = String(value ?? "").match(/\b(19[5-9]\d|20[0-4]\d)\b/);
+  return match?.[1] ?? null;
 }
 
 function dedupeCandidates(candidates: CardLookupCandidate[]) {

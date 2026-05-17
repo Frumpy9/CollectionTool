@@ -10,7 +10,7 @@ import { registerBackupRoutes } from "./routes/backupRoutes.js";
 import { registerCardLookupRoutes } from "./routes/cardLookupRoutes.js";
 import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
-import { registerPricingRoutes } from "./routes/pricingRoutes.js";
+import { registerPricingRoutes, startBulkPriceQueueRunner } from "./routes/pricingRoutes.js";
 import { registerPsaRoutes } from "./routes/psaRoutes.js";
 import { registerUploadRoutes } from "./routes/uploadRoutes.js";
 
@@ -49,6 +49,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerPsaRoutes(app, config, database);
   await registerUploadRoutes(app, config, database);
   startScheduledSqliteBackups(app, database, config);
+  startBulkPriceQueueRunner(app, config, database);
 
   app.addHook("onClose", async () => {
     database.connection.close();

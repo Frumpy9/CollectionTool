@@ -48,7 +48,7 @@ export type InventoryItemType = "raw" | "graded";
 
 export type MarketPriceConfidence = "exact" | "strong" | "possible";
 
-export type InventoryMarketPriceSource = "justtcg";
+export type InventoryMarketPriceSource = "justtcg" | "pokemonpricetracker";
 
 export type InventoryItem = {
   id: string;
@@ -74,6 +74,7 @@ export type InventoryItem = {
   marketPriceMatchedCardNumber: string | null;
   marketPriceCondition: string | null;
   marketPricePrinting: string | null;
+  marketPriceSaleCount: number | null;
   storageLocation: string | null;
   notes: string | null;
   certUrl: string | null;
@@ -91,6 +92,7 @@ export type InventoryItem = {
     cardNumber: string | null;
     language: CardLanguage;
     rarity: string | null;
+    releaseYear: string | null;
     imageUrl: string | null;
   };
 };
@@ -119,6 +121,7 @@ export type CreateInventoryItemRequest = {
   cardNumber?: string;
   language: CardLanguage;
   rarity?: string;
+  releaseYear?: string;
   imageUrl?: string;
   itemType: InventoryItemType;
   quantity: number;
@@ -148,7 +151,32 @@ export type UpdateInventoryItemImageRequest = {
   imageUrl: string;
 };
 
-export type JustTcgPricingCandidate = {
+export type BulkVariantEditMode = "set" | "add" | "remove";
+
+export type BulkUpdateInventoryVariantsRequest = {
+  itemIds: string[];
+  mode: BulkVariantEditMode;
+  variants: string[];
+  clearMarketPrices?: boolean;
+};
+
+export type BulkUpdateInventoryVariantsResponse = {
+  items: InventoryItem[];
+  updatedItemIds: string[];
+  notFoundItemIds: string[];
+  clearedMarketPriceItemIds: string[];
+};
+
+export type BulkDeleteInventoryItemsRequest = {
+  itemIds: string[];
+};
+
+export type BulkDeleteInventoryItemsResponse = {
+  deletedItemIds: string[];
+  notFoundItemIds: string[];
+};
+
+export type PricingCandidate = {
   sourceCardId: string;
   sourceVariantId: string;
   matchedName: string;
@@ -161,19 +189,118 @@ export type JustTcgPricingCandidate = {
   currency: "USD";
   confidence: MarketPriceConfidence;
   score: number;
+  source: InventoryMarketPriceSource;
+  priceKind: InventoryItemType;
+  grader: string | null;
+  grade: string | null;
+  gradeBucket: string | null;
+  saleCount: number | null;
+  averagePriceCents: number | null;
+  medianPriceCents: number | null;
+  minPriceCents: number | null;
+  maxPriceCents: number | null;
+  marketTrend: string | null;
+  historyAvailable: boolean;
 };
 
-export type RefreshJustTcgPricingResponse = {
-  status: "saved" | "needs-review";
+export type PokemonPriceTrackerPricingCandidate = PricingCandidate & {
+  source: "pokemonpricetracker";
+};
+
+export type RefreshPokemonPriceTrackerPricingResponse = {
+  status: "saved" | "needs-review" | "queued";
   item: InventoryItem | null;
-  candidates: JustTcgPricingCandidate[];
+  candidates: PokemonPriceTrackerPricingCandidate[];
+  message: string;
+  queue?: BulkPriceQueueResponse;
+};
+
+export type RefreshPricingResponse = {
+  status: "saved" | "needs-review" | "queued";
+  item: InventoryItem | null;
+  candidates: PricingCandidate[];
+  message: string;
+  queue?: BulkPriceQueueResponse;
+};
+
+export type SelectPokemonPriceTrackerPricingRequest = {
+  sourceCardId: string;
+  sourceVariantId: string;
+  candidate?: PokemonPriceTrackerPricingCandidate;
+};
+
+export type SelectPricingRequest = {
+  sourceCardId: string;
+  sourceVariantId: string;
+  source?: InventoryMarketPriceSource;
+  candidate?: PricingCandidate;
+};
+
+export type PricingHistoryPoint = {
+  date: string;
+  priceCents: number;
+  source: InventoryMarketPriceSource;
+  priceKind: InventoryItemType;
+};
+
+export type PricingHistoryResponse = {
+  itemId: string;
+  source: InventoryMarketPriceSource;
+  days: number;
+  points: PricingHistoryPoint[];
+  cached: boolean;
   message: string;
 };
 
-export type SelectJustTcgPricingRequest = {
-  sourceCardId: string;
-  sourceVariantId: string;
-  candidate?: JustTcgPricingCandidate;
+export type BulkPriceQueueMode = "auto" | "raw" | "graded";
+
+export type BulkPriceQueueStatus =
+  | "queued"
+  | "running"
+  | "saved"
+  | "needs-review"
+  | "skipped"
+  | "rate-limited"
+  | "failed"
+  | "cancelled";
+
+export type BulkPriceQueueJob = {
+  id: string;
+  collectionId: string;
+  itemId: string;
+  mode: BulkPriceQueueMode;
+  status: BulkPriceQueueStatus;
+  attempts: number;
+  includeExisting: boolean;
+  message: string | null;
+  nextAttemptAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  item: InventoryItem | null;
+};
+
+export type EnqueueBulkPriceRefreshRequest = {
+  itemIds: string[];
+  mode: BulkPriceQueueMode;
+  includeExisting?: boolean;
+};
+
+export type BulkPriceQueueResponse = {
+  jobs: BulkPriceQueueJob[];
+  summary: {
+    total: number;
+    queued: number;
+    running: number;
+    saved: number;
+    needsReview: number;
+    skipped: number;
+    rateLimited: number;
+    failed: number;
+    cancelled: number;
+  };
+  message: string;
 };
 
 export type CardImageUploadRequest = {

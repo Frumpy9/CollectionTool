@@ -7,13 +7,18 @@ const psaSubjectAliases: Record<string, string> = {
   zpds: "zapdos"
 };
 const limitlessBaseUrl = "https://limitlesstcg.com";
+const pokemonPriceTrackerBaseUrl = "https://www.pokemonpricetracker.com/api/v2";
 const japanesePsaSetCodes: Array<{ token: string; setCode: string }> = [
   { token: "shiny star v", setCode: "S4a" }
 ];
+const psaPokemonPriceTrackerCards: Record<string, string> = {
+  "2173840": "575806"
+};
 
 type PsaLookupOptions = {
   accessToken: string;
   pokemonTcgApiKey: string;
+  pokemonPriceTrackerApiKey: string;
   certNumber: string;
 };
 
@@ -35,6 +40,7 @@ type PokemonTcgCard = {
 export async function lookupPsaCert({
   accessToken,
   pokemonTcgApiKey,
+  pokemonPriceTrackerApiKey,
   certNumber
 }: PsaLookupOptions): Promise<PsaCertLookupResponse> {
   if (!accessToken) {
@@ -118,6 +124,37 @@ export async function lookupPsaCert({
     };
   }
 
+  const priceTrackerCard = await lookupPokemonPriceTrackerPsaCard(
+    {
+      apiKey: pokemonPriceTrackerApiKey,
+      cardNumber: normalized.item.cardNumber,
+      brand: normalized.source.brand,
+      specId: normalized.source.specId,
+      subject: normalized.source.subject,
+      variety: normalized.source.variety
+    }
+  ).catch(() => null);
+
+  if (priceTrackerCard) {
+    return {
+      ...normalized,
+      item: {
+        ...normalized.item,
+        name: priceTrackerCard.name ?? normalized.item.name,
+        setName: priceTrackerCard.setName ?? normalized.item.setName,
+        cardNumber: priceTrackerCard.cardNumber ?? normalized.item.cardNumber,
+        rarity: priceTrackerCard.rarity ?? normalized.item.rarity,
+        imageUrl: priceTrackerCard.imageUrl ?? normalized.item.imageUrl,
+        notes: [
+          normalized.item.notes,
+          `PokemonPriceTracker: ${priceTrackerCard.setName ?? "matched card"}`
+        ]
+          .filter(Boolean)
+          .join("\n")
+      }
+    };
+  }
+
   return normalized;
 }
 
@@ -126,6 +163,14 @@ type LimitlessJapanesePsaCard = {
   setName: string | null;
   cardNumber: string;
   name: string;
+  rarity: string | null;
+  imageUrl: string | null;
+};
+
+type PokemonPriceTrackerPsaCard = {
+  name: string | null;
+  setName: string | null;
+  cardNumber: string | null;
   rarity: string | null;
   imageUrl: string | null;
 };
@@ -188,6 +233,7 @@ function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLook
     setName: brand ?? undefined,
     cardNumber: cardNumber ?? undefined,
     language: isJapanesePsaLabel(brand, variety) ? "ja" : "en",
+    releaseYear: year ?? undefined,
     imageUrl: imageUrl ?? undefined,
     itemType: "graded",
     quantity: 1,
@@ -332,6 +378,246 @@ async function lookupLimitlessJapanesePsaCard(
   };
 }
 
+async function lookupPokemonPriceTrackerPsaCard({
+  apiKey,
+  cardNumber,
+  brand,
+  specId,
+  subject,
+  variety
+}: {
+  apiKey: string;
+  cardNumber: string | undefined;
+  brand: string | null;
+  specId: string | null;
+  subject: string | null;
+  variety: string | null;
+}): Promise<PokemonPriceTrackerPsaCard | null> {
+  if (!apiKey || !subject) {
+    return null;
+  }
+
+  const cardName = displayPsaSubject(subject) ?? subject;
+  const knownTcgPlayerId = specId ? psaPokemonPriceTrackerCards[specId] : null;
+
+  if (knownTcgPlayerId) {
+    const card = await fetchPokemonPriceTrackerCardByTcgPlayerId({
+      apiKey,
+      tcgPlayerId: knownTcgPlayerId,
+      japanese: isJapanesePsaLabel(brand, variety)
+    });
+
+    if (card && pokemonPriceTrackerCardMatchesPsa(card, { cardName, cardNumber })) {
+      return pokemonPriceTrackerPsaCardFromPayload(card);
+    }
+  }
+
+  const queries = pokemonPriceTrackerPsaQueries({ cardName, cardNumber, brand, variety });
+
+  for (const query of queries) {
+    const url = new URL(`${pokemonPriceTrackerBaseUrl}/cards`);
+    url.searchParams.set("search", query);
+    url.searchParams.set("limit", "5");
+
+    if (isJapanesePsaLabel(brand, variety)) {
+      url.searchParams.set("language", "japanese");
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      continue;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const cards = pokemonPriceTrackerCardsFromResponse(payload);
+    const bestCard = cards
+      .filter((card) => pokemonPriceTrackerCardMatchesPsa(card, { cardName, cardNumber }))
+      .sort(
+        (left, right) =>
+          pokemonPriceTrackerPsaScore(right, { cardName, cardNumber }) -
+          pokemonPriceTrackerPsaScore(left, { cardName, cardNumber })
+      )[0];
+
+    if (bestCard) {
+      return pokemonPriceTrackerPsaCardFromPayload(bestCard);
+    }
+  }
+
+  return null;
+}
+
+async function fetchPokemonPriceTrackerCardByTcgPlayerId({
+  apiKey,
+  tcgPlayerId,
+  japanese
+}: {
+  apiKey: string;
+  tcgPlayerId: string;
+  japanese: boolean;
+}) {
+  const url = new URL(`${pokemonPriceTrackerBaseUrl}/cards`);
+  url.searchParams.set("tcgPlayerId", tcgPlayerId);
+  url.searchParams.set("limit", "1");
+
+  if (japanese) {
+    url.searchParams.set("language", "japanese");
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      Authorization: `Bearer ${apiKey}`
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  return pokemonPriceTrackerCardsFromResponse(payload)[0] ?? null;
+}
+
+function pokemonPriceTrackerPsaCardFromPayload(
+  card: PokemonPriceTrackerCardPayload
+): PokemonPriceTrackerPsaCard {
+  return {
+    name: stringify(card.name),
+    setName: stringify(card.setName ?? card.set),
+    cardNumber: stringify(card.cardNumber ?? card.number),
+    rarity: stringify(card.rarity),
+    imageUrl: pokemonPriceTrackerImageUrl(card)
+  };
+}
+
+function pokemonPriceTrackerPsaQueries({
+  cardName,
+  cardNumber,
+  brand,
+  variety
+}: {
+  cardName: string;
+  cardNumber: string | undefined;
+  brand: string | null;
+  variety: string | null;
+}) {
+  const queries = [
+    [cardName, brand, variety, cardNumber].filter(Boolean).join(" "),
+    [cardName, brand, variety].filter(Boolean).join(" "),
+    [cardName, cardNumber].filter(Boolean).join(" "),
+    cardName
+  ];
+  const normalizedLabel = normalizeText([brand, variety].filter(Boolean).join(" "));
+
+  if (normalizedLabel.includes("pokemon japanese neo")) {
+    queries.unshift([cardName, "Gold Silver to a New World"].filter(Boolean).join(" "));
+  }
+
+  return queries.filter(
+    (query, index, allQueries) =>
+      query && allQueries.findIndex((candidate) => normalizeText(candidate) === normalizeText(query)) === index
+  );
+}
+
+type PokemonPriceTrackerCardPayload = {
+  name?: unknown;
+  setName?: unknown;
+  set?: unknown;
+  cardNumber?: unknown;
+  number?: unknown;
+  rarity?: unknown;
+  imageUrl?: unknown;
+  imageCdnUrl?: unknown;
+  imageCdnUrl200?: unknown;
+  imageCdnUrl400?: unknown;
+  imageCdnUrl800?: unknown;
+  image?: unknown;
+  images?: {
+    small?: unknown;
+    large?: unknown;
+  };
+};
+
+function pokemonPriceTrackerCardsFromResponse(payload: unknown): PokemonPriceTrackerCardPayload[] {
+  return normalizePokemonPriceTrackerCards([
+    isRecord(payload) ? payload.data : null,
+    isRecord(payload) ? payload.card : null,
+    isRecord(payload) ? payload.matches : null
+  ]);
+}
+
+function normalizePokemonPriceTrackerCards(values: unknown[]): PokemonPriceTrackerCardPayload[] {
+  const cards: PokemonPriceTrackerCardPayload[] = [];
+
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      cards.push(...normalizePokemonPriceTrackerCards(value));
+      continue;
+    }
+
+    if (isRecord(value)) {
+      if (isRecord(value.card)) {
+        cards.push(value.card as PokemonPriceTrackerCardPayload);
+      } else if (value.name || value.setName || value.cardNumber || value.imageUrl) {
+        cards.push(value as PokemonPriceTrackerCardPayload);
+      }
+    }
+  }
+
+  return cards;
+}
+
+function pokemonPriceTrackerCardMatchesPsa(
+  card: PokemonPriceTrackerCardPayload,
+  psaCard: { cardName: string; cardNumber: string | undefined }
+) {
+  return pokemonPriceTrackerPsaScore(card, psaCard) >= 5;
+}
+
+function pokemonPriceTrackerPsaScore(
+  card: PokemonPriceTrackerCardPayload,
+  psaCard: { cardName: string; cardNumber: string | undefined }
+) {
+  let score = 0;
+  const cardName = normalizeText(stringify(card.name));
+  const expectedName = normalizeText(psaCard.cardName);
+  const cardNumber = normalizeCardNumber(stringify(card.cardNumber ?? card.number));
+  const expectedNumber = normalizeCardNumber(psaCard.cardNumber);
+
+  if (cardName && expectedName && (cardName === expectedName || cardName.includes(expectedName))) {
+    score += 5;
+  }
+
+  if (cardNumber && expectedNumber && cardNumber === expectedNumber) {
+    score += 4;
+  }
+
+  if (pokemonPriceTrackerImageUrl(card)) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function pokemonPriceTrackerImageUrl(card: PokemonPriceTrackerCardPayload) {
+  return stringify(
+    card.imageCdnUrl800 ??
+      card.imageCdnUrl400 ??
+      card.imageUrl ??
+      card.imageCdnUrl ??
+      card.images?.large ??
+      card.images?.small ??
+      card.image ??
+      card.imageCdnUrl200
+  );
+}
+
 function japanesePsaSetCode(...values: Array<string | null>) {
   const label = values.filter(Boolean).join(" ").toLowerCase();
   const match = japanesePsaSetCodes.find(({ token }) => label.includes(token));
@@ -355,6 +641,27 @@ function decodeHtmlEntities(value: string | null | undefined) {
     .replace(/&nbsp;/g, " ")
     .replace(/<[^>]+>/g, "")
     .trim();
+}
+
+function normalizeText(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCardNumber(value: string | number | null | undefined) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^0+(?=\d)/, "");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function findValue(value: unknown, keys: string[]): unknown {

@@ -29,6 +29,7 @@ export async function registerPsaRoutes(
     return lookupPsaCert({
       accessToken: config.psaAccessToken,
       pokemonTcgApiKey: config.pokemonTcgApiKey,
+      pokemonPriceTrackerApiKey: config.pokemonPriceTrackerApiKey,
       certNumber
     });
   });

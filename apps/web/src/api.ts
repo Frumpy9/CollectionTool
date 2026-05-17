@@ -1,6 +1,12 @@
 import type {
   AuthMeResponse,
   BackupSqliteResponse,
+  BulkDeleteInventoryItemsRequest,
+  BulkDeleteInventoryItemsResponse,
+  BulkPriceQueueMode,
+  BulkPriceQueueResponse,
+  BulkUpdateInventoryVariantsRequest,
+  BulkUpdateInventoryVariantsResponse,
   BootstrapStatusResponse,
   CardImageUploadRequest,
   CardImageUploadResponse,
@@ -11,8 +17,11 @@ import type {
   InventoryListResponse,
   PsaCertLookupRequest,
   PsaCertLookupResponse,
-  RefreshJustTcgPricingResponse,
-  SelectJustTcgPricingRequest,
+  PricingHistoryResponse,
+  RefreshPokemonPriceTrackerPricingResponse,
+  RefreshPricingResponse,
+  SelectPokemonPriceTrackerPricingRequest,
+  SelectPricingRequest,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest
 } from "@collection-tool/shared";
@@ -90,6 +99,48 @@ export const api = {
     }),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  getBulkPriceQueue: (collectionId: string) =>
+    request<BulkPriceQueueResponse>(`/api/collections/${collectionId}/pricing/bulk/queue`),
+  enqueueBulkPriceRefresh: (
+    collectionId: string,
+    payload: { itemIds: string[]; mode: BulkPriceQueueMode; includeExisting?: boolean }
+  ) =>
+    request<BulkPriceQueueResponse>(`/api/collections/${collectionId}/pricing/bulk/queue`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  resumeBulkPriceQueue: (collectionId: string) =>
+    request<BulkPriceQueueResponse>(
+      `/api/collections/${collectionId}/pricing/bulk/queue/resume`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
+  cancelBulkPriceQueue: (collectionId: string) =>
+    request<BulkPriceQueueResponse>(
+      `/api/collections/${collectionId}/pricing/bulk/queue/cancel`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
+  retryFailedBulkPriceQueue: (collectionId: string) =>
+    request<BulkPriceQueueResponse>(
+      `/api/collections/${collectionId}/pricing/bulk/queue/retry-failed`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
+  clearCompletedBulkPriceQueue: (collectionId: string) =>
+    request<BulkPriceQueueResponse>(
+      `/api/collections/${collectionId}/pricing/bulk/queue/clear-completed`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
   exportInventoryCsv: (collectionId: string) =>
     requestBlob(`/api/collections/${collectionId}/items/export.csv`),
   createSqliteBackup: (collectionId: string) =>
@@ -129,6 +180,28 @@ export const api = {
     request<{ ok: true }>(`/api/collections/${collectionId}/items/${itemId}`, {
       method: "DELETE"
     }),
+  bulkDeleteInventoryItems: (
+    collectionId: string,
+    payload: BulkDeleteInventoryItemsRequest
+  ) =>
+    request<BulkDeleteInventoryItemsResponse>(
+      `/api/collections/${collectionId}/items/bulk/delete`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  bulkUpdateInventoryVariants: (
+    collectionId: string,
+    payload: BulkUpdateInventoryVariantsRequest
+  ) =>
+    request<BulkUpdateInventoryVariantsResponse>(
+      `/api/collections/${collectionId}/items/bulk/variants`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   uploadCardImage: (payload: CardImageUploadRequest) =>
     request<CardImageUploadResponse>("/api/uploads/card-image", {
       method: "POST",
@@ -139,21 +212,43 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  refreshJustTcgPricing: (collectionId: string, itemId: string) =>
-    request<RefreshJustTcgPricingResponse>(
-      `/api/collections/${collectionId}/items/${itemId}/pricing/justtcg/refresh`,
+  refreshPricing: (collectionId: string, itemId: string) =>
+    request<RefreshPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/refresh`,
       {
         method: "POST",
         body: JSON.stringify({})
       }
     ),
-  selectJustTcgPricing: (
+  selectPricing: (collectionId: string, itemId: string, payload: SelectPricingRequest) =>
+    request<RefreshPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/select`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  getPricingHistory: (collectionId: string, itemId: string, days: number) =>
+    request<PricingHistoryResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/history?days=${encodeURIComponent(
+        String(days)
+      )}`
+    ),
+  refreshPokemonPriceTrackerPricing: (collectionId: string, itemId: string) =>
+    request<RefreshPokemonPriceTrackerPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/pokemonpricetracker/refresh`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
+  selectPokemonPriceTrackerPricing: (
     collectionId: string,
     itemId: string,
-    payload: SelectJustTcgPricingRequest
+    payload: SelectPokemonPriceTrackerPricingRequest
   ) =>
-    request<RefreshJustTcgPricingResponse>(
-      `/api/collections/${collectionId}/items/${itemId}/pricing/justtcg/select`,
+    request<RefreshPokemonPriceTrackerPricingResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/pokemonpricetracker/select`,
       {
         method: "POST",
         body: JSON.stringify(payload)
