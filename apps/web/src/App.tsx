@@ -326,7 +326,7 @@ function WorkspaceShell({
   ) {
     return new Promise<DuplicateDecisionChoice>((resolve) => {
       setDuplicateDecision({
-        id: crypto.randomUUID(),
+        id: createClientId(),
         existingItem,
         payload,
         resolve
@@ -3051,6 +3051,27 @@ function normalizeQuantity(value: unknown) {
   return Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
 }
 
+function createClientId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(
+      16,
+      20
+    )}-${hex.slice(20)}`;
+  }
+
+  return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function parseBulkTerms(value: string) {
   const seen = new Set<string>();
   const terms: string[] = [];
@@ -3071,7 +3092,7 @@ function parseBulkTerms(value: string) {
 
 function createBulkRow(term: string): BulkQueueRow {
   return {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     term,
     status: "pending",
     candidates: [],
@@ -3281,7 +3302,7 @@ function createCsvImportPreviewRow(
   const errors = validateCsvImportPayload(payload, raw, record.cells.length > headers.length);
 
   return {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     lineNumber: record.lineNumber,
     raw,
     payload,
