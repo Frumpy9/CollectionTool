@@ -6,6 +6,10 @@ const psaSubjectAliases: Record<string, string> = {
   mltrs: "moltres",
   zpds: "zapdos"
 };
+const limitlessBaseUrl = "https://limitlesstcg.com";
+const japanesePsaSetCodes: Array<{ token: string; setCode: string }> = [
+  { token: "shiny star v", setCode: "S4a" }
+];
 
 type PsaLookupOptions = {
   accessToken: string;
@@ -71,27 +75,60 @@ export async function lookupPsaCert({
     pokemonTcgApiKey
   ).catch(() => null);
 
-  if (!pokemonCard) {
-    return normalized;
+  if (pokemonCard) {
+    return {
+      ...normalized,
+      item: {
+        ...normalized.item,
+        name: pokemonCard.name,
+        setName: pokemonCard.set?.name ?? normalized.item.setName,
+        rarity: pokemonCard.rarity ?? normalized.item.rarity,
+        imageUrl: pokemonCard.images?.large ?? pokemonCard.images?.small ?? normalized.item.imageUrl,
+        notes: [
+          normalized.item.notes,
+          `PokemonTCG.io ID: ${pokemonCard.id}`
+        ]
+          .filter(Boolean)
+          .join("\n")
+      }
+    };
   }
 
-  return {
-    ...normalized,
-    item: {
-      ...normalized.item,
-      name: pokemonCard.name,
-      setName: pokemonCard.set?.name ?? normalized.item.setName,
-      rarity: pokemonCard.rarity ?? normalized.item.rarity,
-      imageUrl: pokemonCard.images?.large ?? pokemonCard.images?.small ?? normalized.item.imageUrl,
-      notes: [
-        normalized.item.notes,
-        `PokemonTCG.io ID: ${pokemonCard.id}`
-      ]
-        .filter(Boolean)
-        .join("\n")
-    }
-  };
+  const japaneseCard = await lookupLimitlessJapanesePsaCard(normalized.item.cardNumber, {
+    brand: normalized.source.brand,
+    variety: normalized.source.variety
+  }).catch(() => null);
+
+  if (japaneseCard) {
+    return {
+      ...normalized,
+      item: {
+        ...normalized.item,
+        name: japaneseCard.name,
+        setName: japaneseCard.setName ?? normalized.item.setName,
+        rarity: japaneseCard.rarity ?? normalized.item.rarity,
+        imageUrl: japaneseCard.imageUrl ?? normalized.item.imageUrl,
+        notes: [
+          normalized.item.notes,
+          `Limitless JP: ${japaneseCard.setCode} ${japaneseCard.cardNumber}`
+        ]
+          .filter(Boolean)
+          .join("\n")
+      }
+    };
+  }
+
+  return normalized;
 }
+
+type LimitlessJapanesePsaCard = {
+  setCode: string;
+  setName: string | null;
+  cardNumber: string;
+  name: string;
+  rarity: string | null;
+  imageUrl: string | null;
+};
 
 function normalizePsaResponse(certNumber: string, payload: unknown): PsaCertLookupResponse {
   const hasCertPayload = Boolean(findValue(payload, ["PSACert"]));
@@ -243,6 +280,81 @@ function displayPsaSubject(subject: string | null) {
 
 function isJapanesePsaLabel(...values: Array<string | null>) {
   return values.some((value) => value?.toLowerCase().includes("japanese"));
+}
+
+async function lookupLimitlessJapanesePsaCard(
+  cardNumber: string | undefined,
+  psaContext: { brand: string | null; variety: string | null }
+): Promise<LimitlessJapanesePsaCard | null> {
+  if (!cardNumber || !isJapanesePsaLabel(psaContext.brand, psaContext.variety)) {
+    return null;
+  }
+
+  const setCode = japanesePsaSetCode(psaContext.brand, psaContext.variety);
+
+  if (!setCode) {
+    return null;
+  }
+
+  const response = await fetch(
+    `${limitlessBaseUrl}/cards/jp/${encodeURIComponent(setCode)}/${encodeURIComponent(
+      cardNumber
+    )}?translate=en`
+  );
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html = await response.text();
+  const name = decodeHtmlEntities(
+    matchFirst(html, /<span class="card-text-name"><a[^>]*>([^<]+)<\/a><\/span>/i) ??
+      matchFirst(html, /<title>([^-<]+)-/i)
+  );
+  const setName = decodeHtmlEntities(
+    matchFirst(html, /<span class="text-lg">\s*([^<]+?)\s*<\/span>/i)
+  );
+  const rarity =
+    decodeHtmlEntities(matchFirst(html, /#\d+\s*·\s*([^<]+?)\s*<\/span>/i)) || null;
+  const imageUrl = matchFirst(html, /<img class="card shadow resp-w" src="([^"]+)"/i);
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    setCode,
+    setName: setName || null,
+    cardNumber,
+    name,
+    rarity,
+    imageUrl
+  };
+}
+
+function japanesePsaSetCode(...values: Array<string | null>) {
+  const label = values.filter(Boolean).join(" ").toLowerCase();
+  const match = japanesePsaSetCodes.find(({ token }) => label.includes(token));
+
+  return match?.setCode ?? null;
+}
+
+function matchFirst(value: string, pattern: RegExp) {
+  return value.match(pattern)?.[1] ?? null;
+}
+
+function decodeHtmlEntities(value: string | null | undefined) {
+  if (!value) {
+    return "";
+  }
+
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#039;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/<[^>]+>/g, "")
+    .trim();
 }
 
 function findValue(value: unknown, keys: string[]): unknown {
