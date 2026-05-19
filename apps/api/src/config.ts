@@ -18,6 +18,9 @@ export type AppConfig = {
   scheduledBackupsEnabled: boolean;
   backupIntervalHours: number;
   backupRetentionDays: number;
+  scheduledPriceRefreshEnabled: boolean;
+  priceRefreshIntervalHours: number;
+  priceRefreshBatchSize: number;
 };
 
 export function loadConfig(): AppConfig {
@@ -38,7 +41,16 @@ export function loadConfig(): AppConfig {
     ),
     scheduledBackupsEnabled: booleanFromEnv(process.env.ENABLE_SCHEDULED_BACKUPS, true),
     backupIntervalHours: positiveIntegerFromEnv(process.env.BACKUP_INTERVAL_HOURS, 24),
-    backupRetentionDays: positiveIntegerFromEnv(process.env.BACKUP_RETENTION_DAYS, 30)
+    backupRetentionDays: positiveIntegerFromEnv(process.env.BACKUP_RETENTION_DAYS, 30),
+    scheduledPriceRefreshEnabled: booleanFromEnv(
+      process.env.ENABLE_SCHEDULED_PRICE_REFRESH,
+      Boolean(process.env.POKEMON_PRICE_TRACKER_API_KEY?.trim())
+    ),
+    priceRefreshIntervalHours: positiveIntegerFromEnv(
+      process.env.PRICE_REFRESH_INTERVAL_HOURS,
+      24
+    ),
+    priceRefreshBatchSize: positiveIntegerFromEnv(process.env.PRICE_REFRESH_BATCH_SIZE, 10)
   };
 }
 

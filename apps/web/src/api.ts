@@ -10,6 +10,7 @@ import type {
   BootstrapStatusResponse,
   CardImageUploadRequest,
   CardImageUploadResponse,
+  CardImageLookupResponse,
   CardLookupRequest,
   CardLookupResponse,
   CreateInventoryItemRequest,
@@ -23,7 +24,8 @@ import type {
   SelectPokemonPriceTrackerPricingRequest,
   SelectPricingRequest,
   UpdateInventoryItemRequest,
-  UpdateInventoryItemImageRequest
+  UpdateInventoryItemImageRequest,
+  ValueOverrideHistoryResponse
 } from "@collection-tool/shared";
 
 type AuthPayload = {
@@ -141,6 +143,14 @@ export const api = {
         body: JSON.stringify({})
       }
     ),
+  ignorePriceRefreshForItem: (collectionId: string, itemId: string) =>
+    request<BulkPriceQueueResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/ignore`,
+      {
+        method: "POST",
+        body: JSON.stringify({})
+      }
+    ),
   exportInventoryCsv: (collectionId: string) =>
     requestBlob(`/api/collections/${collectionId}/items/export.csv`),
   createSqliteBackup: (collectionId: string) =>
@@ -153,6 +163,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  lookupPokemonPriceTrackerImageCandidates: (collectionId: string, itemId: string) =>
+    request<CardImageLookupResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/image-candidates`
+    ),
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {
       method: "POST",
@@ -233,6 +247,10 @@ export const api = {
       `/api/collections/${collectionId}/items/${itemId}/pricing/history?days=${encodeURIComponent(
         String(days)
       )}`
+    ),
+  getValueOverrideHistory: (collectionId: string, itemId: string) =>
+    request<ValueOverrideHistoryResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/value-override-history`
     ),
   refreshPokemonPriceTrackerPricing: (collectionId: string, itemId: string) =>
     request<RefreshPokemonPriceTrackerPricingResponse>(

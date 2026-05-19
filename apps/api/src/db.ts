@@ -407,6 +407,59 @@ const migrations: Migration[] = [
       SET value = '13', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 14,
+    name: "value_override_history",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_value_override_history (
+        id TEXT PRIMARY KEY,
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        previous_value_cents INTEGER CHECK (previous_value_cents IS NULL OR previous_value_cents >= 0),
+        next_value_cents INTEGER CHECK (next_value_cents IS NULL OR next_value_cents >= 0),
+        changed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_value_override_history_item_changed
+      ON item_value_override_history(owned_item_id, changed_at DESC);
+
+      UPDATE app_metadata
+      SET value = '14', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 15,
+    name: "scheduled_price_refresh_state",
+    sql: `
+      CREATE TABLE IF NOT EXISTS collection_price_refresh_state (
+        collection_id TEXT PRIMARY KEY REFERENCES collections(id) ON DELETE CASCADE,
+        run_started_at TEXT,
+        run_completed_at TEXT,
+        cursor_item_id TEXT,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      UPDATE app_metadata
+      SET value = '15', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
+  },
+  {
+    id: 16,
+    name: "item_price_refresh_ignores",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_price_refresh_ignores (
+        owned_item_id TEXT PRIMARY KEY REFERENCES owned_items(id) ON DELETE CASCADE,
+        reason TEXT,
+        ignored_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      UPDATE app_metadata
+      SET value = '16', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

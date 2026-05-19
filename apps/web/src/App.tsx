@@ -1,7 +1,6 @@
 import {
   AlertTriangle,
   BarChart3,
-  Camera,
   ChevronDown,
   CheckCircle2,
   CircleDollarSign,
@@ -43,7 +42,8 @@ import type {
   InventoryListResponse,
   PricingCandidate,
   PricingHistoryPoint,
-  PsaCertLookupResponse
+  PsaCertLookupResponse,
+  ValueOverrideHistoryEntry
 } from "@collection-tool/shared";
 import { api } from "./api";
 
@@ -77,6 +77,21 @@ type InventoryFilterChip = {
   onRemove: () => void;
 };
 
+type InventoryTagFilter =
+  | { type: "query"; label: string; value: string }
+  | { type: "itemType"; label: string; value: InventoryItemType }
+  | { type: "language"; label: string; value: CardLanguage }
+  | { type: "variant"; label: string; value: string }
+  | { type: "storage"; label: string; value: string };
+
+type InventoryGroupSummary = {
+  key: string;
+  label: string;
+  count: number;
+  valueCents: number;
+  examples: string;
+};
+
 type BulkMode = "cards" | "psa";
 type BulkRowStatus = "pending" | "searching" | "selected" | "needs-review" | "failed" | "added" | "skipped";
 
@@ -102,6 +117,7 @@ type CsvImportPreviewRow = {
 };
 
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
+type WorkspaceSection = "collection" | "graded" | "storage" | "data";
 
 type PendingDuplicateDecision = {
   id: string;
@@ -109,15 +125,6 @@ type PendingDuplicateDecision = {
   payload: CreateInventoryItemRequest;
   resolve: (choice: DuplicateDecisionChoice) => void;
 };
-
-const roadmapItems = [
-  "Manual card lookup",
-  "Full accounts",
-  "PSA slab import",
-  "CGC cert drafts",
-  "eBay sold comps",
-  "Continuous scan mode"
-];
 
 const variantOptions = [
   "Standard",
@@ -131,6 +138,19 @@ const variantOptions = [
   "Misprint",
   "Other"
 ];
+
+const workspaceNavItems = [
+  { section: "collection", label: "Collection", icon: Grid2X2 },
+  { section: "graded", label: "Graded cards", icon: ShieldCheck },
+  { section: "storage", label: "Storage", icon: Tags },
+  { section: "data", label: "Data", icon: Database }
+] satisfies Array<{
+  section: WorkspaceSection;
+  label: string;
+  icon: typeof Grid2X2;
+}>;
+
+const showMarketPriceHistoryPanel = false;
 
 const defaultInventoryFilters: InventoryFilterState = {
   query: "",
@@ -253,6 +273,45 @@ export function App() {
   );
 }
 
+function workspaceSectionMeta(
+  section: WorkspaceSection,
+  counts: { totalCards: number; gradedRows: number; storageGroups: number }
+) {
+  if (section === "graded") {
+    return {
+      eyebrow: "Slabs and certs",
+      title: "Graded cards",
+      description: `${counts.gradedRows} graded row${
+        counts.gradedRows === 1 ? "" : "s"
+      } with cert details, market pricing, and price history.`
+    };
+  }
+
+  if (section === "storage") {
+    return {
+      eyebrow: "Organization",
+      title: "Storage and variants",
+      description: `${counts.storageGroups} storage group${
+        counts.storageGroups === 1 ? "" : "s"
+      } across ${counts.totalCards} card${counts.totalCards === 1 ? "" : "s"}.`
+    };
+  }
+
+  if (section === "data") {
+    return {
+      eyebrow: "Maintenance",
+      title: "Data tools",
+      description: "Export inventory, import CSV rows, back up SQLite, and monitor price jobs."
+    };
+  }
+
+  return {
+    eyebrow: "Inventory",
+    title: "Collection workspace",
+    description: "Lookup, import, edit, price, and organize the cards in this local collection."
+  };
+}
+
 function WorkspaceShell({
   authUser,
   collections,
@@ -266,7 +325,11 @@ function WorkspaceShell({
   healthText: string;
   onLogout: () => Promise<void>;
 }) {
-  const activeCollection = collections[0];
+  const [activeCollectionId, setActiveCollectionId] = useState(collections[0]?.id ?? "");
+  const activeCollection =
+    collections.find((collection) => collection.id === activeCollectionId) ?? collections[0];
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>("collection");
+  const [showCollectionMenu, setShowCollectionMenu] = useState(false);
   const [inventory, setInventory] = useState<InventoryListResponse>({
     items: [],
     summary: {
@@ -282,7 +345,6 @@ function WorkspaceShell({
   >(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [showDataMenu, setShowDataMenu] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
     useState<InventoryFilterState>(defaultInventoryFilters);
   const [lookupQuery, setLookupQuery] = useState("");
@@ -314,13 +376,59 @@ function WorkspaceShell({
     : 0;
 
   useEffect(() => {
+    const firstCollection = collections[0];
+
+    if (!firstCollection) {
+      setActiveCollectionId("");
+      return;
+    }
+
+    if (!collections.some((collection) => collection.id === activeCollectionId)) {
+      setActiveCollectionId(firstCollection.id);
+    }
+  }, [activeCollectionId, collections]);
+
+  useEffect(() => {
+    setActivePanel(null);
+    setSelectedItem(null);
+    setShowFilters(false);
+    setShowCollectionMenu(false);
+    setInventoryFilters(defaultInventoryFilters);
+    setLookupQuery("");
+    setLookupResult(null);
+    setLookupError("");
+    setSelectionMode(false);
+    setSelectedItemIds([]);
+    setBulkVariantEditorOpen(false);
+    setBulkVariantMessage("");
+    setBulkPriceMessage("");
+    setDataActionMessage("");
+  }, [activeCollection?.id]);
+
+  useEffect(() => {
     if (!activeCollection) {
+      setInventory({
+        items: [],
+        summary: {
+          itemCount: 0,
+          cardCount: 0,
+          estimatedValueCents: 0
+        }
+      });
       return;
     }
 
     let cancelled = false;
     setInventoryStatus("loading");
     setInventoryError("");
+    setInventory({
+      items: [],
+      summary: {
+        itemCount: 0,
+        cardCount: activeCollection.cardCount,
+        estimatedValueCents: activeCollection.estimatedValueCents
+      }
+    });
 
     api
       .listInventory(activeCollection.id)
@@ -453,10 +561,6 @@ function WorkspaceShell({
     return response.item;
   }
 
-  const filteredItems = useMemo(
-    () => filterInventoryItems(inventory.items, inventoryFilters),
-    [inventory.items, inventoryFilters]
-  );
   const selectedItemIdSet = useMemo(() => new Set(selectedItemIds), [selectedItemIds]);
   const selectedItems = useMemo(
     () => inventory.items.filter((item) => selectedItemIdSet.has(item.id)),
@@ -513,6 +617,22 @@ function WorkspaceShell({
     [inventoryFilters]
   );
   const hasActiveInventoryFilters = activeFilterChips.length > 0;
+  const gradedItems = useMemo(
+    () => inventory.items.filter((item) => item.itemType === "graded"),
+    [inventory.items]
+  );
+  const storageGroups = useMemo(() => getStorageGroups(inventory.items), [inventory.items]);
+  const variantGroups = useMemo(() => getVariantGroups(inventory.items), [inventory.items]);
+  const sectionItems = activeSection === "graded" ? gradedItems : inventory.items;
+  const visibleItems =
+    activeSection === "collection" || activeSection === "graded"
+      ? filterInventoryItems(sectionItems, inventoryFilters)
+      : [];
+  const sectionMeta = workspaceSectionMeta(activeSection, {
+    totalCards: inventory.summary.cardCount,
+    gradedRows: gradedItems.length,
+    storageGroups: storageGroups.length
+  });
 
   const workspaceStats = [
     { label: "Total cards", value: String(inventory.summary.cardCount), icon: Grid2X2 },
@@ -528,6 +648,65 @@ function WorkspaceShell({
       icon: BarChart3
     }
   ];
+
+  function changeSection(section: WorkspaceSection) {
+    setActiveSection(section);
+    setActivePanel(null);
+    setLookupResult(null);
+    setLookupError("");
+    setSelectedItem(null);
+    setSelectionMode(false);
+    setSelectedItemIds([]);
+    setBulkVariantEditorOpen(false);
+    setBulkVariantMessage("");
+    setShowFilters(false);
+  }
+
+  function handleSelectCollection(collectionId: string) {
+    setActiveCollectionId(collectionId);
+    setShowCollectionMenu(false);
+    changeSection("collection");
+  }
+
+  function openPanel(panel: "manual" | "cert" | "bulk" | "import") {
+    if (panel === "import") {
+      changeSection("data");
+    } else {
+      setActiveSection("collection");
+    }
+
+    setActivePanel((current) => (current === panel ? null : panel));
+  }
+
+  function applyStorageFilter(storageLocation: string) {
+    setInventoryFilters({
+      ...defaultInventoryFilters,
+      storageLocation
+    });
+    setActiveSection("collection");
+    setShowFilters(true);
+  }
+
+  function applyVariantFilter(variant: string) {
+    setInventoryFilters({
+      ...defaultInventoryFilters,
+      variants: [variant]
+    });
+    setActiveSection("collection");
+    setShowFilters(true);
+  }
+
+  function applyInventoryTagFilter(filter: InventoryTagFilter) {
+    const nextFilters = filtersFromInventoryTag(filter);
+
+    setInventoryFilters(nextFilters);
+    setActiveSection("collection");
+    setActivePanel(null);
+    setSelectedItem(null);
+    setSelectionMode(false);
+    setSelectedItemIds([]);
+    setShowFilters(true);
+  }
 
   async function handleLookup(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -566,7 +745,6 @@ function WorkspaceShell({
       const { blob, fileName } = await api.exportInventoryCsv(activeCollection.id);
       downloadBlob(blob, fileName);
       setExportStatus("idle");
-      setShowDataMenu(false);
       setDataActionMessage(`Exported ${fileName}.`);
     } catch (error) {
       setExportStatus("error");
@@ -586,7 +764,6 @@ function WorkspaceShell({
     try {
       const response = await api.createSqliteBackup(activeCollection.id);
       setBackupStatus("idle");
-      setShowDataMenu(false);
       setDataActionMessage(
         `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`
       );
@@ -617,7 +794,7 @@ function WorkspaceShell({
   }
 
   function selectVisibleItems() {
-    setSelectedItemIds(filteredItems.map((item) => item.id));
+    setSelectedItemIds(visibleItems.map((item) => item.id));
   }
 
   function applyBulkPriceQueueResponse(response: BulkPriceQueueResponse) {
@@ -736,6 +913,29 @@ function WorkspaceShell({
     } catch (error) {
       setBulkPriceStatus("error");
       setBulkPriceMessage(error instanceof Error ? error.message : "Unable to clear queue.");
+    }
+  }
+
+  async function handleIgnorePriceRefresh(item: InventoryItem) {
+    if (!activeCollection) {
+      return;
+    }
+
+    setBulkPriceStatus("loading");
+    setBulkPriceMessage("");
+
+    try {
+      const response = await api.ignorePriceRefreshForItem(activeCollection.id, item.id);
+      applyBulkPriceQueueResponse(response);
+      setBulkPriceStatus("idle");
+      setBulkPriceMessage(response.message);
+    } catch (error) {
+      setBulkPriceStatus("error");
+      setBulkPriceMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to ignore queued price refreshes for this card."
+      );
     }
   }
 
@@ -872,35 +1072,73 @@ function WorkspaceShell({
           </div>
         </div>
 
-        <button className="collection-switcher" type="button">
-          <span>
-            <strong>{activeCollection?.name ?? "No collection"}</strong>
-            <small>
-              {activeCollection
-                ? `${activeCollection.role} workspace`
-                : "Create a collection to begin"}
-            </small>
-          </span>
-          <ChevronDown size={18} aria-hidden="true" />
-        </button>
+        <div className="collection-switcher-wrap">
+          {collections.length > 1 ? (
+            <>
+              <button
+                className={`collection-switcher ${showCollectionMenu ? "active" : ""}`}
+                type="button"
+                aria-expanded={showCollectionMenu}
+                aria-haspopup="menu"
+                onClick={() => setShowCollectionMenu((isOpen) => !isOpen)}
+              >
+                <span>
+                  <strong>{activeCollection?.name ?? "No collection"}</strong>
+                  <small>{activeCollection ? `${activeCollection.role} workspace` : "No access"}</small>
+                </span>
+                <ChevronDown size={18} aria-hidden="true" />
+              </button>
+              {showCollectionMenu ? (
+                <div className="collection-menu" role="menu" aria-label="Switch collection">
+                  {collections.map((collection) => (
+                    <button
+                      className={collection.id === activeCollection?.id ? "active" : ""}
+                      key={collection.id}
+                      onClick={() => handleSelectCollection(collection.id)}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <span>
+                        <strong>{collection.name}</strong>
+                        <small>
+                          {collection.role} · {collection.cardCount} cards ·{" "}
+                          {formatCurrency(collection.estimatedValueCents)}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <div className="collection-switcher static">
+              <span>
+                <strong>{activeCollection?.name ?? "No collection"}</strong>
+                <small>
+                  {activeCollection
+                    ? `${activeCollection.role} workspace`
+                    : "Create a collection to begin"}
+                </small>
+              </span>
+            </div>
+          )}
+        </div>
 
         <nav className="nav-stack" aria-label="Primary">
-          <a className="nav-item active" href="#collection">
-            <Grid2X2 size={18} aria-hidden="true" />
-            Collection
-          </a>
-          <a className="nav-item" href="#graded">
-            <ShieldCheck size={18} aria-hidden="true" />
-            Graded cards
-          </a>
-          <a className="nav-item" href="#tags">
-            <Tags size={18} aria-hidden="true" />
-            Tags & storage
-          </a>
-          <a className="nav-item" href="#data">
-            <Database size={18} aria-hidden="true" />
-            Data sources
-          </a>
+          {workspaceNavItems.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                className={`nav-item ${activeSection === item.section ? "active" : ""}`}
+                key={item.section}
+                onClick={() => changeSection(item.section)}
+                type="button"
+              >
+                <Icon size={18} aria-hidden="true" />
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
 
         <div className={`system-card ${health.status}`}>
@@ -931,145 +1169,75 @@ function WorkspaceShell({
       <section className="workspace" aria-labelledby="workspace-title">
         <header className="topbar">
           <div>
-            <p className="eyebrow">First milestone</p>
-            <h2 id="workspace-title">Collection workspace</h2>
+            <p className="eyebrow">{sectionMeta.eyebrow}</p>
+            <h2 id="workspace-title">{sectionMeta.title}</h2>
+            <p>{sectionMeta.description}</p>
           </div>
           <div className="topbar-actions">
-            <div className="data-menu-wrap">
+            {activeSection === "collection" || activeSection === "graded" ? (
               <button
-                className={`primary-button secondary-button ${showDataMenu ? "active" : ""}`}
+                className={`icon-button ${showFilters ? "active" : ""}`}
                 type="button"
-                aria-expanded={showDataMenu}
-                aria-haspopup="menu"
-                disabled={!activeCollection}
-                onClick={() => setShowDataMenu((isOpen) => !isOpen)}
+                aria-label="Filter collection"
+                aria-expanded={showFilters}
+                onClick={() => setShowFilters((isOpen) => !isOpen)}
               >
-                <Database size={18} aria-hidden="true" />
-                Data
-                <ChevronDown size={16} aria-hidden="true" />
+                <ListFilter size={20} aria-hidden="true" />
               </button>
-              {showDataMenu ? (
-                <div className="data-menu" role="menu" aria-label="Data actions">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={exportStatus === "loading"}
-                    onClick={handleExportInventoryCsv}
-                  >
-                    <Download size={18} aria-hidden="true" />
-                    {exportStatus === "loading" ? "Exporting..." : "Export CSV"}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    disabled={backupStatus === "loading"}
-                    onClick={handleCreateSqliteBackup}
-                  >
-                    <HardDriveDownload size={18} aria-hidden="true" />
-                    {backupStatus === "loading" ? "Backing up..." : "Back up SQLite"}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setActivePanel((panel) => (panel === "import" ? null : "import"));
-                      setShowDataMenu(false);
-                    }}
-                  >
-                    <Upload size={18} aria-hidden="true" />
-                    Import CSV
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            <button
-              className={`icon-button ${showFilters ? "active" : ""}`}
-              type="button"
-              aria-label="Filter collection"
-              aria-expanded={showFilters}
-              onClick={() => {
-                setShowFilters((isOpen) => !isOpen);
-                setShowDataMenu(false);
-              }}
-            >
-              <ListFilter size={20} aria-hidden="true" />
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => {
-                setActivePanel((panel) => (panel === "manual" ? null : "manual"));
-                setShowDataMenu(false);
-              }}
-            >
-              <Plus size={18} aria-hidden="true" />
-              Add card
-            </button>
+            ) : null}
+            {activeSection === "collection" ? (
+              <button className="primary-button" type="button" onClick={() => openPanel("manual")}>
+                <Plus size={18} aria-hidden="true" />
+                Add card
+              </button>
+            ) : null}
           </div>
         </header>
 
-        {dataActionMessage ? (
-          <p
-            className={`data-action-status ${
-              exportStatus === "error" || backupStatus === "error" ? "error" : "ok"
-            }`}
-          >
-            {dataActionMessage}
-          </p>
+        {activeSection === "collection" ? (
+          <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
+            <div className="search-control">
+              <Search size={20} aria-hidden="true" />
+              <input
+                aria-label="Search or add card"
+                onChange={(event) => setLookupQuery(event.target.value)}
+                placeholder="Search by name, PSA cert, or set/card like s10a 073/071"
+                value={lookupQuery}
+              />
+            </div>
+            <div className="mode-actions">
+              <select
+                aria-label="Lookup language"
+                onChange={(event) => setLookupLanguage(event.target.value as CardLanguage | "all")}
+                value={lookupLanguage}
+              >
+                <option value="all">All</option>
+                <option value="en">English</option>
+                <option value="ja">Japanese</option>
+              </select>
+              <button disabled={lookupStatus === "loading"} type="submit">
+                <Search size={18} aria-hidden="true" />
+                {lookupStatus === "loading" ? "Looking..." : "Lookup"}
+              </button>
+              <button type="button" onClick={() => openPanel("cert")}>
+                <ShieldCheck size={18} aria-hidden="true" />
+                Cert
+              </button>
+              <button type="button" onClick={() => openPanel("bulk")}>
+                <FileText size={18} aria-hidden="true" />
+                Bulk
+              </button>
+            </div>
+          </form>
         ) : null}
 
-        <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
-          <div className="search-control">
-            <Search size={20} aria-hidden="true" />
-            <input
-              aria-label="Search or add card"
-              onChange={(event) => setLookupQuery(event.target.value)}
-              placeholder="Enter a card name, PSA cert, or set/card number like s10a 073/071"
-              value={lookupQuery}
-            />
-          </div>
-          <div className="mode-actions">
-            <select
-              aria-label="Lookup language"
-              onChange={(event) => setLookupLanguage(event.target.value as CardLanguage | "all")}
-              value={lookupLanguage}
-            >
-              <option value="all">All</option>
-              <option value="en">English</option>
-              <option value="ja">Japanese</option>
-            </select>
-            <button disabled={lookupStatus === "loading"} type="submit">
-              <Search size={18} aria-hidden="true" />
-              {lookupStatus === "loading" ? "Looking..." : "Lookup"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setActivePanel((panel) => (panel === "cert" ? null : "cert"))}
-            >
-              <ShieldCheck size={18} aria-hidden="true" />
-              Cert
-            </button>
-            <button
-              type="button"
-              onClick={() => setActivePanel((panel) => (panel === "bulk" ? null : "bulk"))}
-            >
-              <FileText size={18} aria-hidden="true" />
-              Bulk
-            </button>
-            <button type="button">
-              <Camera size={18} aria-hidden="true" />
-              Scan
-            </button>
-          </div>
-        </form>
-
-        {showFilters ? (
+        {(activeSection === "collection" || activeSection === "graded") && showFilters ? (
           <InventoryFilterPanel
             chips={activeFilterChips}
             filters={inventoryFilters}
             options={filterOptions}
-            resultCount={filteredItems.length}
-            totalCount={inventory.items.length}
+            resultCount={visibleItems.length}
+            totalCount={sectionItems.length}
             onChange={setInventoryFilters}
             onClearAll={() => setInventoryFilters(defaultInventoryFilters)}
           />
@@ -1120,73 +1288,157 @@ function WorkspaceShell({
         {activePanel === "import" && activeCollection ? (
           <InventoryCsvImportPanel
             collectionId={activeCollection.id}
+            existingItems={inventory.items}
             onCreateItem={createOrMergeInventoryItem}
+            onItemUpdated={(item) => setInventory((current) => updateInventoryItem(current, item))}
           />
         ) : null}
 
         {inventoryStatus === "error" ? <p className="form-error">{inventoryError}</p> : null}
 
-        <section className="stats-grid" aria-label="Collection summary">
-          {workspaceStats.map((stat) => {
-            const Icon = stat.icon;
-            return (
-              <article className="stat-tile" key={stat.label}>
-                <Icon size={20} aria-hidden="true" />
-                <span>{stat.label}</span>
-                <strong>{stat.value}</strong>
-              </article>
-            );
-          })}
-        </section>
-
-        {inventory.items.length > 0 ? (
+        {activeSection === "collection" || activeSection === "graded" ? (
           <>
-            <div className="inventory-list-header">
-              <p>
-                Showing <strong>{filteredItems.length}</strong> of{" "}
-                <strong>{inventory.items.length}</strong>
-              </p>
-              <div className="inventory-list-actions">
-                {hasActiveInventoryFilters ? (
-                  <button type="button" onClick={() => setInventoryFilters(defaultInventoryFilters)}>
-                    Clear filters
-                  </button>
+            <section className="stats-grid" aria-label="Collection summary">
+              {workspaceStats.map((stat) => {
+                const Icon = stat.icon;
+                return (
+                  <article className="stat-tile" key={stat.label}>
+                    <Icon size={20} aria-hidden="true" />
+                    <span>{stat.label}</span>
+                    <strong>{stat.value}</strong>
+                  </article>
+                );
+              })}
+            </section>
+
+            {sectionItems.length > 0 ? (
+              <>
+                <div className="inventory-list-header">
+                  <p>
+                    Showing <strong>{visibleItems.length}</strong> of{" "}
+                    <strong>{sectionItems.length}</strong>
+                    {activeSection === "graded" ? " graded rows" : " inventory rows"}
+                  </p>
+                  <div className="inventory-list-actions">
+                    {hasActiveInventoryFilters ? (
+                      <button type="button" onClick={() => setInventoryFilters(defaultInventoryFilters)}>
+                        Clear filters
+                      </button>
+                    ) : null}
+                    {activeSection === "collection" ? (
+                      <button type="button" onClick={toggleSelectionMode}>
+                        {selectionMode ? "Cancel select" : "Select"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {activeSection === "collection" && selectionMode ? (
+                  <BulkSelectionBar
+                    includeExisting={bulkPriceIncludeExisting}
+                    isWorking={bulkPriceStatus === "loading"}
+                    missingPriceCount={selectedMissingPriceCount}
+                    selectedCount={selectedItemIds.length}
+                    visibleCount={visibleItems.length}
+                    onClear={() => setSelectedItemIds([])}
+                    onDeleteSelected={handleBulkDeleteSelected}
+                    onEditVariants={() => setBulkVariantEditorOpen((isOpen) => !isOpen)}
+                    onIncludeExistingChange={setBulkPriceIncludeExisting}
+                    onQueuePriceRefresh={handleQueueBulkPriceRefresh}
+                    onSelectVisible={selectVisibleItems}
+                  />
                 ) : null}
-                <button type="button" onClick={toggleSelectionMode}>
-                  {selectionMode ? "Cancel select" : "Select"}
-                </button>
-              </div>
-            </div>
-            {selectionMode ? (
-              <BulkSelectionBar
-                includeExisting={bulkPriceIncludeExisting}
-                isWorking={bulkPriceStatus === "loading"}
-                missingPriceCount={selectedMissingPriceCount}
-                selectedCount={selectedItemIds.length}
-                visibleCount={filteredItems.length}
-                onClear={() => setSelectedItemIds([])}
-                onDeleteSelected={handleBulkDeleteSelected}
-                onEditVariants={() => setBulkVariantEditorOpen((isOpen) => !isOpen)}
-                onIncludeExistingChange={setBulkPriceIncludeExisting}
-                onQueuePriceRefresh={handleQueueBulkPriceRefresh}
-                onSelectVisible={selectVisibleItems}
-              />
-            ) : null}
-            {selectionMode && bulkVariantEditorOpen ? (
-              <BulkVariantEditor
-                clearMarketPrices={bulkVariantClearMarketPrices}
-                isWorking={bulkVariantStatus === "loading"}
-                message={bulkVariantMessage}
-                mode={bulkVariantMode}
-                selectedCount={selectedItemIds.length}
-                selectedVariants={bulkVariantValues}
-                status={bulkVariantStatus}
-                onClearMarketPricesChange={setBulkVariantClearMarketPrices}
-                onModeChange={setBulkVariantMode}
-                onSubmit={handleBulkUpdateVariants}
-                onToggleVariant={toggleBulkVariantValue}
-              />
-            ) : null}
+                {activeSection === "collection" && selectionMode && bulkVariantEditorOpen ? (
+                  <BulkVariantEditor
+                    clearMarketPrices={bulkVariantClearMarketPrices}
+                    isWorking={bulkVariantStatus === "loading"}
+                    message={bulkVariantMessage}
+                    mode={bulkVariantMode}
+                    selectedCount={selectedItemIds.length}
+                    selectedVariants={bulkVariantValues}
+                    status={bulkVariantStatus}
+                    onClearMarketPricesChange={setBulkVariantClearMarketPrices}
+                    onModeChange={setBulkVariantMode}
+                    onSubmit={handleBulkUpdateVariants}
+                    onToggleVariant={toggleBulkVariantValue}
+                  />
+                ) : null}
+                {activeSection === "collection" && bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
+                  <BulkPriceQueuePanel
+                    isWorking={bulkPriceStatus === "loading"}
+                    message={bulkPriceMessage}
+                    queue={bulkPriceQueue}
+                    status={bulkPriceStatus}
+                    onCancel={handleCancelBulkPriceQueue}
+                    onClearCompleted={handleClearCompletedBulkPriceQueue}
+                    onIgnoreItem={handleIgnorePriceRefresh}
+                    onOpenItem={(item) => setSelectedItem(item)}
+                    onResume={handleResumeBulkPriceQueue}
+                    onRetryFailed={handleRetryFailedBulkPriceQueue}
+                  />
+                ) : null}
+                {visibleItems.length > 0 ? (
+                  <InventoryGrid
+                    isSelecting={activeSection === "collection" && selectionMode}
+                    items={visibleItems}
+                    selectedItemIds={selectedItemIdSet}
+                    onSelect={setSelectedItem}
+                    onToggleSelected={toggleSelectedItem}
+                  />
+                ) : (
+                  <section className="empty-state filtered-empty">
+                    <div className="empty-copy">
+                      <p className="eyebrow">No visible matches</p>
+                      <h3>No cards match this view.</h3>
+                      <p>Clear a filter or adjust the search text to bring cards back into view.</p>
+                    </div>
+                  </section>
+                )}
+              </>
+            ) : (
+              <section className="empty-state">
+                <div className="empty-visual" aria-hidden="true">
+                  <div className="card-stack card-stack-one" />
+                  <div className="card-stack card-stack-two" />
+                  <div className="card-stack card-stack-three" />
+                </div>
+                <div className="empty-copy">
+                  <p className="eyebrow">Ready for inventory</p>
+                  <h3>
+                    {activeSection === "graded"
+                      ? "No graded cards yet."
+                      : "Your collection will live here."}
+                  </h3>
+                  <p>
+                    {activeSection === "graded"
+                      ? "Import a PSA cert or mark a manual entry as graded to track slab details, values, and price history."
+                      : "Use lookup, PSA cert import, bulk paste, CSV import, or manual entry to add cards to this local collection."}
+                  </p>
+                </div>
+              </section>
+            )}
+          </>
+        ) : null}
+
+        {activeSection === "storage" ? (
+          <StorageInsights
+            storageGroups={storageGroups}
+            variantGroups={variantGroups}
+            onSelectStorage={applyStorageFilter}
+            onSelectVariant={applyVariantFilter}
+          />
+        ) : null}
+
+        {activeSection === "data" ? (
+          <>
+            <DataWorkspacePanel
+              backupStatus={backupStatus}
+              dataActionMessage={dataActionMessage}
+              exportStatus={exportStatus}
+              hasCollection={Boolean(activeCollection)}
+              onBackup={handleCreateSqliteBackup}
+              onExport={handleExportInventoryCsv}
+              onImport={() => openPanel("import")}
+            />
             {bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
               <BulkPriceQueuePanel
                 isWorking={bulkPriceStatus === "loading"}
@@ -1195,52 +1447,14 @@ function WorkspaceShell({
                 status={bulkPriceStatus}
                 onCancel={handleCancelBulkPriceQueue}
                 onClearCompleted={handleClearCompletedBulkPriceQueue}
+                onIgnoreItem={handleIgnorePriceRefresh}
                 onOpenItem={(item) => setSelectedItem(item)}
                 onResume={handleResumeBulkPriceQueue}
                 onRetryFailed={handleRetryFailedBulkPriceQueue}
               />
             ) : null}
-            {filteredItems.length > 0 ? (
-              <InventoryGrid
-                isSelecting={selectionMode}
-                items={filteredItems}
-                selectedItemIds={selectedItemIdSet}
-                onSelect={setSelectedItem}
-                onToggleSelected={toggleSelectedItem}
-              />
-            ) : (
-              <section className="empty-state filtered-empty" id="collection">
-                <div className="empty-copy">
-                  <p className="eyebrow">No visible matches</p>
-                  <h3>No cards match those filters.</h3>
-                  <p>Clear a filter or adjust the search text to bring cards back into view.</p>
-                </div>
-              </section>
-            )}
           </>
-        ) : (
-          <section className="empty-state" id="collection">
-            <div className="empty-visual" aria-hidden="true">
-              <div className="card-stack card-stack-one" />
-              <div className="card-stack card-stack-two" />
-              <div className="card-stack card-stack-three" />
-            </div>
-            <div className="empty-copy">
-              <p className="eyebrow">Ready for inventory</p>
-              <h3>Your collection will live here.</h3>
-              <p>
-                Add cards manually for now. API lookups, cert imports, comps, and scan
-                drafts can plug into this same inventory later.
-              </p>
-            </div>
-          </section>
-        )}
-
-        <section className="roadmap-panel" aria-label="Upcoming build milestones">
-          {roadmapItems.map((item) => (
-            <span key={item}>{item}</span>
-          ))}
-        </section>
+        ) : null}
 
         {activeCollection && selectedItem ? (
           <InventoryItemDetail
@@ -1256,6 +1470,7 @@ function WorkspaceShell({
               setBulkPriceMessage(message);
               setBulkPriceStatus("idle");
             }}
+            onTagFilter={applyInventoryTagFilter}
             onUpdated={(updatedItem) => {
               setInventory((current) => updateInventoryItem(current, updatedItem));
               setSelectedItem(updatedItem);
@@ -1271,6 +1486,129 @@ function WorkspaceShell({
         ) : null}
       </section>
     </main>
+  );
+}
+
+function StorageInsights({
+  storageGroups,
+  variantGroups,
+  onSelectStorage,
+  onSelectVariant
+}: {
+  storageGroups: InventoryGroupSummary[];
+  variantGroups: InventoryGroupSummary[];
+  onSelectStorage: (storageLocation: string) => void;
+  onSelectVariant: (variant: string) => void;
+}) {
+  return (
+    <section className="insight-grid" aria-label="Storage and variant summaries">
+      <div className="insight-panel">
+        <div className="insight-header">
+          <div>
+            <p className="eyebrow">Storage</p>
+            <h3>Locations</h3>
+          </div>
+          <span>{storageGroups.length}</span>
+        </div>
+        <div className="insight-list">
+          {storageGroups.length > 0 ? (
+            storageGroups.map((group) => (
+              <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
+                <span>
+                  <strong>{group.label}</strong>
+                  <small>{group.examples}</small>
+                </span>
+                <span>
+                  <strong>{group.count}</strong>
+                  <small>{formatCurrency(group.valueCents)}</small>
+                </span>
+              </button>
+            ))
+          ) : (
+            <p className="lookup-note">Add storage locations to cards to build this view.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="insight-panel">
+        <div className="insight-header">
+          <div>
+            <p className="eyebrow">Variants</p>
+            <h3>Tags in use</h3>
+          </div>
+          <span>{variantGroups.length}</span>
+        </div>
+        <div className="insight-list">
+          {variantGroups.length > 0 ? (
+            variantGroups.map((group) => (
+              <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
+                <span>
+                  <strong>{group.label}</strong>
+                  <small>{group.examples}</small>
+                </span>
+                <span>
+                  <strong>{group.count}</strong>
+                  <small>{formatCurrency(group.valueCents)}</small>
+                </span>
+              </button>
+            ))
+          ) : (
+            <p className="lookup-note">Add variants like Holo, 1st Edition, or Promo to see groups.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DataWorkspacePanel({
+  backupStatus,
+  dataActionMessage,
+  exportStatus,
+  hasCollection,
+  onBackup,
+  onExport,
+  onImport
+}: {
+  backupStatus: "idle" | "loading" | "error";
+  dataActionMessage: string;
+  exportStatus: "idle" | "loading" | "error";
+  hasCollection: boolean;
+  onBackup: () => void;
+  onExport: () => void;
+  onImport: () => void;
+}) {
+  const hasError = exportStatus === "error" || backupStatus === "error";
+
+  return (
+    <section className="data-workspace" aria-label="Data tools">
+      <div className="data-action-grid">
+        <button disabled={!hasCollection || exportStatus === "loading"} onClick={onExport} type="button">
+          <Download size={20} aria-hidden="true" />
+          <span>
+            <strong>{exportStatus === "loading" ? "Exporting..." : "Export CSV"}</strong>
+            <small>Download the visible collection as inventory rows.</small>
+          </span>
+        </button>
+        <button disabled={!hasCollection || backupStatus === "loading"} onClick={onBackup} type="button">
+          <HardDriveDownload size={20} aria-hidden="true" />
+          <span>
+            <strong>{backupStatus === "loading" ? "Backing up..." : "Back up SQLite"}</strong>
+            <small>Create a local database snapshot under data/backups.</small>
+          </span>
+        </button>
+        <button disabled={!hasCollection} onClick={onImport} type="button">
+          <Upload size={20} aria-hidden="true" />
+          <span>
+            <strong>Import CSV</strong>
+            <small>Preview manual inventory rows before adding them.</small>
+          </span>
+        </button>
+      </div>
+      {dataActionMessage ? (
+        <p className={`data-action-status ${hasError ? "error" : "ok"}`}>{dataActionMessage}</p>
+      ) : null}
+    </section>
   );
 }
 
@@ -1785,13 +2123,17 @@ function BulkQueueCard({
 
 function InventoryCsvImportPanel({
   collectionId,
-  onCreateItem
+  existingItems,
+  onCreateItem,
+  onItemUpdated
 }: {
   collectionId: string;
+  existingItems: InventoryItem[];
   onCreateItem: (
     collectionId: string,
     payload: CreateInventoryItemRequest
   ) => Promise<InventoryItem | null>;
+  onItemUpdated: (item: InventoryItem) => void;
 }) {
   const [csvText, setCsvText] = useState("");
   const [rows, setRows] = useState<CsvImportPreviewRow[]>([]);
@@ -1831,6 +2173,9 @@ function InventoryCsvImportPanel({
 
     setStatus("adding");
     setError("");
+    const seenCertNumbers = new Set(
+      existingItems.map((item) => normalizedCertNumber(item.certNumber)).filter(Boolean)
+    );
 
     for (const row of readyRows) {
       setRows((current) =>
@@ -1840,15 +2185,45 @@ function InventoryCsvImportPanel({
       );
 
       try {
+        const certNumber = normalizedCertNumber(row.payload.certNumber);
+
+        if (certNumber && seenCertNumbers.has(certNumber)) {
+          setRows((current) =>
+            current.map((candidate) =>
+              candidate.id === row.id
+                ? {
+                    ...candidate,
+                    status: "skipped",
+                    errors: [`Cert ${row.payload.certNumber} is already in this collection.`]
+                  }
+                : candidate
+            )
+          );
+          continue;
+        }
+
         const item = await onCreateItem(collectionId, row.payload);
+        const updatedItem = item?.card.imageUrl
+          ? item
+          : await applyBestImageCandidateToItem(collectionId, item);
+
+        if (updatedItem) {
+          onItemUpdated(updatedItem);
+          const importedCertNumber = normalizedCertNumber(updatedItem.certNumber);
+
+          if (importedCertNumber) {
+            seenCertNumbers.add(importedCertNumber);
+          }
+        }
 
         setRows((current) =>
           current.map((candidate) =>
             candidate.id === row.id
               ? {
                   ...candidate,
-                  status: item ? "added" : "skipped",
-                  errors: item ? [] : ["Import cancelled."]
+                  payload: updatedItem ? inventoryItemToPayload(updatedItem) : candidate.payload,
+                  status: updatedItem ? "added" : "skipped",
+                  errors: updatedItem ? [] : ["Import cancelled."]
                 }
               : candidate
           )
@@ -1890,7 +2265,9 @@ function InventoryCsvImportPanel({
           <p className="eyebrow">CSV import</p>
           <h3>Preview inventory rows</h3>
         </div>
-        <p className="lookup-note">Use the inventory export format or matching column names.</p>
+        <p className="lookup-note">
+          Use the Pokemon Vault export format, matching column names, or PSA Vault collection exports.
+        </p>
       </div>
 
       <div className="bulk-input-grid">
@@ -2660,6 +3037,7 @@ function BulkPriceQueuePanel({
   status,
   onCancel,
   onClearCompleted,
+  onIgnoreItem,
   onOpenItem,
   onResume,
   onRetryFailed
@@ -2670,6 +3048,7 @@ function BulkPriceQueuePanel({
   status: "idle" | "loading" | "error";
   onCancel: () => void;
   onClearCompleted: () => void;
+  onIgnoreItem: (item: InventoryItem) => void;
   onOpenItem: (item: InventoryItem) => void;
   onResume: () => void;
   onRetryFailed: () => void;
@@ -2791,9 +3170,20 @@ function BulkPriceQueuePanel({
               {job.nextAttemptAt ? <em>{retryLabel(job.nextAttemptAt)}</em> : null}
             </div>
             {job.item ? (
-              <button onClick={() => onOpenItem(job.item!)} type="button">
-                Open
-              </button>
+              <div className="bulk-queue-row-actions">
+                <button onClick={() => onOpenItem(job.item!)} type="button">
+                  Open
+                </button>
+                {job.status === "needs-review" || job.status === "failed" ? (
+                  <button
+                    disabled={isWorking}
+                    onClick={() => onIgnoreItem(job.item!)}
+                    type="button"
+                  >
+                    Ignore
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </article>
         ))}
@@ -3247,7 +3637,7 @@ function GradedMarketPriceSummary({
         </>
       ) : (
         <p className="lookup-note">
-          Refresh with PokemonPriceTracker to store an eBay-backed graded-card market price.
+          Refresh with PokemonPriceTracker to store a graded-card market price.
         </p>
       )}
 
@@ -3322,47 +3712,81 @@ function PokemonPriceTrackerLink({ item }: { item: InventoryItem }) {
 }
 
 function PricingHistoryPanel({
-  days,
+  loadedDays,
   isLoading,
   message,
   points,
+  selectedDays,
   status,
+  onSelectDays,
   onLoad
 }: {
-  days: number;
+  loadedDays: number | null;
   isLoading: boolean;
   message: string;
   points: PricingHistoryPoint[];
+  selectedDays: number;
   status: "idle" | "loading" | "error";
-  onLoad: (days: number) => void;
+  onSelectDays: (days: number) => void;
+  onLoad: () => void;
 }) {
   const minPrice = points.length > 0 ? Math.min(...points.map((point) => point.priceCents)) : 0;
   const maxPrice = points.length > 0 ? Math.max(...points.map((point) => point.priceCents)) : 0;
   const range = Math.max(1, maxPrice - minPrice);
+  const hasLoadedSelectedRange = loadedDays === selectedDays;
+  const hasLoadedAnyRange = loadedDays !== null;
+  const hasPoints = points.length > 0;
+  const heading =
+    status === "loading"
+      ? `Loading ${selectedDays}d`
+      : hasPoints && loadedDays
+        ? `${points.length} points · ${loadedDays}d`
+        : hasLoadedAnyRange && loadedDays
+          ? `No ${loadedDays}d history`
+          : "Ready to load";
+  const loadLabel = `${hasLoadedSelectedRange ? "Reload" : "Load"} ${selectedDays}d history`;
+  const emptyMessage =
+    status === "loading"
+      ? `Loading ${selectedDays}d history...`
+      : hasLoadedAnyRange && status !== "error"
+        ? "No price history found for this card/range."
+        : "Choose a range, then load history when you need it so PokemonPriceTracker credits are used deliberately.";
 
   return (
     <section className="raw-price-panel" aria-label="Market price history">
       <div className="graded-cert-header">
         <div>
           <p className="eyebrow">Price history</p>
-          <h4>{points.length > 0 ? `${points.length} points` : "Not loaded"}</h4>
+          <h4>{heading}</h4>
         </div>
-        <div className="history-actions">
-          {[7, 30, 90].map((option) => (
-            <button
-              className={days === option ? "active" : ""}
-              disabled={isLoading}
-              key={option}
-              onClick={() => onLoad(option)}
-              type="button"
-            >
-              {option}d
-            </button>
-          ))}
+        <div className="history-controls">
+          <div className="history-actions" aria-label="Price history range">
+            {[7, 30, 90].map((option) => (
+              <button
+                aria-pressed={selectedDays === option}
+                className={selectedDays === option ? "active" : ""}
+                disabled={isLoading}
+                key={option}
+                onClick={() => onSelectDays(option)}
+                type="button"
+              >
+                {option}d
+              </button>
+            ))}
+          </div>
+          <button
+            className="primary-button history-load-button"
+            disabled={isLoading}
+            onClick={onLoad}
+            type="button"
+          >
+            <RefreshCw size={16} aria-hidden="true" />
+            {isLoading ? "Loading..." : loadLabel}
+          </button>
         </div>
       </div>
 
-      {points.length > 0 ? (
+      {hasPoints ? (
         <div className="price-history-chart" aria-hidden="true">
           {points.map((point) => {
             const height = 18 + ((point.priceCents - minPrice) / range) * 82;
@@ -3377,18 +3801,22 @@ function PricingHistoryPanel({
           })}
         </div>
       ) : (
-        <p className="lookup-note">
-          Load history only when you need it so PokemonPriceTracker credits are used deliberately.
-        </p>
+        <p className="lookup-note">{emptyMessage}</p>
       )}
 
-      {points.length > 0 ? (
+      {hasPoints ? (
         <div className="inventory-meta">
           <span>{formatCurrency(points[0].priceCents)} start</span>
           <span>{formatCurrency(points[points.length - 1].priceCents)} latest</span>
           <span>{formatCurrency(minPrice)} low</span>
           <span>{formatCurrency(maxPrice)} high</span>
         </div>
+      ) : null}
+
+      {hasLoadedAnyRange && !hasLoadedSelectedRange && status !== "loading" ? (
+        <p className="lookup-note">
+          Showing {loadedDays}d history. Load {selectedDays}d history to update this panel.
+        </p>
       ) : null}
 
       {message ? (
@@ -3398,12 +3826,97 @@ function PricingHistoryPanel({
   );
 }
 
+function ValueOverrideHistoryPanel({
+  history,
+  status
+}: {
+  history: ValueOverrideHistoryEntry[];
+  status: "idle" | "loading" | "error";
+}) {
+  if (history.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="raw-price-panel value-history-panel" aria-label="Manual value history">
+      <div className="graded-cert-header">
+        <div>
+          <p className="eyebrow">Manual value history</p>
+          <h4>{history.length > 0 ? `${history.length} changes` : "Not available"}</h4>
+        </div>
+        {status === "loading" ? <span className="status-pill">Loading</span> : null}
+      </div>
+
+      {history.length > 0 ? (
+        <div className="value-history-list">
+          {history.map((entry) => (
+            <div className="value-history-row" key={entry.id}>
+              <div>
+                <strong>
+                  {formatOptionalCurrency(entry.previousValueCents)} {"->"}{" "}
+                  {formatOptionalCurrency(entry.nextValueCents)}
+                </strong>
+                <span>{valueHistoryActor(entry)}</span>
+              </div>
+              <time dateTime={entry.changedAt}>{formatHistoryDate(entry.changedAt)}</time>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function valueHistoryActor(entry: ValueOverrideHistoryEntry) {
+  return entry.changedByDisplayName ?? entry.changedByUsername ?? "Unknown user";
+}
+
+function formatOptionalCurrency(cents: number | null) {
+  return cents === null ? "None" : formatCurrency(cents);
+}
+
+function formatHistoryDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function friendlyPricingHistoryError(error: unknown) {
+  const message = error instanceof Error ? error.message : "Unable to load price history.";
+
+  if (/route\s+get:\/api\/.*not found/i.test(message)) {
+    return "Price history is not available from the running API. Restart the API and try again.";
+  }
+
+  return message;
+}
+
+function InventoryMetaFilterButton({
+  filter,
+  onSelect
+}: {
+  filter: InventoryTagFilter;
+  onSelect: (filter: InventoryTagFilter) => void;
+}) {
+  return (
+    <button
+      aria-label={`Filter collection by ${filter.label}`}
+      className="inventory-meta-button"
+      onClick={() => onSelect(filter)}
+      title={`Filter by ${filter.label}`}
+      type="button"
+    >
+      {filter.label}
+    </button>
+  );
+}
+
 function InventoryItemDetail({
   collectionId,
   item,
   onClose,
   onDeleted,
   onPriceQueued,
+  onTagFilter,
   onUpdated
 }: {
   collectionId: string;
@@ -3411,23 +3924,32 @@ function InventoryItemDetail({
   onClose: () => void;
   onDeleted: (itemId: string) => void;
   onPriceQueued: (queue: BulkPriceQueueResponse, message: string) => void;
+  onTagFilter: (filter: InventoryTagFilter) => void;
   onUpdated: (item: InventoryItem) => void;
 }) {
   const [imageUrl, setImageUrl] = useState(item.card.imageUrl ?? "");
   const [itemType, setItemType] = useState<InventoryItemType>(item.itemType);
   const [language, setLanguage] = useState<CardLanguage>(item.card.language);
-  const [status, setStatus] = useState<"idle" | "saving" | "deleting" | "refreshing" | "pricing">(
-    "idle"
-  );
+  const [status, setStatus] = useState<
+    "idle" | "saving" | "deleting" | "refreshing" | "pricing" | "image" | "image-saving"
+  >("idle");
   const [pricingCandidates, setPricingCandidates] = useState<PricingCandidate[]>([]);
   const [gradedPricingCandidates, setGradedPricingCandidates] = useState<PricingCandidate[]>([]);
   const [pricingError, setPricingError] = useState("");
   const [pricingHistory, setPricingHistory] = useState<PricingHistoryPoint[]>([]);
-  const [pricingHistoryDays, setPricingHistoryDays] = useState(30);
+  const [selectedPricingHistoryDays, setSelectedPricingHistoryDays] = useState(30);
+  const [loadedPricingHistoryDays, setLoadedPricingHistoryDays] = useState<number | null>(null);
   const [pricingHistoryStatus, setPricingHistoryStatus] = useState<
     "idle" | "loading" | "error"
   >("idle");
   const [pricingHistoryMessage, setPricingHistoryMessage] = useState("");
+  const [valueHistory, setValueHistory] = useState<ValueOverrideHistoryEntry[]>([]);
+  const [valueHistoryStatus, setValueHistoryStatus] = useState<"idle" | "loading" | "error">(
+    "idle"
+  );
+  const [valueHistoryMessage, setValueHistoryMessage] = useState("");
+  const [imageCandidates, setImageCandidates] = useState<CardLookupCandidate[]>([]);
+  const [imageLookupMessage, setImageLookupMessage] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -3435,12 +3957,53 @@ function InventoryItemDetail({
     setGradedPricingCandidates([]);
     setPricingError("");
     setPricingHistory([]);
-    setPricingHistoryDays(30);
+    setSelectedPricingHistoryDays(30);
+    setLoadedPricingHistoryDays(null);
     setPricingHistoryStatus("idle");
     setPricingHistoryMessage("");
+    setValueHistory([]);
+    setValueHistoryStatus("idle");
+    setValueHistoryMessage("");
+    setImageCandidates([]);
+    setImageLookupMessage("");
     setError("");
     setStatus("idle");
   }, [item.id]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    setValueHistory([]);
+    setValueHistoryStatus("loading");
+    setValueHistoryMessage("");
+
+    api
+      .getValueOverrideHistory(collectionId, item.id)
+      .then((response) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setValueHistory(response.history);
+        setValueHistoryStatus("idle");
+      })
+      .catch((historyError) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setValueHistoryStatus("error");
+        setValueHistoryMessage(
+          historyError instanceof Error
+            ? historyError.message
+            : "Unable to load manual value history."
+        );
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [collectionId, item.id]);
 
   useEffect(() => {
     setImageUrl(item.card.imageUrl ?? "");
@@ -3501,6 +4064,8 @@ function InventoryItemDetail({
 
   async function handleClear() {
     setError("");
+    setImageCandidates([]);
+    setImageLookupMessage("");
     setStatus("saving");
 
     try {
@@ -3511,6 +4076,57 @@ function InventoryItemDetail({
       onUpdated(response.item);
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : "Unable to clear image.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleFetchImage() {
+    setError("");
+    setImageCandidates([]);
+    setImageLookupMessage("");
+    setStatus("image");
+
+    try {
+      const candidates = await findCardImageCandidatesForItem(collectionId, item);
+
+      if (candidates.length === 0) {
+        throw new Error("No image found for this card.");
+      }
+
+      setImageCandidates(candidates);
+      setImageLookupMessage(
+        `Found ${candidates.length} image option${candidates.length === 1 ? "" : "s"}.`
+      );
+    } catch (fetchError) {
+      setError(fetchError instanceof Error ? fetchError.message : "Unable to fetch image options.");
+    } finally {
+      setStatus("idle");
+    }
+  }
+
+  async function handleSelectImageCandidate(candidate: CardLookupCandidate) {
+    const image = imageUrlFromLookupCandidate(candidate);
+
+    if (!image) {
+      setError("This option does not include an image.");
+      return;
+    }
+
+    setError("");
+    setStatus("image-saving");
+
+    try {
+      const response = await api.updateInventoryItemImage(collectionId, item.id, {
+        imageUrl: image
+      });
+
+      setImageUrl(response.item.card.imageUrl ?? "");
+      setImageCandidates([]);
+      setImageLookupMessage("Image updated.");
+      onUpdated(response.item);
+    } catch (saveImageError) {
+      setError(saveImageError instanceof Error ? saveImageError.message : "Unable to save image.");
     } finally {
       setStatus("idle");
     }
@@ -3703,21 +4319,19 @@ function InventoryItemDetail({
     }
   }
 
-  async function handleLoadPricingHistory(days: number) {
-    setPricingHistoryDays(days);
+  async function handleLoadPricingHistory() {
     setPricingHistoryStatus("loading");
     setPricingHistoryMessage("");
 
     try {
-      const response = await api.getPricingHistory(collectionId, item.id, days);
+      const response = await api.getPricingHistory(collectionId, item.id, selectedPricingHistoryDays);
       setPricingHistory(response.points);
+      setLoadedPricingHistoryDays(response.days);
       setPricingHistoryStatus("idle");
-      setPricingHistoryMessage(response.message);
+      setPricingHistoryMessage(response.points.length > 0 ? response.message : "");
     } catch (historyError) {
       setPricingHistoryStatus("error");
-      setPricingHistoryMessage(
-        historyError instanceof Error ? historyError.message : "Unable to load price history."
-      );
+      setPricingHistoryMessage(friendlyPricingHistoryError(historyError));
     }
   }
 
@@ -3752,17 +4366,97 @@ function InventoryItemDetail({
           <div className="detail-copy">
             <div className="inventory-meta">
               <span>Qty {item.quantity}</span>
-              {item.card.setCode ? <span>{item.card.setCode}</span> : null}
-              {item.card.cardNumber ? <span>{item.card.cardNumber}</span> : null}
-              {item.card.setName ? <span>{item.card.setName}</span> : null}
-              {item.card.releaseYear ? <span>{item.card.releaseYear}</span> : null}
-              {item.variantDetails ? <span>{item.variantDetails}</span> : null}
-              {item.grader && item.grade ? (
-                <span>
-                  {item.grader} {item.grade}
-                </span>
+              <InventoryMetaFilterButton
+                filter={{
+                  type: "language",
+                  label: languageLabel(item.card.language),
+                  value: item.card.language
+                }}
+                onSelect={onTagFilter}
+              />
+              <InventoryMetaFilterButton
+                filter={{
+                  type: "itemType",
+                  label: item.itemType === "graded" ? "Graded" : "Raw",
+                  value: item.itemType
+                }}
+                onSelect={onTagFilter}
+              />
+              {item.card.setCode ? (
+                <InventoryMetaFilterButton
+                  filter={{ type: "query", label: item.card.setCode, value: item.card.setCode }}
+                  onSelect={onTagFilter}
+                />
               ) : null}
-              {item.certNumber ? <span>Cert {item.certNumber}</span> : null}
+              {item.card.cardNumber ? (
+                <InventoryMetaFilterButton
+                  filter={{
+                    type: "query",
+                    label: item.card.cardNumber,
+                    value: item.card.cardNumber
+                  }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {item.card.setName ? (
+                <InventoryMetaFilterButton
+                  filter={{ type: "query", label: item.card.setName, value: item.card.setName }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {item.card.releaseYear ? (
+                <InventoryMetaFilterButton
+                  filter={{
+                    type: "query",
+                    label: item.card.releaseYear,
+                    value: item.card.releaseYear
+                  }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {item.card.rarity ? (
+                <InventoryMetaFilterButton
+                  filter={{ type: "query", label: item.card.rarity, value: item.card.rarity }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {variantsFromText(item.variantDetails ?? "").map((variant) => (
+                <InventoryMetaFilterButton
+                  filter={{ type: "variant", label: variant, value: variant }}
+                  key={variant}
+                  onSelect={onTagFilter}
+                />
+              ))}
+              {item.grader && item.grade ? (
+                <InventoryMetaFilterButton
+                  filter={{
+                    type: "query",
+                    label: `${item.grader} ${item.grade}`,
+                    value: `${item.grader} ${item.grade}`
+                  }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {item.certNumber ? (
+                <InventoryMetaFilterButton
+                  filter={{
+                    type: "query",
+                    label: `Cert ${item.certNumber}`,
+                    value: item.certNumber
+                  }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
+              {item.storageLocation ? (
+                <InventoryMetaFilterButton
+                  filter={{
+                    type: "storage",
+                    label: item.storageLocation,
+                    value: item.storageLocation
+                  }}
+                  onSelect={onTagFilter}
+                />
+              ) : null}
             </div>
 
             {itemType === "graded" ? (
@@ -3794,16 +4488,23 @@ function InventoryItemDetail({
               />
             ) : null}
 
-            {item.marketPriceSource === "pokemonpricetracker" ? (
+            {showMarketPriceHistoryPanel && item.marketPriceSource === "pokemonpricetracker" ? (
               <PricingHistoryPanel
-                days={pricingHistoryDays}
                 isLoading={pricingHistoryStatus === "loading"}
+                loadedDays={loadedPricingHistoryDays}
                 message={pricingHistoryMessage}
                 points={pricingHistory}
+                selectedDays={selectedPricingHistoryDays}
                 status={pricingHistoryStatus}
+                onSelectDays={setSelectedPricingHistoryDays}
                 onLoad={handleLoadPricingHistory}
               />
             ) : null}
+
+            <ValueOverrideHistoryPanel
+              history={valueHistory}
+              status={valueHistoryStatus}
+            />
 
             <form className="image-edit-form detail-edit-form" key={item.id} onSubmit={handleSave}>
               <label>
@@ -3955,10 +4656,26 @@ function InventoryItemDetail({
                 <textarea defaultValue={item.notes ?? ""} name="notes" />
               </label>
               {error ? <p className="form-error">{error}</p> : null}
+              {imageLookupMessage ? <p className="lookup-note wide-field">{imageLookupMessage}</p> : null}
+              {imageCandidates.length > 0 ? (
+                <ImageLookupOptions
+                  candidates={imageCandidates}
+                  disabled={status !== "idle"}
+                  onSelect={handleSelectImageCandidate}
+                />
+              ) : null}
               <div className="detail-actions">
                 <button className="primary-button" disabled={status !== "idle"} type="submit">
                   <Upload size={18} aria-hidden="true" />
                   {status === "saving" ? "Saving..." : "Save changes"}
+                </button>
+                <button disabled={status !== "idle"} onClick={handleFetchImage} type="button">
+                  <ImageIcon size={18} aria-hidden="true" />
+                  {status === "image"
+                    ? "Fetching..."
+                    : item.card.imageUrl
+                      ? "Refresh image"
+                      : "Fetch image"}
                 </button>
                 <button disabled={status !== "idle"} onClick={handleClear} type="button">
                   Clear image
@@ -3977,6 +4694,56 @@ function InventoryItemDetail({
         </div>
       </section>
     </div>
+  );
+}
+
+function ImageLookupOptions({
+  candidates,
+  disabled,
+  onSelect
+}: {
+  candidates: CardLookupCandidate[];
+  disabled: boolean;
+  onSelect: (candidate: CardLookupCandidate) => void;
+}) {
+  return (
+    <section className="image-option-panel wide-field" aria-label="Image options">
+      <div>
+        <p className="eyebrow">Image options</p>
+        <h4>Choose card art</h4>
+      </div>
+      <div className="image-option-list">
+        {candidates.map((candidate) => {
+          const image = imageUrlFromLookupCandidate(candidate);
+
+          return (
+            <article className="image-option" key={`${candidate.id}-${image ?? ""}`}>
+              <div className="image-option-thumb" aria-hidden="true">
+                {image ? (
+                  <img alt="" src={image} />
+                ) : (
+                  <ImageIcon size={28} aria-hidden="true" />
+                )}
+              </div>
+              <div className="image-option-copy">
+                <strong>{candidate.name}</strong>
+                <p>
+                  {[candidate.setName, candidate.cardNumber, candidate.language.toUpperCase()]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                <p>
+                  {formatImageCandidateSource(candidate.source)} · {candidate.confidence}
+                </p>
+              </div>
+              <button disabled={disabled || !image} onClick={() => onSelect(candidate)} type="button">
+                Use image
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -4052,6 +4819,16 @@ function findDuplicateInventoryItem(
   items: InventoryItem[],
   payload: CreateInventoryItemRequest
 ) {
+  const certNumber = normalizedCertNumber(payload.certNumber);
+
+  if (certNumber) {
+    const matchingCertItem = items.find((item) => normalizedCertNumber(item.certNumber) === certNumber);
+
+    if (matchingCertItem) {
+      return matchingCertItem;
+    }
+  }
+
   return items.find((item) => inventoryDuplicateKey(item) === payloadDuplicateKey(payload));
 }
 
@@ -4099,6 +4876,297 @@ function inventoryItemToPayload(item: InventoryItem): CreateInventoryItemRequest
     certEstimateCents: item.certEstimateCents ?? undefined,
     certLookupAt: item.certLookupAt ?? ""
   };
+}
+
+async function applyBestImageCandidateToItem(collectionId: string, item: InventoryItem | null) {
+  if (!item) {
+    return null;
+  }
+
+  try {
+    const candidates = await findCardImageCandidatesForItem(collectionId, item);
+    const image = candidates[0] ? imageUrlFromLookupCandidate(candidates[0]) : null;
+
+    if (!image) {
+      return item;
+    }
+
+    const response = await api.updateInventoryItemImage(collectionId, item.id, { imageUrl: image });
+    return response.item;
+  } catch {
+    return item;
+  }
+}
+
+async function findCardImageCandidatesForItem(collectionId: string, item: InventoryItem) {
+  const payload = inventoryItemToPayload(item);
+
+  try {
+    const response = await promiseWithTimeout(
+      api.lookupPokemonPriceTrackerImageCandidates(collectionId, item.id),
+      18000,
+      { candidates: [], message: "PokemonPriceTracker image lookup timed out." }
+    );
+
+    if (response.candidates.length > 0) {
+      return mergeImageLookupCandidates(response.candidates);
+    }
+  } catch {
+    // Fall back to the generic lookup databases when PokemonPriceTracker is unavailable.
+  }
+
+  return promiseWithTimeout(findCardImageCandidatesForPayload(payload), 15000, []);
+}
+
+async function findCardImageCandidatesForPayload(
+  payload: CreateInventoryItemRequest
+): Promise<CardLookupCandidate[]> {
+  const queries = imageLookupQueriesForPayload(payload);
+  const languages: Array<CardLanguage | "all"> =
+    payload.language === "other" ? ["all"] : [payload.language, "all"];
+  const candidateMap = new Map<string, { candidate: CardLookupCandidate; score: number }>();
+
+  for (const query of queries) {
+    for (const language of languages) {
+      try {
+        const result = await api.lookupCards({ query, language });
+
+        for (const candidate of result.candidates) {
+          const image = imageUrlFromLookupCandidate(candidate);
+
+          if (!image || !imageLookupCandidateMatchesPayload(payload, candidate)) {
+            continue;
+          }
+
+          const key = image || `${candidate.source}:${candidate.sourceId || candidate.id}`;
+          const score = scoreImageLookupCandidate(payload, candidate);
+          const current = candidateMap.get(key);
+
+          if (!current || score > current.score) {
+            candidateMap.set(key, { candidate, score });
+          }
+        }
+      } catch {
+        // Image fetch is a convenience path. Keep manual edit/import flows usable if lookup fails.
+      }
+    }
+  }
+
+  return [...candidateMap.values()]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 8)
+    .map((entry) => entry.candidate);
+}
+
+function mergeImageLookupCandidates(candidates: CardLookupCandidate[]) {
+  const candidateMap = new Map<string, CardLookupCandidate>();
+
+  for (const candidate of candidates) {
+    const image = imageUrlFromLookupCandidate(candidate);
+
+    if (!image) {
+      continue;
+    }
+
+    const existing = candidateMap.get(image);
+
+    if (!existing || candidate.score > existing.score) {
+      candidateMap.set(image, candidate);
+    }
+  }
+
+  return [...candidateMap.values()].slice(0, 8);
+}
+
+function imageLookupQueriesForPayload(payload: CreateInventoryItemRequest) {
+  const queries: string[] = [];
+  const names = imageLookupNameOptions(payload.name);
+
+  for (const name of names) {
+    queries.push(
+      [name, payload.setName, payload.cardNumber].filter(Boolean).join(" "),
+      [name, payload.setCode, payload.cardNumber].filter(Boolean).join(" "),
+      [name, payload.cardNumber].filter(Boolean).join(" "),
+      [name, payload.setName].filter(Boolean).join(" ")
+    );
+  }
+
+  queries.push(
+    [payload.setCode, payload.cardNumber].filter(Boolean).join(" "),
+    [payload.setName, payload.cardNumber].filter(Boolean).join(" ")
+  );
+
+  return uniqueNonEmptyStrings(queries);
+}
+
+function imageLookupNameOptions(name: string) {
+  const trimmed = name.trim();
+  const withoutPsaFinish = trimmed.replace(/\s*-\s*(holo|hologram|reverse holo)$/i, "").trim();
+
+  return uniqueNonEmptyStrings([trimmed, withoutPsaFinish]);
+}
+
+function scoreImageLookupCandidate(
+  payload: CreateInventoryItemRequest,
+  candidate: CardLookupCandidate
+) {
+  let score = candidate.score;
+
+  score += candidate.confidence === "exact" ? 120 : candidate.confidence === "strong" ? 70 : 20;
+
+  if (candidate.language === payload.language) {
+    score += 40;
+  }
+
+  if (payload.cardNumber && candidate.cardNumber) {
+    score += cardNumbersCompatible(payload.cardNumber, candidate.cardNumber) ? 90 : -60;
+  }
+
+  if (payload.setCode && candidate.setCode) {
+    score += normalizeText(candidate.setCode) === normalizeText(payload.setCode) ? 50 : 0;
+  }
+
+  if (payload.setName && candidate.setName) {
+    const payloadSetName = normalizeSearchText(payload.setName);
+    const candidateSetName = normalizeSearchText(candidate.setName);
+
+    if (candidateSetName === payloadSetName) {
+      score += 50;
+    } else if (
+      candidateSetName.includes(payloadSetName) ||
+      payloadSetName.includes(candidateSetName)
+    ) {
+      score += 25;
+    }
+  }
+
+  const payloadNames = imageLookupNameOptions(payload.name).map(normalizeSearchText);
+  const candidateName = normalizeSearchText(candidate.name);
+
+  if (payloadNames.includes(candidateName)) {
+    score += 50;
+  } else if (
+    payloadNames.some((name) => candidateName.includes(name) || name.includes(candidateName))
+  ) {
+    score += 25;
+  }
+
+  return score;
+}
+
+function imageLookupCandidateMatchesPayload(
+  payload: CreateInventoryItemRequest,
+  candidate: CardLookupCandidate
+) {
+  if (
+    payload.cardNumber &&
+    candidate.cardNumber &&
+    !cardNumbersCompatible(payload.cardNumber, candidate.cardNumber)
+  ) {
+    return false;
+  }
+
+  const payloadNames = imageLookupNameOptions(payload.name).map(normalizeSearchText).filter(Boolean);
+  const candidateNames = imageLookupNameOptions(candidate.name).map(normalizeSearchText).filter(Boolean);
+
+  if (
+    payloadNames.length > 0 &&
+    candidateNames.length > 0 &&
+    !payloadNames.some((payloadName) =>
+      candidateNames.some(
+        (candidateName) =>
+          payloadName === candidateName ||
+          (payloadName.length >= 4 &&
+            candidateName.length >= 4 &&
+            (payloadName.includes(candidateName) || candidateName.includes(payloadName)))
+      )
+    )
+  ) {
+    return false;
+  }
+
+  if (payload.setName && candidate.setName) {
+    const payloadSetName = normalizeSearchText(payload.setName);
+    const candidateSetName = normalizeSearchText(candidate.setName);
+
+    if (
+      payloadSetName &&
+      candidateSetName &&
+      payloadSetName !== candidateSetName &&
+      !payloadSetName.includes(candidateSetName) &&
+      !candidateSetName.includes(payloadSetName)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function cardNumbersCompatible(left: unknown, right: unknown) {
+  const leftNumber = normalizeCardNumber(left);
+  const rightNumber = normalizeCardNumber(right);
+  const leftPrinted = leftNumber.split("/")[0];
+  const rightPrinted = rightNumber.split("/")[0];
+
+  return Boolean(
+    leftNumber &&
+      rightNumber &&
+      (leftNumber === rightNumber || leftPrinted === rightNumber || rightPrinted === leftNumber)
+  );
+}
+
+function imageUrlFromLookupCandidate(candidate: CardLookupCandidate) {
+  return candidate.imageUrl || candidate.item.imageUrl || null;
+}
+
+function formatImageCandidateSource(source: CardLookupCandidate["source"]) {
+  if (source === "pokemonpricetracker") {
+    return "PokemonPriceTracker";
+  }
+
+  if (source === "pokemontcg") {
+    return "PokemonTCG.io";
+  }
+
+  if (source === "tcgdex") {
+    return "TCGdex";
+  }
+
+  if (source === "japanese-cache") {
+    return "Japanese cache";
+  }
+
+  return "Parsed";
+}
+
+function uniqueNonEmptyStrings(values: string[]) {
+  const seen = new Set<string>();
+  const uniqueValues: string[] = [];
+
+  for (const value of values) {
+    const trimmed = value.trim();
+
+    if (!trimmed || seen.has(normalizeText(trimmed))) {
+      continue;
+    }
+
+    seen.add(normalizeText(trimmed));
+    uniqueValues.push(trimmed);
+  }
+
+  return uniqueValues;
+}
+
+function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+
+    promise
+      .then((value) => resolve(value))
+      .catch(() => resolve(fallback))
+      .finally(() => window.clearTimeout(timer));
+  });
 }
 
 function mergeCertRefreshPayload(
@@ -4198,6 +5266,13 @@ function normalizeVariantDetails(value: unknown) {
     .filter(Boolean)
     .sort()
     .join(",");
+}
+
+function normalizedCertNumber(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function normalizeQuantity(value: unknown) {
@@ -4411,6 +5486,11 @@ function createCsvImportPreviewRow(
 
     return row;
   }, {});
+
+  if (isPsaVaultCsvRow(raw)) {
+    return createPsaVaultCsvImportPreviewRow(raw, record);
+  }
+
   const itemType = csvItemType(csvValue(raw, "item_type", "type"));
   const language = csvLanguage(csvValue(raw, "language", "lang"));
   const quantity = csvInteger(csvValue(raw, "quantity", "qty"), 1);
@@ -4463,6 +5543,87 @@ function createCsvImportPreviewRow(
     errors,
     status: errors.length > 0 ? "error" : "ready"
   };
+}
+
+function createPsaVaultCsvImportPreviewRow(
+  raw: Record<string, string>,
+  record: { cells: string[]; lineNumber: number }
+): CsvImportPreviewRow {
+  const setName = csvPlaceholderValue(raw, "set");
+  const normalizedSetName = normalizePsaVaultSetName(setName);
+  const subject = csvPlaceholderValue(raw, "subject");
+  const variety = csvPlaceholderValue(raw, "variety");
+  const itemDescription = csvPlaceholderValue(raw, "item");
+  const parsedName = parsePsaVaultCardName(subject || nameFromPsaVaultItem(itemDescription));
+  const certNumber = csvPlaceholderValue(raw, "cert_number");
+  const grader = csvPlaceholderValue(raw, "grade_issuer") || "PSA";
+  const grade = csvPlaceholderValue(raw, "grade");
+  const vaultStatus = csvPlaceholderValue(raw, "vault_status");
+  const vaultedDate = csvPlaceholderValue(raw, "vaulted_date");
+  const source = csvPlaceholderValue(raw, "source");
+  const listingStatus = csvPlaceholderValue(raw, "listing_status");
+  const soldStatus = csvPlaceholderValue(raw, "sold_status");
+  const notes = [
+    csvPlaceholderValue(raw, "my_notes"),
+    vaultStatus ? `Vault status: ${vaultStatus}` : "",
+    vaultedDate ? `Vaulted date: ${vaultedDate}` : "",
+    source ? `Source: ${source}` : "",
+    listingStatus ? `Listing status: ${listingStatus}` : "",
+    soldStatus ? `Sold status: ${soldStatus}` : "",
+    itemDescription ? `PSA Vault item: ${itemDescription}` : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const payload: CreateInventoryItemRequest = {
+    name: parsedName.name,
+    setName: normalizedSetName,
+    setCode: setCodeFromPsaVaultSet(setName),
+    cardNumber: csvPlaceholderValue(raw, "card_number"),
+    language: psaVaultLanguage(setName, itemDescription),
+    rarity: "",
+    releaseYear: csvPlaceholderValue(raw, "year"),
+    imageUrl: "",
+    itemType: "graded",
+    quantity: 1,
+    conditionLabel: "",
+    conditionScore: undefined,
+    variantDetails: psaVaultVariantDetails(variety, parsedName.variant, normalizedSetName),
+    grader,
+    grade,
+    certNumber,
+    certUrl: certNumber ? `https://www.psacard.com/cert/${certNumber}/psa` : "",
+    certSpecId: "",
+    certCategory: titleCaseSetName(csvPlaceholderValue(raw, "category")),
+    certPopulation: "",
+    certPopulationHigher: "",
+    certEstimateCents: csvOptionalCents("", csvPlaceholderValue(raw, "psa_estimate")),
+    certLookupAt: "",
+    purchasePriceCents: csvOptionalCents("", csvPlaceholderValue(raw, "my_cost")),
+    purchaseDate: normalizeCsvDate(csvPlaceholderValue(raw, "date_acquired")),
+    valueOverrideCents: csvOptionalCents("", csvPlaceholderValue(raw, "my_value")),
+    storageLocation: vaultStatus || "",
+    notes
+  };
+  const errors = validateCsvImportPayload(payload, raw, record.cells.length > Object.keys(raw).length);
+
+  return {
+    id: createClientId(),
+    lineNumber: record.lineNumber,
+    raw,
+    payload,
+    errors,
+    status: errors.length > 0 ? "error" : "ready"
+  };
+}
+
+function isPsaVaultCsvRow(raw: Record<string, string>) {
+  return Boolean(
+    raw.item_status !== undefined &&
+      raw.cert_number !== undefined &&
+      raw.grade_issuer !== undefined &&
+      raw.psa_estimate !== undefined &&
+      raw.vault_status !== undefined
+  );
 }
 
 function validateCsvImportPayload(
@@ -4629,6 +5790,11 @@ function csvValue(raw: Record<string, string>, ...keys: string[]) {
   return "";
 }
 
+function csvPlaceholderValue(raw: Record<string, string>, ...keys: string[]) {
+  const value = csvValue(raw, ...keys);
+  return value === "-" ? "" : value;
+}
+
 function normalizeCsvHeader(value: string) {
   return value
     .trim()
@@ -4682,6 +5848,258 @@ function csvOptionalCents(centsValue: string, moneyValue = "") {
 
 function isValidOptionalCents(value: number | undefined) {
   return value === undefined || (Number.isInteger(value) && value >= 0);
+}
+
+function normalizeCsvDate(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "";
+  }
+
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
+
+  if (!match) {
+    return trimmed;
+  }
+
+  const [, month, day, year] = match;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function psaVaultLanguage(setName: string, itemDescription: string): CardLanguage {
+  const text = `${setName} ${itemDescription}`.toLowerCase();
+  return text.includes("japanese") ? "ja" : "en";
+}
+
+function normalizePsaVaultSetName(value: string) {
+  const rawName = value.replace(/\s+/g, " ").trim();
+  const normalized = normalizeText(rawName);
+  const explicitNames: Record<string, string> = {
+    "pokemon jtg en-journey together": "Journey Together",
+    "pokemon mew en-151": "151",
+    "pokemon pre en-prismatic evolutions": "Prismatic Evolutions",
+    "pokemon pop series 2": "POP Series 2",
+    "pokemon rocket": "Team Rocket",
+    "pokemon sun & moon forbidden light": "Forbidden Light",
+    "pokemon japanese m1l-mega brave": "Mega Brave (M1L)",
+    "pokemon japanese m2a-mega dream ex": "Mega Dream ex (M2a)",
+    "pokemon japanese sv-p promo": "SV-P Promotional Cards",
+    "pokemon japanese s promo": "S Promotional Cards",
+    "pokemon japanese promo": "Japanese Promo",
+    "pokemon japanese e-starter deck": "Japanese E-Starter Deck",
+    "pokemon japanese vending": "Japanese Vending",
+    "pokemon japanese neo 4": "Japanese Neo 4"
+  };
+
+  if (explicitNames[normalized]) {
+    return explicitNames[normalized];
+  }
+
+  const japaneseCodeMatch = /^pokemon japanese ([a-z0-9]+)-(.+)$/i.exec(rawName);
+
+  if (japaneseCodeMatch) {
+    return `${titleCaseSetName(japaneseCodeMatch[2])} (${japaneseCodeMatch[1].toUpperCase()})`;
+  }
+
+  const englishCodeMatch = /^pokemon [a-z0-9]+ en-(.+)$/i.exec(rawName);
+
+  if (englishCodeMatch) {
+    return titleCaseSetName(englishCodeMatch[1]);
+  }
+
+  return titleCaseSetName(rawName.replace(/^pokemon\s+/i, ""));
+}
+
+function setCodeFromPsaVaultSet(setName: string) {
+  const ignored = new Set(["POKEMON", "JAPANESE", "PROMO"]);
+  const match = setName
+    .toUpperCase()
+    .match(/\b[A-Z]{1,5}\d{0,3}[A-Z]?(?:-[A-Z0-9]+)?\b/g)
+    ?.find((token) => !ignored.has(token));
+
+  if (!match) {
+    return "";
+  }
+
+  const normalized = /^(SV\d+|M\d[A-Z])/i.exec(match)?.[0] ?? match;
+  return normalized;
+}
+
+function nameFromPsaVaultItem(itemDescription: string) {
+  const hashIndex = itemDescription.indexOf("#");
+
+  if (hashIndex === -1) {
+    return itemDescription;
+  }
+
+  return itemDescription
+    .slice(hashIndex)
+    .replace(/^#\S+\s+/, "")
+    .replace(/\s+[A-Z0-9-]+(?:'S)?(?:\s+[A-Z0-9-]+)*$/, "")
+    .trim();
+}
+
+function parsePsaVaultCardName(value: string) {
+  const rawName = value.replace(/\s+/g, " ").trim();
+  const slashParts = rawName.split(/\s*\/\s*/);
+  const variants: string[] = [];
+  let name = rawName;
+
+  if (slashParts.length >= 2 && isPsaVaultLeadingVariant(slashParts[0])) {
+    variants.push(slashParts[0]);
+    name = slashParts.slice(1).join("/");
+  }
+
+  const trailingVariant = psaVaultTrailingVariant(name);
+
+  if (trailingVariant) {
+    variants.push(trailingVariant.variant);
+    name = trailingVariant.name;
+  }
+
+  return {
+    name: titleCaseCardName(name),
+    variant: csvVariantDetails(...variants)
+  };
+}
+
+function isPsaVaultLeadingVariant(value: string) {
+  return [
+    "alternate art",
+    "full art",
+    "hyper rare",
+    "illustration rare",
+    "secret rare",
+    "special art",
+    "special illustration rare"
+  ].includes(normalizeText(value));
+}
+
+function psaVaultTrailingVariant(value: string) {
+  const match = /\s*[-–—]\s*(reverse holo|reverse foil|holo|foil)\s*$/i.exec(value);
+
+  if (!match || match.index === undefined) {
+    return null;
+  }
+
+  const name = value.slice(0, match.index).trim();
+  const variant = normalizeText(match[1]).includes("reverse") ? "Reverse Holo" : "Holo / Foil";
+
+  return name ? { name, variant } : null;
+}
+
+function csvVariantDetails(...values: string[]) {
+  return uniqueNonEmptyStrings(values.map(titleCaseVariant)).join(", ");
+}
+
+function psaVaultVariantDetails(variety: string, parsedVariant: string, setName: string) {
+  return csvVariantDetails(...psaVaultVarietyParts(variety, setName), parsedVariant);
+}
+
+function psaVaultVarietyParts(value: string, setName: string) {
+  const normalizedSet = normalizeText(setName);
+  const setTokens = normalizedSet
+    .replace(/\([^)]*\)/g, " ")
+    .split(" ")
+    .filter((token) => token.length > 1);
+
+  return value
+    .split(/\s*-\s*/)
+    .map((part) => normalizePsaVaultVarietyPart(part))
+    .filter((part) => {
+      const normalizedPart = normalizeText(part);
+
+      return (
+        normalizedPart &&
+        normalizedPart !== normalizedSet &&
+        !(setTokens.length > 0 && setTokens.every((token) => normalizedPart.includes(token)))
+      );
+    });
+}
+
+function normalizePsaVaultVarietyPart(value: string) {
+  const normalized = normalizeText(value);
+  const known: Record<string, string> = {
+    "f.a.": "Full Art",
+    "fa": "Full Art",
+    "full art": "Full Art",
+    "illustration rare": "Illustration Rare",
+    "special illustration rare": "Special Illustration Rare",
+    "special art rare": "Special Art Rare",
+    "mega attack rare": "Mega Attack Rare",
+    "art rare": "Art Rare",
+    "toys r us": "Toys R Us",
+    "mcdonald's": "McDonald's",
+    "hif elite trainer box": "Elite Trainer Box"
+  };
+
+  return known[normalized] ?? titleCaseVariant(value);
+}
+
+function titleCaseSetName(value: string) {
+  return titleCaseWords(value.replace(/\s+/g, " ").trim());
+}
+
+function titleCaseCardName(value: string) {
+  return titleCaseWords(
+    value
+      .replace(/\s+-\s+\S+\/\S+\s*$/i, "")
+      .replace(/\s*-\s*(ex|gx|v|vmax|vstar)\b/gi, " $1")
+      .replace(/\s*-\s*/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function titleCaseVariant(value: string) {
+  return titleCaseWords(value.replace(/\s+/g, " ").trim());
+}
+
+function titleCaseWords(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (letter) => letter.toUpperCase())
+    .replace(/\b(Gx|Ex|Vmax|Vstar|V|Lv|Pc|Xy|Sv|Dp|Mcdonald'S)\b/g, (word) =>
+      word === "Mcdonald'S" ? "McDonald's" : word.toUpperCase()
+    )
+    .replace(/'S\b/g, "'s")
+    .replace(/-([a-z])/g, (_, letter: string) => `-${letter.toUpperCase()}`);
+}
+
+function filtersFromInventoryTag(filter: InventoryTagFilter): InventoryFilterState {
+  if (filter.type === "itemType") {
+    return {
+      ...defaultInventoryFilters,
+      itemType: filter.value
+    };
+  }
+
+  if (filter.type === "language") {
+    return {
+      ...defaultInventoryFilters,
+      language: filter.value
+    };
+  }
+
+  if (filter.type === "variant") {
+    return {
+      ...defaultInventoryFilters,
+      variants: [filter.value]
+    };
+  }
+
+  if (filter.type === "storage") {
+    return {
+      ...defaultInventoryFilters,
+      storageLocation: filter.value
+    };
+  }
+
+  return {
+    ...defaultInventoryFilters,
+    query: filter.value
+  };
 }
 
 function filterInventoryItems(items: InventoryItem[], filters: InventoryFilterState) {
@@ -4787,6 +6205,80 @@ function getInventoryFilterOptions(items: InventoryItem[]): InventoryFilterOptio
     conditions: uniqueSorted(items.map((item) => item.conditionLabel)),
     storageLocations: uniqueSorted(items.map((item) => item.storageLocation))
   };
+}
+
+function getStorageGroups(items: InventoryItem[]): InventoryGroupSummary[] {
+  return groupInventoryItems(
+    items.filter((item) => Boolean(item.storageLocation?.trim())),
+    (item) => item.storageLocation?.trim() ?? "",
+    (value) => value
+  );
+}
+
+function getVariantGroups(items: InventoryItem[]): InventoryGroupSummary[] {
+  const groups = new Map<string, InventoryItem[]>();
+
+  for (const item of items) {
+    for (const variant of variantsFromText(item.variantDetails ?? "")) {
+      const current = groups.get(variant) ?? [];
+      current.push(item);
+      groups.set(variant, current);
+    }
+  }
+
+  return [...groups.entries()]
+    .map(([variant, groupItems]) => inventoryGroupSummary(variant, variant, groupItems))
+    .sort(compareInventoryGroups);
+}
+
+function groupInventoryItems(
+  items: InventoryItem[],
+  keyForItem: (item: InventoryItem) => string,
+  labelForKey: (key: string) => string
+) {
+  const groups = new Map<string, InventoryItem[]>();
+
+  for (const item of items) {
+    const key = keyForItem(item);
+
+    if (!key) {
+      continue;
+    }
+
+    const current = groups.get(key) ?? [];
+    current.push(item);
+    groups.set(key, current);
+  }
+
+  return [...groups.entries()]
+    .map(([key, groupItems]) => inventoryGroupSummary(key, labelForKey(key), groupItems))
+    .sort(compareInventoryGroups);
+}
+
+function inventoryGroupSummary(
+  key: string,
+  label: string,
+  items: InventoryItem[]
+): InventoryGroupSummary {
+  const examples = uniqueSorted(items.map((item) => item.card.name))
+    .slice(0, 3)
+    .join(", ");
+
+  return {
+    key,
+    label,
+    count: items.reduce((total, item) => total + item.quantity, 0),
+    valueCents: items.reduce((total, item) => total + inventoryItemValue(item), 0),
+    examples: examples || "No named cards"
+  };
+}
+
+function compareInventoryGroups(left: InventoryGroupSummary, right: InventoryGroupSummary) {
+  if (right.count !== left.count) {
+    return right.count - left.count;
+  }
+
+  return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
 }
 
 function getInventoryFilterChips(

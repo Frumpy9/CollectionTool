@@ -114,6 +114,22 @@ export type BackupSqliteResponse = {
   createdAt: string;
 };
 
+export type ValueOverrideHistoryEntry = {
+  id: string;
+  itemId: string;
+  previousValueCents: number | null;
+  nextValueCents: number | null;
+  changedByUserId: string | null;
+  changedByDisplayName: string | null;
+  changedByUsername: string | null;
+  changedAt: string;
+};
+
+export type ValueOverrideHistoryResponse = {
+  itemId: string;
+  history: ValueOverrideHistoryEntry[];
+};
+
 export type CreateInventoryItemRequest = {
   name: string;
   setName?: string;
@@ -321,7 +337,7 @@ export type CardLookupRequest = {
 
 export type CardLookupCandidate = {
   id: string;
-  source: "pokemontcg" | "tcgdex" | "japanese-cache" | "parsed";
+  source: "pokemontcg" | "tcgdex" | "japanese-cache" | "parsed" | "pokemonpricetracker";
   sourceId: string;
   confidence: "exact" | "strong" | "possible";
   name: string;
@@ -346,6 +362,11 @@ export type CardLookupResponse = {
     localId: string | null;
   };
   candidates: CardLookupCandidate[];
+};
+
+export type CardImageLookupResponse = {
+  candidates: CardLookupCandidate[];
+  message: string;
 };
 
 export type UpsertJapaneseCardCacheRequest = {
