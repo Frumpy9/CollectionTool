@@ -47,6 +47,7 @@
 - [x] Added selection-mode bulk variant editing with market-price clearing.
 - [x] Refreshed the frontend workspace UX with real Collection, Graded, Storage, and Data sections.
 - [x] Added local market price snapshots and red/green saved-price change indicators.
+- [x] Reduced scheduled price refresh cadence to 12 hours by default.
 
 ## Branch Roadmap
 
@@ -59,9 +60,10 @@
 - [x] `feature/inventory-images`
 - [x] `feature/graded-certs`
 - [x] `feature/psa-cert-import`
-- [ ] `feature/pricing-comps`
+- [x] `feature/pricing-comps`
 - [ ] `feature/scanning`
 - [x] `feature/backups-export`
+- [x] `codex/local-price-history`
 - [ ] `feature/polish-tests`
 
 ## Next Recommended Milestones
@@ -124,9 +126,11 @@
 - [x] Add PokemonPriceTracker raw-card guide price refresh.
 - [x] Use PokemonPriceTracker as the v1 comps/pricing source and keep eBay solds as a manual research link.
 - [x] Add comp confidence scoring.
-- [x] Add staggered daily refresh plus manual refresh button.
+- [x] Add staggered scheduled refresh plus manual refresh button.
+- [x] Refresh saved prices every 12 hours by default when scheduled refresh is enabled.
 - [x] Add local saved-price history snapshots because PokemonPriceTracker history is unreliable.
 - [x] Add red/green market price movement indicators in list and detail views.
+- [ ] Add pricing settings/status panel showing schedule, last run, next due time, queue state, and ignored cards.
 - [ ] Consider PokemonPriceTracker `fetchAllInSet` later for set-level cache warming when saved source IDs make bulk matching safe.
 
 ### 6. Camera Scanning
@@ -174,11 +178,12 @@ npm run seed:dev-admin --workspace @collection-tool/api
 - [x] No eBay API key or direct eBay scraping planned for v1 sold comps.
 - [ ] No CGC API key planned; use best-effort public lookup with manual fallback.
 
-## End Of Night Checkpoint
+## Current Checkpoint
 
-- Current working branch: `codex/backups-export`.
-- Bulk lookup, duplicate/quantity merge, and graded-card details are merged into local `main`.
-- Backups/export is in progress on `codex/backups-export`.
-- The current dev database has the graded cert metadata columns applied.
-- Verified in browser: PSA cert refresh persists population/pop higher/spec/category and Save changes closes the detail modal.
-- PSA estimate is intentionally not shown because the public PSA lookup response did not include it for cert `59711010`.
+- Current working branch: `codex/local-price-history`.
+- Local `main` includes the polished workspace UX and PokemonPriceTracker pricing workflow through `7fdafd7`.
+- Branch commits after `main`: local saved-price history, 12-hour scheduled price refresh default, and automatic PSA cert metadata fetch on add.
+- Current dev database has migrations through local market price snapshots applied.
+- Verified in browser: local saved-price history panel renders, red/green market movement indicators work, and temporary test snapshot cleanup returned the dev DB to its prior state.
+- PSA estimate remains hidden because the public PSA lookup response has not reliably returned estimate values.
+- Next best feature: add a pricing settings/status panel so scheduled refresh timing, last run, next due time, queue status, and ignored cards are visible in the app.
