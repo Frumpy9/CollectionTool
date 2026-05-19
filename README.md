@@ -69,5 +69,5 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - PokemonPriceTracker: paid API key and primary source for raw and graded market pricing.
 - JustTCG: deprecated; old saved prices remain readable, but the app no longer calls JustTCG.
 - PSA Public API: free PSA account/API token required for cert lookup.
-- eBay sold comps: best-effort personal-use sold-search parsing because official sold-history API access is limited/restricted.
+- eBay solds: manual research link only; PokemonPriceTracker is the v1 pricing/comps source.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.

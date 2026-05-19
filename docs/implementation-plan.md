@@ -44,6 +44,7 @@
 - [x] Added confirmed pricing source matches and on-demand PokemonPriceTracker history cache.
 - [x] Added selection-mode bulk price queue with pause/resume handling for API limits.
 - [x] Added selection-mode bulk variant editing with market-price clearing.
+- [x] Refreshed the frontend workspace UX with real Collection, Graded, Storage, and Data sections.
 
 ## Branch Roadmap
 
@@ -115,12 +116,13 @@
 
 ### 5. Pricing And Comps
 
-- [ ] Add manual value override history.
+- [x] Add manual value override history.
 - [x] Add guide price storage.
 - [x] Add PokemonPriceTracker raw-card guide price refresh.
-- [ ] Add eBay US sold-comp search/parsing as best-effort personal-use scraping.
-- [ ] Add comp confidence scoring.
-- [ ] Add daily refresh plus manual refresh button.
+- [x] Use PokemonPriceTracker as the v1 comps/pricing source and keep eBay solds as a manual research link.
+- [x] Add comp confidence scoring.
+- [x] Add staggered daily refresh plus manual refresh button.
+- [ ] Consider PokemonPriceTracker `fetchAllInSet` later for set-level cache warming when saved source IDs make bulk matching safe.
 
 ### 6. Camera Scanning
 
@@ -140,6 +142,7 @@
 
 ### 8. Polish And Public Repo Readiness
 
+- [x] Replace inactive sidebar links, dead scan affordance, and stale roadmap chips with working workspace sections.
 - [ ] Add Playwright tests for auth and manual inventory.
 - [ ] Add backend tests for auth, permissions, and inventory routes.
 - [ ] Run Docker Compose on the Ubuntu target server.
@@ -163,7 +166,7 @@ npm run seed:dev-admin --workspace @collection-tool/api
 - [x] PokemonPriceTracker API key for primary raw/graded market pricing.
 - [x] JustTCG is deprecated; old saved prices remain readable but no API key is used.
 - [ ] No TCGdex API key required.
-- [ ] No eBay API key planned for v1 sold comps.
+- [x] No eBay API key or direct eBay scraping planned for v1 sold comps.
 - [ ] No CGC API key planned; use best-effort public lookup with manual fallback.
 
 ## End Of Night Checkpoint

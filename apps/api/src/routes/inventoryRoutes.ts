@@ -9,7 +9,9 @@ import type {
   InventoryItemType,
   MarketPriceConfidence,
   UpdateInventoryItemRequest,
-  UpdateInventoryItemImageRequest
+  UpdateInventoryItemImageRequest,
+  ValueOverrideHistoryEntry,
+  ValueOverrideHistoryResponse
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
@@ -111,6 +113,41 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
     return toInventoryCsv(items);
   });
 
+  app.get(
+    "/api/collections/:collectionId/items/:itemId/value-override-history",
+    async (request, reply) => {
+      const auth = getAuthContext(request, database);
+
+      if (!auth) {
+        reply.code(401);
+        return { error: "Unauthorized" };
+      }
+
+      const { collectionId, itemId } = request.params as {
+        collectionId: string;
+        itemId: string;
+      };
+      const role = getCollectionRole(database, collectionId, auth.user.id);
+
+      if (!role) {
+        reply.code(403);
+        return { error: "You do not have access to this collection." };
+      }
+
+      if (!inventoryItemExists(database, collectionId, itemId)) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      const response: ValueOverrideHistoryResponse = {
+        itemId,
+        history: listValueOverrideHistory(database, itemId)
+      };
+
+      return response;
+    }
+  );
+
   app.post("/api/collections/:collectionId/items", async (request, reply) => {
     const auth = getAuthContext(request, database);
 
@@ -154,7 +191,7 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
     }
 
     const input = normalizeCreateInput(request.body as UpdateInventoryItemRequest);
-    const item = updateInventoryItem(database, collectionId, itemId, input);
+    const item = updateInventoryItem(database, collectionId, itemId, input, auth.user.id);
 
     if (!item) {
       reply.code(404);
@@ -520,7 +557,8 @@ function updateInventoryItem(
   database: AppDatabase,
   collectionId: string,
   itemId: string,
-  input: UpdateInventoryItemRequest
+  input: UpdateInventoryItemRequest,
+  changedByUserId: string | null = null
 ) {
   const row = database.connection
     .prepare(
@@ -533,6 +571,7 @@ function updateInventoryItem(
           oi.grader,
           oi.grade,
           oi.cert_number,
+          oi.value_override_cents,
           c.name,
           c.set_name,
           c.set_code,
@@ -553,6 +592,7 @@ function updateInventoryItem(
         grader: string | null;
         grade: string | null;
         cert_number: string | null;
+        value_override_cents: number | null;
         name: string;
         set_name: string | null;
         set_code: string | null;
@@ -651,6 +691,18 @@ function updateInventoryItem(
         collectionId
       );
 
+    const nextValueOverrideCents = input.valueOverrideCents ?? null;
+
+    if (row.value_override_cents !== nextValueOverrideCents) {
+      insertValueOverrideHistory(
+        database,
+        itemId,
+        row.value_override_cents,
+        nextValueOverrideCents,
+        changedByUserId
+      );
+    }
+
     if (hasPricingIdentityChanged(row, input)) {
       clearPricingSourceMatches(database, itemId);
     }
@@ -695,6 +747,90 @@ function updateInventoryItemImage(
     .run(imageUrl, row.card_id);
 
   return listInventoryItems(database, collectionId).find((item) => item.id === itemId) ?? null;
+}
+
+function inventoryItemExists(database: AppDatabase, collectionId: string, itemId: string) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT id
+        FROM owned_items
+        WHERE id = ? AND collection_id = ?
+      `
+    )
+    .get(itemId, collectionId) as { id: string } | undefined;
+
+  return Boolean(row);
+}
+
+function insertValueOverrideHistory(
+  database: AppDatabase,
+  itemId: string,
+  previousValueCents: number | null,
+  nextValueCents: number | null,
+  changedByUserId: string | null
+) {
+  database.connection
+    .prepare(
+      `
+        INSERT INTO item_value_override_history (
+          id,
+          owned_item_id,
+          previous_value_cents,
+          next_value_cents,
+          changed_by_user_id,
+          changed_at
+        )
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `
+    )
+    .run(randomUUID(), itemId, previousValueCents, nextValueCents, changedByUserId);
+}
+
+function listValueOverrideHistory(
+  database: AppDatabase,
+  itemId: string
+): ValueOverrideHistoryEntry[] {
+  const rows = database.connection
+    .prepare(
+      `
+        SELECT
+          h.id,
+          h.owned_item_id,
+          h.previous_value_cents,
+          h.next_value_cents,
+          h.changed_by_user_id,
+          h.changed_at,
+          u.display_name,
+          u.username
+        FROM item_value_override_history h
+        LEFT JOIN users u ON u.id = h.changed_by_user_id
+        WHERE h.owned_item_id = ?
+        ORDER BY h.changed_at DESC
+        LIMIT 25
+      `
+    )
+    .all(itemId) as {
+    id: string;
+    owned_item_id: string;
+    previous_value_cents: number | null;
+    next_value_cents: number | null;
+    changed_by_user_id: string | null;
+    changed_at: string;
+    display_name: string | null;
+    username: string | null;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    itemId: row.owned_item_id,
+    previousValueCents: row.previous_value_cents,
+    nextValueCents: row.next_value_cents,
+    changedByUserId: row.changed_by_user_id,
+    changedByDisplayName: row.display_name,
+    changedByUsername: row.username,
+    changedAt: row.changed_at
+  }));
 }
 
 function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId: string) {

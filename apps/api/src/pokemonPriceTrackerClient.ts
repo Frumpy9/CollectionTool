@@ -1,4 +1,5 @@
 import type {
+  CardLookupCandidate,
   InventoryItem,
   InventoryItemType,
   MarketPriceConfidence,
@@ -219,6 +220,39 @@ export async function findPokemonPriceTrackerPricingCandidateByIds({
   );
 }
 
+export async function lookupPokemonPriceTrackerImageCandidates({
+  apiKey,
+  item,
+  preferredSourceCardId
+}: {
+  apiKey: string;
+  item: InventoryItem;
+  preferredSourceCardId?: string | null;
+}): Promise<CardLookupCandidate[]> {
+  if (!apiKey) {
+    throw new Error("POKEMON_PRICE_TRACKER_API_KEY is not configured.");
+  }
+
+  let cards = preferredSourceCardId
+    ? await fetchPokemonPriceTrackerCardsBySourceId({
+        apiKey,
+        item,
+        sourceCardId: preferredSourceCardId,
+        includeHistory: false,
+        days: 30
+      })
+    : await searchPokemonPriceTrackerCards({ apiKey, item });
+
+  if (item.itemType === "graded") {
+    cards = mergeCards(cards, await parseTitleCards({ apiKey, item }));
+  }
+
+  return rankedCardMatches(item, cards)
+    .map((card) => pokemonPriceTrackerImageCandidateFromCard(item, card))
+    .filter((candidate): candidate is CardLookupCandidate => Boolean(candidate))
+    .slice(0, 8);
+}
+
 export async function lookupPokemonPriceTrackerHistory({
   apiKey,
   item,
@@ -343,6 +377,10 @@ function baseCardParams(item: InventoryItem, includeHistory: boolean, days: numb
 
   if (item.itemType === "graded") {
     params.set("includeEbay", "true");
+
+    if (includeHistory) {
+      params.set("includeBoth", "true");
+    }
   }
 
   if (includeHistory) {
@@ -581,9 +619,18 @@ function psaLabelCardNameAlias(value: string) {
 }
 
 function cleanCardNameVariantSuffix(value: string) {
-  return value
+  return cleanCardNameVariantPrefix(value)
     .replace(/\s*[-–—]\s*(?:holo|foil|reverse holo|reverse foil)\s*$/i, "")
     .replace(/\s*\((?:holo|foil|reverse holo|reverse foil)\)\s*$/i, "")
+    .trim();
+}
+
+function cleanCardNameVariantPrefix(value: string) {
+  return value
+    .replace(
+      /^\s*(?:alternate art|full art|hyper rare|illustration rare|secret rare|special art|special illustration rare)\s*\/\s*/i,
+      ""
+    )
     .trim();
 }
 
@@ -727,6 +774,69 @@ function mergeCards(left: PokemonPriceTrackerCard[], right: PokemonPriceTrackerC
     (card, index, cards) =>
       cards.findIndex((candidate) => sourceCardIdForCard(candidate) === sourceCardIdForCard(card)) === index
   );
+}
+
+function pokemonPriceTrackerImageCandidateFromCard(
+  item: InventoryItem,
+  card: PokemonPriceTrackerCard
+): CardLookupCandidate | null {
+  const imageUrl = imageUrlFromCard(card);
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  const score = scoreCard(item, card);
+  const sourceId = sourceCardIdForCard(card);
+  const name = String(card.name ?? item.card.name);
+  const setName = card.setName ?? card.set ?? item.card.setName ?? null;
+  const cardNumber = normalizedDisplayCardNumber(card) || item.card.cardNumber || null;
+  const rarity = card.rarity ?? item.card.rarity ?? null;
+
+  return {
+    id: `pokemonpricetracker:${sourceId}`,
+    source: "pokemonpricetracker",
+    sourceId,
+    confidence: confidenceFromScore(score),
+    name,
+    setName,
+    setCode: item.card.setCode ?? null,
+    cardNumber,
+    language: item.card.language,
+    rarity,
+    imageUrl,
+    score,
+    item: {
+      name,
+      setName: setName ?? "",
+      setCode: item.card.setCode ?? "",
+      cardNumber: cardNumber ?? "",
+      language: item.card.language,
+      rarity: rarity ?? "",
+      releaseYear: item.card.releaseYear ?? "",
+      imageUrl,
+      itemType: item.itemType,
+      quantity: item.quantity,
+      conditionLabel: item.conditionLabel ?? "",
+      conditionScore: item.conditionScore ?? undefined,
+      variantDetails: item.variantDetails ?? "",
+      grader: item.grader ?? "",
+      grade: item.grade ?? "",
+      certNumber: item.certNumber ?? "",
+      purchasePriceCents: item.purchasePriceCents ?? undefined,
+      purchaseDate: item.purchaseDate ?? "",
+      valueOverrideCents: item.valueOverrideCents ?? undefined,
+      storageLocation: item.storageLocation ?? "",
+      notes: item.notes ?? "",
+      certUrl: item.certUrl ?? "",
+      certSpecId: item.certSpecId ?? "",
+      certCategory: item.certCategory ?? "",
+      certPopulation: item.certPopulation ?? "",
+      certPopulationHigher: item.certPopulationHigher ?? "",
+      certEstimateCents: item.certEstimateCents ?? undefined,
+      certLookupAt: item.certLookupAt ?? ""
+    }
+  };
 }
 
 function rawCandidateFromCard(
@@ -1152,8 +1262,14 @@ function cardIdentityConflicts(item: InventoryItem, card: PokemonPriceTrackerCar
   const cardNumber = normalizeCardNumber(card.cardNumber ?? card.number);
   const itemSetName = itemSetIdentityText(item);
   const cardSetName = normalizeText(card.setName ?? card.set);
+  const itemName = normalizeCardNameForMatch(item.card.name);
+  const cardName = normalizeCardNameForMatch(card.name);
 
   if (itemNumber && cardNumber && !cardNumbersMatch(itemNumber, cardNumber)) {
+    return true;
+  }
+
+  if (itemName && cardName && !cardNamesEquivalent(item.card.name, card.name)) {
     return true;
   }
 

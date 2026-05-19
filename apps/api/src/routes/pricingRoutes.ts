@@ -4,6 +4,7 @@ import type {
   BulkPriceQueueMode,
   BulkPriceQueueResponse,
   BulkPriceQueueStatus,
+  CardImageLookupResponse,
   EnqueueBulkPriceRefreshRequest,
   InventoryMarketPriceSource,
   InventoryItem,
@@ -20,6 +21,7 @@ import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
 import {
   findPokemonPriceTrackerPricingCandidateByIds,
+  lookupPokemonPriceTrackerImageCandidates,
   lookupPokemonPriceTrackerHistory,
   lookupPokemonPriceTrackerPricing,
   type PokemonPriceTrackerPricingCandidateWithPayload
@@ -50,6 +52,8 @@ export async function registerPricingRoutes(
         reply.code(404);
         return { error: "Inventory item not found." };
       }
+
+      clearItemPriceRefreshIgnored(database, item.id);
 
       const result = await refreshPricingForItem({
         config,
@@ -163,6 +167,52 @@ export async function registerPricingRoutes(
   );
 
   app.get(
+    "/api/collections/:collectionId/items/:itemId/pricing/image-candidates",
+    async (request, reply): Promise<CardImageLookupResponse | { error: string }> => {
+      const access = getPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const item = getInventoryItem(database, access.collectionId, access.itemId);
+
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      const sourceMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
+      const candidates = await lookupPokemonPriceTrackerImageCandidates({
+        apiKey: config.pokemonPriceTrackerApiKey,
+        item,
+        preferredSourceCardId: sourceMatch?.source_card_id ?? null
+      }).catch((error) => {
+        reply.code(statusCodeForPricingError(error));
+        return {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Unable to load PokemonPriceTracker image candidates."
+        };
+      });
+
+      if ("error" in candidates) {
+        return candidates;
+      }
+
+      return {
+        candidates,
+        message:
+          candidates.length > 0
+            ? "Loaded PokemonPriceTracker image candidates."
+            : "No PokemonPriceTracker image candidates found."
+      };
+    }
+  );
+
+  app.get(
     "/api/collections/:collectionId/items/:itemId/pricing/history",
     async (request, reply): Promise<PricingHistoryResponse | { error: string }> => {
       const access = getPricingAccess(request, database);
@@ -195,11 +245,12 @@ export async function registerPricingRoutes(
       }
 
       const sourceMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
+      const sourceTcgPlayerId = getPokemonPriceTrackerTcgPlayerId(database, item.id);
       const points = await lookupPokemonPriceTrackerHistory({
         apiKey: config.pokemonPriceTrackerApiKey,
         item,
         days,
-        sourceCardId: sourceMatch?.source_card_id ?? null
+        sourceCardId: sourceTcgPlayerId ?? sourceMatch?.source_card_id ?? null
       }).catch((error) => {
         reply.code(statusCodeForPricingError(error));
         return {
@@ -601,6 +652,34 @@ export async function registerPricingRoutes(
 
     return getBulkQueueResponse(database, access.collectionId, "Cleared completed queue rows.");
   });
+
+  app.post(
+    "/api/collections/:collectionId/items/:itemId/pricing/ignore",
+    async (request, reply) => {
+      const access = getPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const item = getInventoryItem(database, access.collectionId, access.itemId);
+
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      setItemPriceRefreshIgnored(database, access.itemId, "Ignored from price queue.");
+      skipOpenBulkPriceJobsForItem(database, access.collectionId, access.itemId);
+
+      return getBulkQueueResponse(
+        database,
+        access.collectionId,
+        "Ignored future queued price refreshes for this card."
+      );
+    }
+  );
 }
 
 export function startBulkPriceQueueRunner(
@@ -612,6 +691,13 @@ export function startBulkPriceQueueRunner(
 
   const tick = async () => {
     try {
+      if (
+        config.scheduledPriceRefreshEnabled &&
+        Boolean(config.pokemonPriceTrackerApiKey.trim())
+      ) {
+        enqueueScheduledPriceRefreshes(database, config);
+      }
+
       const collectionIds = dueBulkPriceQueueCollectionIds(database);
 
       for (const collectionId of collectionIds) {
@@ -651,6 +737,9 @@ async function refreshPricingForItem({
   item: InventoryItem;
   includeQueueOnRateLimit?: boolean;
 }) {
+  // Saved PokemonPriceTracker IDs are safe direct-lookup hints for refreshes. A future
+  // set-level cache warmer could use fetchAllInSet, but scored item-by-item matching
+  // still protects variants, grades, Japanese cards, and review states.
   const preferredMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
 
   if (item.itemType === "graded") {
@@ -691,11 +780,13 @@ async function refreshPricingForItem({
       candidates: toPublicPricingCandidates(result.candidates, "pokemonpricetracker"),
       message: result.message
     };
-  }
+      }
 
-  const result = await lookupPokemonPriceTrackerPricing({
-    apiKey: config.pokemonPriceTrackerApiKey,
-    item,
+      clearItemPriceRefreshIgnored(database, item.id);
+
+      const result = await lookupPokemonPriceTrackerPricing({
+        apiKey: config.pokemonPriceTrackerApiKey,
+        item,
     preferredSourceCardId: preferredMatch?.source_card_id ?? null,
     preferredSourceVariantId: preferredMatch?.source_variant_id ?? null
   });
@@ -845,7 +936,7 @@ function enqueueBulkPriceJob({
   message: string | null;
 }) {
   const now = new Date().toISOString();
-  insertBulkPriceJob({
+  return insertBulkPriceJob({
     database,
     collectionId,
     itemId,
@@ -854,6 +945,308 @@ function enqueueBulkPriceJob({
     message,
     now
   });
+}
+
+function enqueueScheduledPriceRefreshes(database: AppDatabase, config: AppConfig) {
+  const rows = database.connection
+    .prepare(
+      `
+        SELECT id
+        FROM collections
+        ORDER BY id
+      `
+    )
+    .all() as { id: string }[];
+
+  for (const row of rows) {
+    enqueueScheduledPriceRefreshBatch({
+      database,
+      collectionId: row.id,
+      intervalHours: config.priceRefreshIntervalHours,
+      batchSize: config.priceRefreshBatchSize
+    });
+  }
+}
+
+function enqueueScheduledPriceRefreshBatch({
+  database,
+  collectionId,
+  intervalHours,
+  batchSize
+}: {
+  database: AppDatabase;
+  collectionId: string;
+  intervalHours: number;
+  batchSize: number;
+}) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const state = getCollectionPriceRefreshState(database, collectionId);
+
+  if (!state) {
+    createCollectionPriceRefreshState(database, collectionId, nowIso);
+  } else if (state.run_completed_at) {
+    const completedAt = Date.parse(state.run_completed_at);
+    const nextDueAt = completedAt + intervalHours * 60 * 60 * 1000;
+
+    if (!Number.isNaN(completedAt) && nextDueAt > now.getTime()) {
+      return;
+    }
+
+    startCollectionPriceRefreshRun(database, collectionId, nowIso);
+  }
+
+  const items = listInventoryItems(database, collectionId)
+    .filter(isScheduledPriceRefreshEligible)
+    .sort((left, right) => {
+      const createdComparison = left.createdAt.localeCompare(right.createdAt);
+      return createdComparison === 0 ? left.id.localeCompare(right.id) : createdComparison;
+    });
+
+  if (items.length === 0) {
+    completeCollectionPriceRefreshRun(database, collectionId, nowIso);
+    return;
+  }
+
+  const currentState = getCollectionPriceRefreshState(database, collectionId);
+  const cursorIndex = currentState?.cursor_item_id
+    ? items.findIndex((item) => item.id === currentState.cursor_item_id)
+    : -1;
+  let scannedIndex = cursorIndex + 1;
+  let lastScannedItemId = currentState?.cursor_item_id ?? null;
+  let insertedCount = 0;
+
+  database.connection.exec("BEGIN");
+  try {
+    for (
+      ;
+      scannedIndex < items.length && insertedCount < batchSize;
+      scannedIndex += 1
+    ) {
+      const item = items[scannedIndex];
+      lastScannedItemId = item.id;
+
+      if (isItemPriceRefreshIgnored(database, item.id)) {
+        continue;
+      }
+
+      if (activeBulkPriceJobExists(database, collectionId, item.id)) {
+        continue;
+      }
+
+      const inserted = insertBulkPriceJob({
+        database,
+        collectionId,
+        itemId: item.id,
+        mode: "auto",
+        includeExisting: true,
+        message: "Scheduled daily PokemonPriceTracker refresh.",
+        now: nowIso
+      });
+
+      if (inserted) {
+        insertedCount += 1;
+      }
+    }
+
+    if (scannedIndex >= items.length) {
+      completeCollectionPriceRefreshRun(database, collectionId, nowIso);
+    } else {
+      updateCollectionPriceRefreshCursor(database, collectionId, lastScannedItemId, nowIso);
+    }
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+type CollectionPriceRefreshStateRow = {
+  collection_id: string;
+  run_started_at: string | null;
+  run_completed_at: string | null;
+  cursor_item_id: string | null;
+  updated_at: string;
+};
+
+function getCollectionPriceRefreshState(database: AppDatabase, collectionId: string) {
+  return database.connection
+    .prepare(
+      `
+        SELECT collection_id, run_started_at, run_completed_at, cursor_item_id, updated_at
+        FROM collection_price_refresh_state
+        WHERE collection_id = ?
+      `
+    )
+    .get(collectionId) as CollectionPriceRefreshStateRow | undefined;
+}
+
+function createCollectionPriceRefreshState(
+  database: AppDatabase,
+  collectionId: string,
+  now: string
+) {
+  database.connection
+    .prepare(
+      `
+        INSERT INTO collection_price_refresh_state (
+          collection_id,
+          run_started_at,
+          run_completed_at,
+          cursor_item_id,
+          updated_at
+        )
+        VALUES (?, ?, NULL, NULL, ?)
+      `
+    )
+    .run(collectionId, now, now);
+}
+
+function startCollectionPriceRefreshRun(
+  database: AppDatabase,
+  collectionId: string,
+  now: string
+) {
+  database.connection
+    .prepare(
+      `
+        UPDATE collection_price_refresh_state
+        SET
+          run_started_at = ?,
+          run_completed_at = NULL,
+          cursor_item_id = NULL,
+          updated_at = ?
+        WHERE collection_id = ?
+      `
+    )
+    .run(now, now, collectionId);
+}
+
+function updateCollectionPriceRefreshCursor(
+  database: AppDatabase,
+  collectionId: string,
+  cursorItemId: string | null,
+  now: string
+) {
+  database.connection
+    .prepare(
+      `
+        UPDATE collection_price_refresh_state
+        SET
+          cursor_item_id = ?,
+          updated_at = ?
+        WHERE collection_id = ?
+      `
+    )
+    .run(cursorItemId, now, collectionId);
+}
+
+function completeCollectionPriceRefreshRun(
+  database: AppDatabase,
+  collectionId: string,
+  now: string
+) {
+  database.connection
+    .prepare(
+      `
+        UPDATE collection_price_refresh_state
+        SET
+          run_completed_at = ?,
+          cursor_item_id = NULL,
+          updated_at = ?
+        WHERE collection_id = ?
+      `
+    )
+    .run(now, now, collectionId);
+}
+
+function isScheduledPriceRefreshEligible(item: InventoryItem) {
+  return item.itemType === "raw" || item.itemType === "graded";
+}
+
+function activeBulkPriceJobExists(
+  database: AppDatabase,
+  collectionId: string,
+  itemId: string
+) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT id
+        FROM bulk_price_queue
+        WHERE collection_id = ?
+          AND owned_item_id = ?
+          AND status IN ('queued', 'running', 'rate-limited')
+        LIMIT 1
+      `
+    )
+    .get(collectionId, itemId) as { id: string } | undefined;
+
+  return Boolean(row);
+}
+
+function isItemPriceRefreshIgnored(database: AppDatabase, itemId: string) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT owned_item_id
+        FROM item_price_refresh_ignores
+        WHERE owned_item_id = ?
+      `
+    )
+    .get(itemId) as { owned_item_id: string } | undefined;
+
+  return Boolean(row);
+}
+
+function setItemPriceRefreshIgnored(database: AppDatabase, itemId: string, reason: string) {
+  database.connection
+    .prepare(
+      `
+        INSERT INTO item_price_refresh_ignores (
+          owned_item_id,
+          reason,
+          ignored_at
+        )
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(owned_item_id) DO UPDATE SET
+          reason = excluded.reason,
+          ignored_at = CURRENT_TIMESTAMP
+      `
+    )
+    .run(itemId, reason);
+}
+
+function clearItemPriceRefreshIgnored(database: AppDatabase, itemId: string) {
+  database.connection
+    .prepare("DELETE FROM item_price_refresh_ignores WHERE owned_item_id = ?")
+    .run(itemId);
+}
+
+function skipOpenBulkPriceJobsForItem(
+  database: AppDatabase,
+  collectionId: string,
+  itemId: string
+) {
+  const now = new Date().toISOString();
+
+  database.connection
+    .prepare(
+      `
+        UPDATE bulk_price_queue
+        SET
+          status = 'skipped',
+          message = 'Ignored for future queued price refreshes.',
+          next_attempt_at = NULL,
+          finished_at = ?,
+          updated_at = ?
+        WHERE collection_id = ?
+          AND owned_item_id = ?
+          AND status IN ('queued', 'needs-review', 'rate-limited', 'failed')
+      `
+    )
+    .run(now, now, collectionId, itemId);
 }
 
 function insertBulkPriceJob({
@@ -873,6 +1266,10 @@ function insertBulkPriceJob({
   message: string | null;
   now: string;
 }) {
+  if (isItemPriceRefreshIgnored(database, itemId)) {
+    return false;
+  }
+
   database.connection
     .prepare(
       `
@@ -895,6 +1292,8 @@ function insertBulkPriceJob({
       `
     )
     .run(randomUUID(), collectionId, itemId, mode, includeExisting ? 1 : 0, message, now, now);
+
+  return true;
 }
 
 type BulkPriceQueueRow = {
@@ -1027,6 +1426,16 @@ async function processBulkPriceJob({
 
   if (!item) {
     finishBulkPriceJob(database, job.id, "skipped", "Inventory item no longer exists.");
+    return "done";
+  }
+
+  if (isItemPriceRefreshIgnored(database, item.id)) {
+    finishBulkPriceJob(
+      database,
+      job.id,
+      "skipped",
+      "Skipped because queued price refreshes are ignored for this card."
+    );
     return "done";
   }
 
@@ -1357,6 +1766,54 @@ function getPricingSourceMatch(
       `
     )
     .get(itemId, source) as PricingSourceMatchRow | undefined;
+}
+
+function getPokemonPriceTrackerTcgPlayerId(database: AppDatabase, itemId: string) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT raw_payload
+        FROM item_market_prices
+        WHERE owned_item_id = ?
+          AND source = 'pokemonpricetracker'
+      `
+    )
+    .get(itemId) as { raw_payload: string } | undefined;
+
+  if (!row?.raw_payload) {
+    return null;
+  }
+
+  const payload = parseJsonRecord(row.raw_payload);
+
+  if (!payload) {
+    return null;
+  }
+
+  const card = payload.card;
+
+  if (!isObjectRecord(card)) {
+    return null;
+  }
+
+  const tcgPlayerId = card.tcgPlayerId;
+
+  return typeof tcgPlayerId === "string" || typeof tcgPlayerId === "number"
+    ? String(tcgPlayerId)
+    : null;
+}
+
+function parseJsonRecord(value: string) {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isObjectRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeHistoryDays(rawDays: string | undefined) {
