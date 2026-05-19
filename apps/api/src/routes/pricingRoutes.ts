@@ -8,6 +8,8 @@ import type {
   EnqueueBulkPriceRefreshRequest,
   InventoryMarketPriceSource,
   InventoryItem,
+  MarketPriceSnapshot,
+  MarketPriceSnapshotsResponse,
   PokemonPriceTrackerPricingCandidate,
   PricingCandidate,
   PricingHistoryPoint,
@@ -274,6 +276,30 @@ export async function registerPricingRoutes(
         points,
         cached: false,
         message: points.length > 0 ? "Loaded PokemonPriceTracker history." : "No price history found."
+      };
+    }
+  );
+
+  app.get(
+    "/api/collections/:collectionId/items/:itemId/pricing/snapshots",
+    async (request, reply): Promise<MarketPriceSnapshotsResponse | { error: string }> => {
+      const access = getPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const item = getInventoryItem(database, access.collectionId, access.itemId);
+
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      return {
+        itemId: item.id,
+        snapshots: listMarketPriceSnapshots(database, item.id)
       };
     }
   );
@@ -1561,6 +1587,7 @@ function saveMarketPrice(
   matchKind: "automatic" | "manual" = "automatic"
 ) {
   const lookedUpAt = new Date().toISOString();
+  const previousPriceCents = getCurrentMarketPriceCents(database, itemId);
 
   database.connection
     .prepare(
@@ -1619,8 +1646,74 @@ function saveMarketPrice(
       JSON.stringify(candidate.rawPayload)
     );
 
+  insertMarketPriceSnapshot(database, itemId, source, candidate, previousPriceCents, lookedUpAt);
   savePricingSourceMatch(database, itemId, source, candidate, matchKind);
   markBulkPriceJobsSolvedForItem(database, itemId, candidate);
+}
+
+function getCurrentMarketPriceCents(database: AppDatabase, itemId: string) {
+  const row = database.connection
+    .prepare(
+      `
+        SELECT price_cents
+        FROM item_market_prices
+        WHERE owned_item_id = ?
+      `
+    )
+    .get(itemId) as { price_cents: number | null } | undefined;
+
+  return Number.isFinite(row?.price_cents) ? row?.price_cents ?? null : null;
+}
+
+function insertMarketPriceSnapshot(
+  database: AppDatabase,
+  itemId: string,
+  source: "pokemonpricetracker",
+  candidate: PokemonPriceTrackerPricingCandidateWithPayload,
+  previousPriceCents: number | null,
+  capturedAt: string
+) {
+  const deltaCents =
+    previousPriceCents === null ? null : candidate.priceCents - previousPriceCents;
+
+  database.connection
+    .prepare(
+      `
+        INSERT INTO item_market_price_snapshots (
+          id,
+          owned_item_id,
+          source,
+          price_kind,
+          source_card_id,
+          source_variant_id,
+          matched_name,
+          matched_set_name,
+          matched_card_number,
+          price_cents,
+          previous_price_cents,
+          delta_cents,
+          confidence,
+          captured_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      randomUUID(),
+      itemId,
+      source,
+      candidate.priceKind,
+      candidate.sourceCardId,
+      candidate.sourceVariantId,
+      candidate.matchedName,
+      candidate.matchedSetName,
+      candidate.matchedCardNumber,
+      candidate.priceCents,
+      previousPriceCents,
+      deltaCents,
+      candidate.confidence,
+      capturedAt
+    );
 }
 
 function markBulkPriceJobsSolvedForItem(
@@ -1914,6 +2007,70 @@ function savePricingHistory(
     database.connection.exec("ROLLBACK");
     throw error;
   }
+}
+
+function listMarketPriceSnapshots(database: AppDatabase, itemId: string): MarketPriceSnapshot[] {
+  const rows = database.connection
+    .prepare(
+      `
+        SELECT
+          id,
+          owned_item_id,
+          source,
+          price_kind,
+          source_card_id,
+          source_variant_id,
+          matched_name,
+          matched_set_name,
+          matched_card_number,
+          price_cents,
+          previous_price_cents,
+          delta_cents,
+          confidence,
+          captured_at
+        FROM (
+          SELECT *
+          FROM item_market_price_snapshots
+          WHERE owned_item_id = ?
+          ORDER BY captured_at DESC, created_at DESC
+          LIMIT 100
+        )
+        ORDER BY captured_at ASC, created_at ASC
+      `
+    )
+    .all(itemId) as {
+    id: string;
+    owned_item_id: string;
+    source: InventoryMarketPriceSource;
+    price_kind: "raw" | "graded";
+    source_card_id: string;
+    source_variant_id: string;
+    matched_name: string;
+    matched_set_name: string | null;
+    matched_card_number: string | null;
+    price_cents: number;
+    previous_price_cents: number | null;
+    delta_cents: number | null;
+    confidence: "exact" | "strong" | "possible";
+    captured_at: string;
+  }[];
+
+  return rows.map((row) => ({
+    id: row.id,
+    itemId: row.owned_item_id,
+    source: row.source,
+    priceKind: row.price_kind,
+    sourceCardId: row.source_card_id,
+    sourceVariantId: row.source_variant_id,
+    matchedName: row.matched_name,
+    matchedSetName: row.matched_set_name,
+    matchedCardNumber: row.matched_card_number,
+    priceCents: row.price_cents,
+    previousPriceCents: row.previous_price_cents,
+    deltaCents: row.delta_cents,
+    confidence: row.confidence,
+    capturedAt: row.captured_at
+  }));
 }
 
 function toPublicPricingCandidates(

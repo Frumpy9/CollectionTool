@@ -460,6 +460,36 @@ const migrations: Migration[] = [
       SET value = '16', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 17,
+    name: "local_market_price_snapshots",
+    sql: `
+      CREATE TABLE IF NOT EXISTS item_market_price_snapshots (
+        id TEXT PRIMARY KEY,
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('justtcg', 'pokemonpricetracker')),
+        price_kind TEXT NOT NULL CHECK (price_kind IN ('raw', 'graded')),
+        source_card_id TEXT NOT NULL,
+        source_variant_id TEXT NOT NULL,
+        matched_name TEXT NOT NULL,
+        matched_set_name TEXT,
+        matched_card_number TEXT,
+        price_cents INTEGER NOT NULL CHECK (price_cents >= 0),
+        previous_price_cents INTEGER CHECK (previous_price_cents IS NULL OR previous_price_cents >= 0),
+        delta_cents INTEGER,
+        confidence TEXT NOT NULL CHECK (confidence IN ('exact', 'strong', 'possible')),
+        captured_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_market_price_snapshots_item_captured
+      ON item_market_price_snapshots(owned_item_id, captured_at DESC);
+
+      UPDATE app_metadata
+      SET value = '17', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

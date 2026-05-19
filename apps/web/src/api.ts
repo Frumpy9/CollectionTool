@@ -16,6 +16,7 @@ import type {
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryListResponse,
+  MarketPriceSnapshotsResponse,
   PsaCertLookupRequest,
   PsaCertLookupResponse,
   PricingHistoryResponse,
@@ -247,6 +248,10 @@ export const api = {
       `/api/collections/${collectionId}/items/${itemId}/pricing/history?days=${encodeURIComponent(
         String(days)
       )}`
+    ),
+  getMarketPriceSnapshots: (collectionId: string, itemId: string) =>
+    request<MarketPriceSnapshotsResponse>(
+      `/api/collections/${collectionId}/items/${itemId}/pricing/snapshots`
     ),
   getValueOverrideHistory: (collectionId: string, itemId: string) =>
     request<ValueOverrideHistoryResponse>(

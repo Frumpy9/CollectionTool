@@ -40,8 +40,8 @@ import type {
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
+  MarketPriceSnapshot,
   PricingCandidate,
-  PricingHistoryPoint,
   PsaCertLookupResponse,
   ValueOverrideHistoryEntry
 } from "@collection-tool/shared";
@@ -149,8 +149,6 @@ const workspaceNavItems = [
   label: string;
   icon: typeof Grid2X2;
 }>;
-
-const showMarketPriceHistoryPanel = false;
 
 const defaultInventoryFilters: InventoryFilterState = {
   query: "",
@@ -3296,11 +3294,22 @@ function InventoryGrid({
                 </span>
               ) : null}
               {item.marketPriceCents !== null ? (
-                <span>Market {formatCurrency(item.marketPriceCents)}</span>
+                <span className={priceChangeClass(item.marketPriceChangeCents)}>
+                  Market {formatCurrency(item.marketPriceCents)}
+                  {item.marketPriceChangeCents !== null
+                    ? ` ${inventoryPriceChangeLabel(item)}`
+                    : ""}
+                </span>
               ) : null}
               {item.storageLocation ? <span>{item.storageLocation}</span> : null}
             </div>
-            <strong>{formatCurrency(inventoryItemValue(item))}</strong>
+            <strong
+              className={
+                item.valueOverrideCents === null ? priceChangeClass(item.marketPriceChangeCents) : ""
+              }
+            >
+              {formatCurrency(inventoryItemValue(item))}
+            </strong>
           </div>
         </article>
       ))}
@@ -3484,6 +3493,11 @@ function RawMarketPriceSummary({
             {item.marketPriceCents !== null
               ? formatCurrency(item.marketPriceCents)
               : "No market price yet"}
+            {item.marketPriceChangeCents !== null ? (
+              <span className={`price-change-delta ${priceChangeClass(item.marketPriceChangeCents)}`}>
+                {inventoryPriceChangeLabel(item)}
+              </span>
+            ) : null}
           </h4>
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
@@ -3593,6 +3607,11 @@ function GradedMarketPriceSummary({
             {item.marketPriceCents !== null
               ? formatCurrency(item.marketPriceCents)
               : "No market price yet"}
+            {item.marketPriceChangeCents !== null ? (
+              <span className={`price-change-delta ${priceChangeClass(item.marketPriceChangeCents)}`}>
+                {inventoryPriceChangeLabel(item)}
+              </span>
+            ) : null}
           </h4>
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
@@ -3711,91 +3730,50 @@ function PokemonPriceTrackerLink({ item }: { item: InventoryItem }) {
   );
 }
 
-function PricingHistoryPanel({
-  loadedDays,
-  isLoading,
+function SavedPriceHistoryPanel({
   message,
-  points,
-  selectedDays,
-  status,
-  onSelectDays,
-  onLoad
+  snapshots,
+  status
 }: {
-  loadedDays: number | null;
-  isLoading: boolean;
   message: string;
-  points: PricingHistoryPoint[];
-  selectedDays: number;
+  snapshots: MarketPriceSnapshot[];
   status: "idle" | "loading" | "error";
-  onSelectDays: (days: number) => void;
-  onLoad: () => void;
 }) {
-  const minPrice = points.length > 0 ? Math.min(...points.map((point) => point.priceCents)) : 0;
-  const maxPrice = points.length > 0 ? Math.max(...points.map((point) => point.priceCents)) : 0;
+  const minPrice =
+    snapshots.length > 0 ? Math.min(...snapshots.map((snapshot) => snapshot.priceCents)) : 0;
+  const maxPrice =
+    snapshots.length > 0 ? Math.max(...snapshots.map((snapshot) => snapshot.priceCents)) : 0;
   const range = Math.max(1, maxPrice - minPrice);
-  const hasLoadedSelectedRange = loadedDays === selectedDays;
-  const hasLoadedAnyRange = loadedDays !== null;
-  const hasPoints = points.length > 0;
-  const heading =
-    status === "loading"
-      ? `Loading ${selectedDays}d`
-      : hasPoints && loadedDays
-        ? `${points.length} points · ${loadedDays}d`
-        : hasLoadedAnyRange && loadedDays
-          ? `No ${loadedDays}d history`
-          : "Ready to load";
-  const loadLabel = `${hasLoadedSelectedRange ? "Reload" : "Load"} ${selectedDays}d history`;
+  const hasSnapshots = snapshots.length > 0;
+  const heading = status === "loading" ? "Loading" : `${snapshots.length} saved prices`;
   const emptyMessage =
     status === "loading"
-      ? `Loading ${selectedDays}d history...`
-      : hasLoadedAnyRange && status !== "error"
-        ? "No price history found for this card/range."
-        : "Choose a range, then load history when you need it so PokemonPriceTracker credits are used deliberately.";
+      ? "Loading saved price history..."
+      : "Saved prices will appear here after this card gets refreshed more than once.";
 
   return (
-    <section className="raw-price-panel" aria-label="Market price history">
+    <section className="raw-price-panel" aria-label="Saved market price history">
       <div className="graded-cert-header">
         <div>
-          <p className="eyebrow">Price history</p>
+          <p className="eyebrow">Saved price history</p>
           <h4>{heading}</h4>
         </div>
-        <div className="history-controls">
-          <div className="history-actions" aria-label="Price history range">
-            {[7, 30, 90].map((option) => (
-              <button
-                aria-pressed={selectedDays === option}
-                className={selectedDays === option ? "active" : ""}
-                disabled={isLoading}
-                key={option}
-                onClick={() => onSelectDays(option)}
-                type="button"
-              >
-                {option}d
-              </button>
-            ))}
-          </div>
-          <button
-            className="primary-button history-load-button"
-            disabled={isLoading}
-            onClick={onLoad}
-            type="button"
-          >
-            <RefreshCw size={16} aria-hidden="true" />
-            {isLoading ? "Loading..." : loadLabel}
-          </button>
-        </div>
+        {status === "loading" ? <span className="status-pill">Loading</span> : null}
       </div>
 
-      {hasPoints ? (
+      {hasSnapshots ? (
         <div className="price-history-chart" aria-hidden="true">
-          {points.map((point) => {
-            const height = 18 + ((point.priceCents - minPrice) / range) * 82;
+          {snapshots.map((snapshot) => {
+            const height = 18 + ((snapshot.priceCents - minPrice) / range) * 82;
 
             return (
               <span
-                key={`${point.date}-${point.priceCents}`}
+                className={priceChangeClass(snapshot.deltaCents)}
+                key={snapshot.id}
                 style={{ height: `${height}%` }}
-                title={`${point.date}: ${formatCurrency(point.priceCents)}`}
+                title={`${formatHistoryDate(snapshot.capturedAt)}: ${formatCurrency(
+                  snapshot.priceCents
+                )}`}
               />
             );
           })}
@@ -3804,19 +3782,34 @@ function PricingHistoryPanel({
         <p className="lookup-note">{emptyMessage}</p>
       )}
 
-      {hasPoints ? (
+      {hasSnapshots ? (
         <div className="inventory-meta">
-          <span>{formatCurrency(points[0].priceCents)} start</span>
-          <span>{formatCurrency(points[points.length - 1].priceCents)} latest</span>
+          <span>{formatCurrency(snapshots[0].priceCents)} start</span>
+          <span>{formatCurrency(snapshots[snapshots.length - 1].priceCents)} latest</span>
           <span>{formatCurrency(minPrice)} low</span>
           <span>{formatCurrency(maxPrice)} high</span>
         </div>
       ) : null}
 
-      {hasLoadedAnyRange && !hasLoadedSelectedRange && status !== "loading" ? (
-        <p className="lookup-note">
-          Showing {loadedDays}d history. Load {selectedDays}d history to update this panel.
-        </p>
+      {hasSnapshots ? (
+        <div className="value-history-list">
+          {snapshots
+            .slice()
+            .reverse()
+            .slice(0, 5)
+            .map((snapshot) => (
+              <div className="value-history-row" key={`row-${snapshot.id}`}>
+                <div>
+                  <strong>{formatCurrency(snapshot.priceCents)}</strong>
+                  <span>
+                    {snapshot.matchedName}
+                    {snapshot.deltaCents !== null ? ` · ${priceChangeLabel(snapshot)}` : ""}
+                  </span>
+                </div>
+                <time dateTime={snapshot.capturedAt}>{formatHistoryDate(snapshot.capturedAt)}</time>
+              </div>
+            ))}
+        </div>
       ) : null}
 
       {message ? (
@@ -3875,19 +3868,47 @@ function formatOptionalCurrency(cents: number | null) {
   return cents === null ? "None" : formatCurrency(cents);
 }
 
+function priceChangeClass(deltaCents: number | null) {
+  if (deltaCents === null || deltaCents === 0) {
+    return "price-change-neutral";
+  }
+
+  return deltaCents > 0 ? "price-change-positive" : "price-change-negative";
+}
+
+function priceChangeLabel(snapshot: Pick<MarketPriceSnapshot, "deltaCents">) {
+  if (snapshot.deltaCents === null) {
+    return "baseline";
+  }
+
+  if (snapshot.deltaCents === 0) {
+    return "no change";
+  }
+
+  return `${snapshot.deltaCents > 0 ? "+" : "-"}${formatCurrency(Math.abs(snapshot.deltaCents))}`;
+}
+
+function inventoryPriceChangeLabel(item: InventoryItem) {
+  if (item.marketPriceChangeCents === null) {
+    return "";
+  }
+
+  const price = `${item.marketPriceChangeCents > 0 ? "+" : "-"}${formatCurrency(
+    Math.abs(item.marketPriceChangeCents)
+  )}`;
+  const percent =
+    item.marketPriceChangePercent === null
+      ? ""
+      : ` (${item.marketPriceChangePercent > 0 ? "+" : ""}${item.marketPriceChangePercent.toFixed(
+          1
+        )}%)`;
+
+  return `${price}${percent}`;
+}
+
 function formatHistoryDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function friendlyPricingHistoryError(error: unknown) {
-  const message = error instanceof Error ? error.message : "Unable to load price history.";
-
-  if (/route\s+get:\/api\/.*not found/i.test(message)) {
-    return "Price history is not available from the running API. Restart the API and try again.";
-  }
-
-  return message;
 }
 
 function InventoryMetaFilterButton({
@@ -3936,9 +3957,7 @@ function InventoryItemDetail({
   const [pricingCandidates, setPricingCandidates] = useState<PricingCandidate[]>([]);
   const [gradedPricingCandidates, setGradedPricingCandidates] = useState<PricingCandidate[]>([]);
   const [pricingError, setPricingError] = useState("");
-  const [pricingHistory, setPricingHistory] = useState<PricingHistoryPoint[]>([]);
-  const [selectedPricingHistoryDays, setSelectedPricingHistoryDays] = useState(30);
-  const [loadedPricingHistoryDays, setLoadedPricingHistoryDays] = useState<number | null>(null);
+  const [priceSnapshots, setPriceSnapshots] = useState<MarketPriceSnapshot[]>([]);
   const [pricingHistoryStatus, setPricingHistoryStatus] = useState<
     "idle" | "loading" | "error"
   >("idle");
@@ -3956,9 +3975,7 @@ function InventoryItemDetail({
     setPricingCandidates([]);
     setGradedPricingCandidates([]);
     setPricingError("");
-    setPricingHistory([]);
-    setSelectedPricingHistoryDays(30);
-    setLoadedPricingHistoryDays(null);
+    setPriceSnapshots([]);
     setPricingHistoryStatus("idle");
     setPricingHistoryMessage("");
     setValueHistory([]);
@@ -3969,6 +3986,41 @@ function InventoryItemDetail({
     setError("");
     setStatus("idle");
   }, [item.id]);
+
+  useEffect(() => {
+    let isCurrent = true;
+
+    setPriceSnapshots([]);
+    setPricingHistoryStatus("loading");
+    setPricingHistoryMessage("");
+
+    api
+      .getMarketPriceSnapshots(collectionId, item.id)
+      .then((response) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setPriceSnapshots(response.snapshots);
+        setPricingHistoryStatus("idle");
+      })
+      .catch((historyError) => {
+        if (!isCurrent) {
+          return;
+        }
+
+        setPricingHistoryStatus("error");
+        setPricingHistoryMessage(
+          historyError instanceof Error
+            ? historyError.message
+            : "Unable to load saved price history."
+        );
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [collectionId, item.id]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -4010,6 +4062,22 @@ function InventoryItemDetail({
     setItemType(item.itemType);
     setLanguage(item.card.language);
   }, [item.card.imageUrl, item.card.language, item.itemType]);
+
+  async function refreshLocalPriceSnapshots() {
+    try {
+      const response = await api.getMarketPriceSnapshots(collectionId, item.id);
+      setPriceSnapshots(response.snapshots);
+      setPricingHistoryStatus("idle");
+      setPricingHistoryMessage("");
+    } catch (historyError) {
+      setPricingHistoryStatus("error");
+      setPricingHistoryMessage(
+        historyError instanceof Error
+          ? historyError.message
+          : "Unable to load saved price history."
+      );
+    }
+  }
 
   async function handleSave(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4201,6 +4269,7 @@ function InventoryItemDetail({
 
       if (response.item) {
         onUpdated(response.item);
+        await refreshLocalPriceSnapshots();
       }
 
       setPricingCandidates(
@@ -4235,6 +4304,7 @@ function InventoryItemDetail({
 
       if (response.item) {
         onUpdated(response.item);
+        await refreshLocalPriceSnapshots();
       }
 
       setPricingCandidates([]);
@@ -4269,6 +4339,7 @@ function InventoryItemDetail({
 
       if (response.item) {
         onUpdated(response.item);
+        await refreshLocalPriceSnapshots();
       }
 
       setGradedPricingCandidates(
@@ -4305,6 +4376,7 @@ function InventoryItemDetail({
 
       if (response.item) {
         onUpdated(response.item);
+        await refreshLocalPriceSnapshots();
       }
 
       setGradedPricingCandidates([]);
@@ -4316,22 +4388,6 @@ function InventoryItemDetail({
       );
     } finally {
       setStatus("idle");
-    }
-  }
-
-  async function handleLoadPricingHistory() {
-    setPricingHistoryStatus("loading");
-    setPricingHistoryMessage("");
-
-    try {
-      const response = await api.getPricingHistory(collectionId, item.id, selectedPricingHistoryDays);
-      setPricingHistory(response.points);
-      setLoadedPricingHistoryDays(response.days);
-      setPricingHistoryStatus("idle");
-      setPricingHistoryMessage(response.points.length > 0 ? response.message : "");
-    } catch (historyError) {
-      setPricingHistoryStatus("error");
-      setPricingHistoryMessage(friendlyPricingHistoryError(historyError));
     }
   }
 
@@ -4488,16 +4544,12 @@ function InventoryItemDetail({
               />
             ) : null}
 
-            {showMarketPriceHistoryPanel && item.marketPriceSource === "pokemonpricetracker" ? (
-              <PricingHistoryPanel
-                isLoading={pricingHistoryStatus === "loading"}
-                loadedDays={loadedPricingHistoryDays}
+            {item.marketPriceSource === "pokemonpricetracker" ||
+            item.marketPriceSnapshotCount > 0 ? (
+              <SavedPriceHistoryPanel
                 message={pricingHistoryMessage}
-                points={pricingHistory}
-                selectedDays={selectedPricingHistoryDays}
+                snapshots={priceSnapshots}
                 status={pricingHistoryStatus}
-                onSelectDays={setSelectedPricingHistoryDays}
-                onLoad={handleLoadPricingHistory}
               />
             ) : null}
 

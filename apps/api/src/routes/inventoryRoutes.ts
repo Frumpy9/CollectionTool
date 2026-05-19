@@ -15,7 +15,9 @@ import type {
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
+import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import { lookupPsaCert } from "../psaClient.js";
 
 type InventoryRow = {
   id: string;
@@ -42,6 +44,9 @@ type InventoryRow = {
   market_price_condition: string | null;
   market_price_printing: string | null;
   market_price_raw_payload: string | null;
+  market_price_previous_cents: number | null;
+  market_price_change_cents: number | null;
+  market_price_snapshot_count: number | null;
   storage_location: string | null;
   notes: string | null;
   cert_url: string | null;
@@ -62,7 +67,11 @@ type InventoryRow = {
   image_url: string | null;
 };
 
-export async function registerInventoryRoutes(app: FastifyInstance, database: AppDatabase) {
+export async function registerInventoryRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  database: AppDatabase
+) {
   app.get("/api/collections/:collectionId/items", async (request, reply) => {
     const auth = getAuthContext(request, database);
 
@@ -164,7 +173,10 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
       return { error: "You need editor access to add cards." };
     }
 
-    const input = normalizeCreateInput(request.body as CreateInventoryItemRequest);
+    const input = await enrichPsaCertOnCreate(
+      normalizeCreateInput(request.body as CreateInventoryItemRequest),
+      config
+    );
     const item = createInventoryItem(database, collectionId, input);
 
     reply.code(201);
@@ -446,6 +458,70 @@ function toCsvCell(value: string | number | null | undefined) {
   }
 
   return `"${text.replaceAll('"', '""')}"`;
+}
+
+async function enrichPsaCertOnCreate(
+  input: CreateInventoryItemRequest,
+  config: AppConfig
+): Promise<CreateInventoryItemRequest> {
+  const certNumber = normalizePsaCertNumber(input.certNumber);
+
+  if (
+    input.itemType !== "graded" ||
+    normalizeIdentityValue(input.grader) !== "psa" ||
+    !certNumber ||
+    !config.psaAccessToken.trim() ||
+    hasPsaCertMetadata(input)
+  ) {
+    return input;
+  }
+
+  const lookup = await lookupPsaCert({
+    accessToken: config.psaAccessToken,
+    pokemonTcgApiKey: config.pokemonTcgApiKey,
+    pokemonPriceTrackerApiKey: config.pokemonPriceTrackerApiKey,
+    certNumber
+  }).catch(() => null);
+
+  if (!lookup?.item) {
+    return input;
+  }
+
+  return mergePsaCertMetadata(input, lookup.item);
+}
+
+function hasPsaCertMetadata(input: CreateInventoryItemRequest) {
+  return Boolean(
+    nullIfBlank(input.certLookupAt) ||
+      nullIfBlank(input.certPopulation) ||
+      nullIfBlank(input.certPopulationHigher) ||
+      nullIfBlank(input.certSpecId) ||
+      nullIfBlank(input.certCategory)
+  );
+}
+
+function mergePsaCertMetadata(
+  input: CreateInventoryItemRequest,
+  certItem: CreateInventoryItemRequest
+): CreateInventoryItemRequest {
+  return {
+    ...input,
+    grade: nullIfBlank(input.grade) ?? certItem.grade,
+    certNumber: nullIfBlank(input.certNumber) ?? certItem.certNumber,
+    certUrl: nullIfBlank(input.certUrl) ?? certItem.certUrl,
+    certSpecId: nullIfBlank(input.certSpecId) ?? certItem.certSpecId,
+    certCategory: nullIfBlank(input.certCategory) ?? certItem.certCategory,
+    certPopulation: nullIfBlank(input.certPopulation) ?? certItem.certPopulation,
+    certPopulationHigher:
+      nullIfBlank(input.certPopulationHigher) ?? certItem.certPopulationHigher,
+    certEstimateCents: input.certEstimateCents ?? certItem.certEstimateCents,
+    certLookupAt: nullIfBlank(input.certLookupAt) ?? certItem.certLookupAt
+  };
+}
+
+function normalizePsaCertNumber(certNumber: string | undefined) {
+  const normalized = certNumber?.replace(/\D/g, "") ?? "";
+  return normalized.length >= 4 && normalized.length <= 12 ? normalized : null;
 }
 
 function createInventoryItem(
@@ -1047,6 +1123,9 @@ function clearPricingSourceMatches(database: AppDatabase, itemId: string) {
     .prepare("DELETE FROM item_price_source_matches WHERE owned_item_id = ?")
     .run(itemId);
   database.connection.prepare("DELETE FROM item_price_history WHERE owned_item_id = ?").run(itemId);
+  database.connection
+    .prepare("DELETE FROM item_market_price_snapshots WHERE owned_item_id = ?")
+    .run(itemId);
 }
 
 function uniqueItemIds(itemIds: string[] | undefined) {
@@ -1093,6 +1172,9 @@ export function listInventoryItems(database: AppDatabase, collectionId: string):
           imp.condition_label AS market_price_condition,
           imp.printing AS market_price_printing,
           imp.raw_payload AS market_price_raw_payload,
+          latest_snapshot.previous_price_cents AS market_price_previous_cents,
+          latest_snapshot.delta_cents AS market_price_change_cents,
+          snapshot_counts.snapshot_count AS market_price_snapshot_count,
           oi.storage_location,
           oi.notes,
           oi.cert_url,
@@ -1114,6 +1196,19 @@ export function listInventoryItems(database: AppDatabase, collectionId: string):
         FROM owned_items oi
         INNER JOIN cards c ON c.id = oi.card_id
         LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
+        LEFT JOIN item_market_price_snapshots latest_snapshot
+          ON latest_snapshot.id = (
+            SELECT id
+            FROM item_market_price_snapshots
+            WHERE owned_item_id = oi.id
+            ORDER BY captured_at DESC, created_at DESC
+            LIMIT 1
+          )
+        LEFT JOIN (
+          SELECT owned_item_id, COUNT(*) AS snapshot_count
+          FROM item_market_price_snapshots
+          GROUP BY owned_item_id
+        ) snapshot_counts ON snapshot_counts.owned_item_id = oi.id
         WHERE oi.collection_id = ?
         ORDER BY oi.created_at DESC
       `
@@ -1149,6 +1244,19 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
     marketPriceCondition: row.market_price_condition ?? null,
     marketPricePrinting: row.market_price_printing ?? null,
     marketPriceSaleCount: marketPriceSaleCount(row.market_price_raw_payload),
+    marketPricePreviousCents: Number.isFinite(row.market_price_previous_cents)
+      ? row.market_price_previous_cents
+      : null,
+    marketPriceChangeCents: Number.isFinite(row.market_price_change_cents)
+      ? row.market_price_change_cents
+      : null,
+    marketPriceChangePercent: marketPriceChangePercent(
+      row.market_price_previous_cents,
+      row.market_price_change_cents
+    ),
+    marketPriceSnapshotCount: Number.isFinite(row.market_price_snapshot_count)
+      ? row.market_price_snapshot_count ?? 0
+      : 0,
     storageLocation: row.storage_location,
     notes: row.notes,
     certUrl: row.cert_url ?? null,
@@ -1196,6 +1304,17 @@ function marketPriceSaleCount(rawPayload: string | null) {
   const count = Number(payload.gradeSummary?.count ?? payload.selectedCandidate?.saleCount);
 
   return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function marketPriceChangePercent(
+  previousPriceCents: number | null,
+  deltaCents: number | null
+) {
+  if (!previousPriceCents || !Number.isFinite(deltaCents)) {
+    return null;
+  }
+
+  return ((deltaCents ?? 0) / previousPriceCents) * 100;
 }
 
 function summarizeItems(items: InventoryItem[]) {

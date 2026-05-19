@@ -75,6 +75,10 @@ export type InventoryItem = {
   marketPriceCondition: string | null;
   marketPricePrinting: string | null;
   marketPriceSaleCount: number | null;
+  marketPricePreviousCents: number | null;
+  marketPriceChangeCents: number | null;
+  marketPriceChangePercent: number | null;
+  marketPriceSnapshotCount: number;
   storageLocation: string | null;
   notes: string | null;
   certUrl: string | null;
@@ -128,6 +132,28 @@ export type ValueOverrideHistoryEntry = {
 export type ValueOverrideHistoryResponse = {
   itemId: string;
   history: ValueOverrideHistoryEntry[];
+};
+
+export type MarketPriceSnapshot = {
+  id: string;
+  itemId: string;
+  source: InventoryMarketPriceSource;
+  priceKind: InventoryItemType;
+  sourceCardId: string;
+  sourceVariantId: string;
+  matchedName: string;
+  matchedSetName: string | null;
+  matchedCardNumber: string | null;
+  priceCents: number;
+  previousPriceCents: number | null;
+  deltaCents: number | null;
+  confidence: MarketPriceConfidence;
+  capturedAt: string;
+};
+
+export type MarketPriceSnapshotsResponse = {
+  itemId: string;
+  snapshots: MarketPriceSnapshot[];
 };
 
 export type CreateInventoryItemRequest = {
