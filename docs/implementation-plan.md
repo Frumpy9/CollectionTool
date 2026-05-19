@@ -45,6 +45,7 @@
 - [x] Added selection-mode bulk price queue with pause/resume handling for API limits.
 - [x] Added selection-mode bulk variant editing with market-price clearing.
 - [x] Refreshed the frontend workspace UX with real Collection, Graded, Storage, and Data sections.
+- [x] Added local market price snapshots and red/green saved-price change indicators.
 
 ## Branch Roadmap
 
@@ -122,6 +123,8 @@
 - [x] Use PokemonPriceTracker as the v1 comps/pricing source and keep eBay solds as a manual research link.
 - [x] Add comp confidence scoring.
 - [x] Add staggered daily refresh plus manual refresh button.
+- [x] Add local saved-price history snapshots because PokemonPriceTracker history is unreliable.
+- [x] Add red/green market price movement indicators in list and detail views.
 - [ ] Consider PokemonPriceTracker `fetchAllInSet` later for set-level cache warming when saved source IDs make bulk matching safe.
 
 ### 6. Camera Scanning

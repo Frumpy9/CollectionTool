@@ -42,6 +42,9 @@ type InventoryRow = {
   market_price_condition: string | null;
   market_price_printing: string | null;
   market_price_raw_payload: string | null;
+  market_price_previous_cents: number | null;
+  market_price_change_cents: number | null;
+  market_price_snapshot_count: number | null;
   storage_location: string | null;
   notes: string | null;
   cert_url: string | null;
@@ -1047,6 +1050,9 @@ function clearPricingSourceMatches(database: AppDatabase, itemId: string) {
     .prepare("DELETE FROM item_price_source_matches WHERE owned_item_id = ?")
     .run(itemId);
   database.connection.prepare("DELETE FROM item_price_history WHERE owned_item_id = ?").run(itemId);
+  database.connection
+    .prepare("DELETE FROM item_market_price_snapshots WHERE owned_item_id = ?")
+    .run(itemId);
 }
 
 function uniqueItemIds(itemIds: string[] | undefined) {
@@ -1093,6 +1099,9 @@ export function listInventoryItems(database: AppDatabase, collectionId: string):
           imp.condition_label AS market_price_condition,
           imp.printing AS market_price_printing,
           imp.raw_payload AS market_price_raw_payload,
+          latest_snapshot.previous_price_cents AS market_price_previous_cents,
+          latest_snapshot.delta_cents AS market_price_change_cents,
+          snapshot_counts.snapshot_count AS market_price_snapshot_count,
           oi.storage_location,
           oi.notes,
           oi.cert_url,
@@ -1114,6 +1123,19 @@ export function listInventoryItems(database: AppDatabase, collectionId: string):
         FROM owned_items oi
         INNER JOIN cards c ON c.id = oi.card_id
         LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
+        LEFT JOIN item_market_price_snapshots latest_snapshot
+          ON latest_snapshot.id = (
+            SELECT id
+            FROM item_market_price_snapshots
+            WHERE owned_item_id = oi.id
+            ORDER BY captured_at DESC, created_at DESC
+            LIMIT 1
+          )
+        LEFT JOIN (
+          SELECT owned_item_id, COUNT(*) AS snapshot_count
+          FROM item_market_price_snapshots
+          GROUP BY owned_item_id
+        ) snapshot_counts ON snapshot_counts.owned_item_id = oi.id
         WHERE oi.collection_id = ?
         ORDER BY oi.created_at DESC
       `
@@ -1149,6 +1171,19 @@ function mapInventoryRow(row: InventoryRow): InventoryItem {
     marketPriceCondition: row.market_price_condition ?? null,
     marketPricePrinting: row.market_price_printing ?? null,
     marketPriceSaleCount: marketPriceSaleCount(row.market_price_raw_payload),
+    marketPricePreviousCents: Number.isFinite(row.market_price_previous_cents)
+      ? row.market_price_previous_cents
+      : null,
+    marketPriceChangeCents: Number.isFinite(row.market_price_change_cents)
+      ? row.market_price_change_cents
+      : null,
+    marketPriceChangePercent: marketPriceChangePercent(
+      row.market_price_previous_cents,
+      row.market_price_change_cents
+    ),
+    marketPriceSnapshotCount: Number.isFinite(row.market_price_snapshot_count)
+      ? row.market_price_snapshot_count ?? 0
+      : 0,
     storageLocation: row.storage_location,
     notes: row.notes,
     certUrl: row.cert_url ?? null,
@@ -1196,6 +1231,17 @@ function marketPriceSaleCount(rawPayload: string | null) {
   const count = Number(payload.gradeSummary?.count ?? payload.selectedCandidate?.saleCount);
 
   return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function marketPriceChangePercent(
+  previousPriceCents: number | null,
+  deltaCents: number | null
+) {
+  if (!previousPriceCents || !Number.isFinite(deltaCents)) {
+    return null;
+  }
+
+  return ((deltaCents ?? 0) / previousPriceCents) * 100;
 }
 
 function summarizeItems(items: InventoryItem[]) {

@@ -722,6 +722,41 @@ small {
   background: #2563eb;
 }
 
+.inventory-meta span.price-change-positive,
+.price-history-chart span.price-change-positive,
+.inventory-body > strong.price-change-positive,
+.price-change-delta.price-change-positive {
+  color: #0f6b3f;
+  background: #e9f8ef;
+}
+
+.price-history-chart span.price-change-positive {
+  background: #20a464;
+}
+
+.inventory-meta span.price-change-negative,
+.price-history-chart span.price-change-negative,
+.inventory-body > strong.price-change-negative,
+.price-change-delta.price-change-negative {
+  color: #a11d2a;
+  background: #fff0f1;
+}
+
+.price-history-chart span.price-change-negative {
+  background: #d52f3a;
+}
+
+.price-change-delta {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  vertical-align: middle;
+}
+
 .value-history-list {
   display: grid;
   gap: 8px;
