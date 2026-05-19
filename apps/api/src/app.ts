@@ -44,7 +44,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerBackupRoutes(app, database);
   await registerCardLookupRoutes(app, config, database);
   await registerCollectionRoutes(app, database);
-  await registerInventoryRoutes(app, database);
+  await registerInventoryRoutes(app, config, database);
   await registerPricingRoutes(app, config, database);
   await registerPsaRoutes(app, config, database);
   await registerUploadRoutes(app, config, database);

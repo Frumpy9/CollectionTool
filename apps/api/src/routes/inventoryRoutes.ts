@@ -15,7 +15,9 @@ import type {
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
+import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import { lookupPsaCert } from "../psaClient.js";
 
 type InventoryRow = {
   id: string;
@@ -65,7 +67,11 @@ type InventoryRow = {
   image_url: string | null;
 };
 
-export async function registerInventoryRoutes(app: FastifyInstance, database: AppDatabase) {
+export async function registerInventoryRoutes(
+  app: FastifyInstance,
+  config: AppConfig,
+  database: AppDatabase
+) {
   app.get("/api/collections/:collectionId/items", async (request, reply) => {
     const auth = getAuthContext(request, database);
 
@@ -167,7 +173,10 @@ export async function registerInventoryRoutes(app: FastifyInstance, database: Ap
       return { error: "You need editor access to add cards." };
     }
 
-    const input = normalizeCreateInput(request.body as CreateInventoryItemRequest);
+    const input = await enrichPsaCertOnCreate(
+      normalizeCreateInput(request.body as CreateInventoryItemRequest),
+      config
+    );
     const item = createInventoryItem(database, collectionId, input);
 
     reply.code(201);
@@ -449,6 +458,70 @@ function toCsvCell(value: string | number | null | undefined) {
   }
 
   return `"${text.replaceAll('"', '""')}"`;
+}
+
+async function enrichPsaCertOnCreate(
+  input: CreateInventoryItemRequest,
+  config: AppConfig
+): Promise<CreateInventoryItemRequest> {
+  const certNumber = normalizePsaCertNumber(input.certNumber);
+
+  if (
+    input.itemType !== "graded" ||
+    normalizeIdentityValue(input.grader) !== "psa" ||
+    !certNumber ||
+    !config.psaAccessToken.trim() ||
+    hasPsaCertMetadata(input)
+  ) {
+    return input;
+  }
+
+  const lookup = await lookupPsaCert({
+    accessToken: config.psaAccessToken,
+    pokemonTcgApiKey: config.pokemonTcgApiKey,
+    pokemonPriceTrackerApiKey: config.pokemonPriceTrackerApiKey,
+    certNumber
+  }).catch(() => null);
+
+  if (!lookup?.item) {
+    return input;
+  }
+
+  return mergePsaCertMetadata(input, lookup.item);
+}
+
+function hasPsaCertMetadata(input: CreateInventoryItemRequest) {
+  return Boolean(
+    nullIfBlank(input.certLookupAt) ||
+      nullIfBlank(input.certPopulation) ||
+      nullIfBlank(input.certPopulationHigher) ||
+      nullIfBlank(input.certSpecId) ||
+      nullIfBlank(input.certCategory)
+  );
+}
+
+function mergePsaCertMetadata(
+  input: CreateInventoryItemRequest,
+  certItem: CreateInventoryItemRequest
+): CreateInventoryItemRequest {
+  return {
+    ...input,
+    grade: nullIfBlank(input.grade) ?? certItem.grade,
+    certNumber: nullIfBlank(input.certNumber) ?? certItem.certNumber,
+    certUrl: nullIfBlank(input.certUrl) ?? certItem.certUrl,
+    certSpecId: nullIfBlank(input.certSpecId) ?? certItem.certSpecId,
+    certCategory: nullIfBlank(input.certCategory) ?? certItem.certCategory,
+    certPopulation: nullIfBlank(input.certPopulation) ?? certItem.certPopulation,
+    certPopulationHigher:
+      nullIfBlank(input.certPopulationHigher) ?? certItem.certPopulationHigher,
+    certEstimateCents: input.certEstimateCents ?? certItem.certEstimateCents,
+    certLookupAt: nullIfBlank(input.certLookupAt) ?? certItem.certLookupAt
+  };
+}
+
+function normalizePsaCertNumber(certNumber: string | undefined) {
+  const normalized = certNumber?.replace(/\D/g, "") ?? "";
+  return normalized.length >= 4 && normalized.length <= 12 ? normalized : null;
 }
 
 function createInventoryItem(

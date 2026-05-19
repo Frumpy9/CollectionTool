@@ -18,6 +18,7 @@
 - [x] Added local inventory list and collection summary stats.
 - [x] Added PSA cert lookup backend using `PSA_ACCESS_TOKEN`.
 - [x] Added PSA cert import UI under the Cert action.
+- [x] Added automatic PSA population metadata fetch when creating PSA graded cards with cert numbers.
 - [x] Added card detail image override with URL or local upload.
 - [x] Added authenticated local image serving from app data storage.
 - [x] Added free card lookup for set/card-number and name searches.
@@ -111,6 +112,7 @@
 - [x] Add graded card detail UI for grader, grade, cert number, and cert links.
 - [x] Persist PSA cert URL, spec ID, category, population, pop higher, and lookup timestamp.
 - [x] Add PSA cert refresh action on graded card details.
+- [x] Auto-fetch PSA cert population metadata when adding PSA graded cards with cert numbers.
 - [x] Repair migration safety after parked pricing work reused migration id 6.
 - [x] Remove PSA estimate display until a reliable free source exists.
 - [ ] Add barcode scanner path for PSA/CGC slabs.
