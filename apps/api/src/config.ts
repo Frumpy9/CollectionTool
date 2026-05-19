@@ -48,7 +48,7 @@ export function loadConfig(): AppConfig {
     ),
     priceRefreshIntervalHours: positiveIntegerFromEnv(
       process.env.PRICE_REFRESH_INTERVAL_HOURS,
-      24
+      12
     ),
     priceRefreshBatchSize: positiveIntegerFromEnv(process.env.PRICE_REFRESH_BATCH_SIZE, 10)
   };
