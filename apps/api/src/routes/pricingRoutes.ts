@@ -767,12 +767,14 @@ async function refreshPricingForItem({
   // set-level cache warmer could use fetchAllInSet, but scored item-by-item matching
   // still protects variants, grades, Japanese cards, and review states.
   const preferredMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
+  const preferredSourceCardId =
+    preferredMatch?.source_card_id ?? pokemonPriceTrackerCardIdFromNotes(item.notes);
 
   if (item.itemType === "graded") {
     const result = await lookupPokemonPriceTrackerPricing({
       apiKey: config.pokemonPriceTrackerApiKey,
       item,
-      preferredSourceCardId: preferredMatch?.source_card_id ?? null,
+      preferredSourceCardId,
       preferredSourceVariantId: preferredMatch?.source_variant_id ?? null
     });
 
@@ -813,7 +815,7 @@ async function refreshPricingForItem({
       const result = await lookupPokemonPriceTrackerPricing({
         apiKey: config.pokemonPriceTrackerApiKey,
         item,
-    preferredSourceCardId: preferredMatch?.source_card_id ?? null,
+    preferredSourceCardId,
     preferredSourceVariantId: preferredMatch?.source_variant_id ?? null
   });
 
@@ -1859,6 +1861,12 @@ function getPricingSourceMatch(
       `
     )
     .get(itemId, source) as PricingSourceMatchRow | undefined;
+}
+
+function pokemonPriceTrackerCardIdFromNotes(notes: string | null | undefined) {
+  const match = String(notes ?? "").match(/\bPokemonPriceTracker card ([a-z0-9-]{4,})\b/i);
+
+  return match?.[1] ?? null;
 }
 
 function getPokemonPriceTrackerTcgPlayerId(database: AppDatabase, itemId: string) {

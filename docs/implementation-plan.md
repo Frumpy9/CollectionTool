@@ -48,6 +48,9 @@
 - [x] Refreshed the frontend workspace UX with real Collection, Graded, Storage, and Data sections.
 - [x] Added local market price snapshots and red/green saved-price change indicators.
 - [x] Reduced scheduled price refresh cadence to 12 hours by default.
+- [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
+- [x] Added Credits workspace listing API/data-source credits and links.
+- [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
 
 ## Branch Roadmap
 
@@ -131,7 +134,8 @@
 - [x] Add local saved-price history snapshots because PokemonPriceTracker history is unreliable.
 - [x] Add red/green market price movement indicators in list and detail views.
 - [ ] Add pricing settings/status panel showing schedule, last run, next due time, queue state, and ignored cards.
-- [ ] Consider PokemonPriceTracker `fetchAllInSet` later for set-level cache warming when saved source IDs make bulk matching safe.
+- [x] Add admin maintenance status showing backup settings, scheduled pricing state, queue counts, and ignored price-refresh cards.
+- [x] Added PokemonPriceTracker `fetchAllInSet` set browsing in Deep Search for selected card imports.
 
 ### 6. Camera Scanning
 
@@ -152,6 +156,8 @@
 ### 8. Polish And Public Repo Readiness
 
 - [x] Replace inactive sidebar links, dead scan affordance, and stale roadmap chips with working workspace sections.
+- [x] Add practical Admin workspace for account management, collection membership, backups, and maintenance visibility.
+- [x] Add in-app API credits page with source roles and external links.
 - [ ] Add Playwright tests for auth and manual inventory.
 - [ ] Add backend tests for auth, permissions, and inventory routes.
 - [ ] Run Docker Compose on the Ubuntu target server.
@@ -181,9 +187,9 @@ npm run seed:dev-admin --workspace @collection-tool/api
 ## Current Checkpoint
 
 - Current working branch: `codex/local-price-history`.
-- Local `main` includes the polished workspace UX and PokemonPriceTracker pricing workflow through `7fdafd7`.
-- Branch commits after `main`: local saved-price history, 12-hour scheduled price refresh default, and automatic PSA cert metadata fetch on add.
-- Current dev database has migrations through local market price snapshots applied.
-- Verified in browser: local saved-price history panel renders, red/green market movement indicators work, and temporary test snapshot cleanup returned the dev DB to its prior state.
+- Local admin tooling adds migration id `18` for disabled users because migration id `17` is already used by local market price snapshots.
+- Admin v1 is local-first: system admins create users directly; email delivery, invite acceptance, user deletion, and collection ownership transfer are intentionally out of scope.
+- Current dev database has migrations through local market price snapshots applied; admin account disabling is applied by migration id `18`.
+- Browser verification needed after implementation: account creation/login, collection role changes, user disable/session blocking, backup-now from Admin, and maintenance status rendering.
 - PSA estimate remains hidden because the public PSA lookup response has not reliably returned estimate values.
-- Next best feature: add a pricing settings/status panel so scheduled refresh timing, last run, next due time, queue status, and ignored cards are visible in the app.
+- Next best feature: add Japanese set import/refresh maintenance tooling or formal Playwright coverage for admin/auth flows.

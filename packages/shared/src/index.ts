@@ -22,6 +22,7 @@ export type AuthUser = {
   username: string;
   displayName: string;
   systemRole: "admin" | "user";
+  disabledAt: string | null;
 };
 
 export type BootstrapStatusResponse = {
@@ -118,6 +119,116 @@ export type BackupSqliteResponse = {
   createdAt: string;
 };
 
+export type AdminUser = {
+  id: string;
+  email: string;
+  username: string;
+  displayName: string;
+  systemRole: "admin" | "user";
+  disabledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+  collectionCount: number;
+  activeSessionCount: number;
+};
+
+export type AdminUsersResponse = {
+  users: AdminUser[];
+};
+
+export type CreateAdminUserRequest = {
+  email: string;
+  username: string;
+  displayName: string;
+  password: string;
+  systemRole: "admin" | "user";
+};
+
+export type UpdateAdminUserRequest = {
+  email?: string;
+  username?: string;
+  displayName?: string;
+  systemRole?: "admin" | "user";
+};
+
+export type ResetAdminUserPasswordRequest = {
+  password: string;
+};
+
+export type CollectionMember = {
+  userId: string;
+  email: string;
+  username: string;
+  displayName: string;
+  systemRole: "admin" | "user";
+  disabledAt: string | null;
+  role: "owner" | "admin" | "editor" | "viewer";
+  createdAt: string;
+  isOwner: boolean;
+};
+
+export type CollectionMemberCandidate = {
+  id: string;
+  email: string;
+  username: string;
+  displayName: string;
+  systemRole: "admin" | "user";
+  disabledAt: string | null;
+};
+
+export type CollectionMembersResponse = {
+  members: CollectionMember[];
+  candidates: CollectionMemberCandidate[];
+};
+
+export type AddCollectionMemberRequest = {
+  userId: string;
+  role: "admin" | "editor" | "viewer";
+};
+
+export type UpdateCollectionMemberRequest = {
+  role: "admin" | "editor" | "viewer";
+};
+
+export type AdminBackupSummary = {
+  fileName: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
+export type AdminIgnoredPriceRefreshItem = {
+  itemId: string;
+  name: string;
+  setName: string | null;
+  cardNumber: string | null;
+  reason: string | null;
+  ignoredAt: string;
+};
+
+export type AdminCollectionStatusResponse = {
+  backups: {
+    scheduledEnabled: boolean;
+    intervalHours: number;
+    retentionDays: number;
+    latest: AdminBackupSummary[];
+  };
+  pricing: {
+    scheduledEnabled: boolean;
+    intervalHours: number;
+    batchSize: number;
+    runStartedAt: string | null;
+    runCompletedAt: string | null;
+    cursorItemId: string | null;
+    updatedAt: string | null;
+    nextDueAt: string | null;
+    ignoredCount: number;
+    ignoredItems: AdminIgnoredPriceRefreshItem[];
+    queueSummary: BulkPriceQueueResponse["summary"];
+  };
+};
+
 export type ValueOverrideHistoryEntry = {
   id: string;
   itemId: string;
@@ -185,6 +296,12 @@ export type CreateInventoryItemRequest = {
   certPopulationHigher?: string;
   certEstimateCents?: number;
   certLookupAt?: string;
+  pricingSource?: {
+    source: "pokemonpricetracker";
+    sourceCardId: string;
+    sourceVariantId?: string;
+    confidence?: MarketPriceConfidence;
+  };
 };
 
 export type UpdateInventoryItemRequest = CreateInventoryItemRequest;
@@ -388,6 +505,25 @@ export type CardLookupResponse = {
     localId: string | null;
   };
   candidates: CardLookupCandidate[];
+};
+
+export type PokemonPriceTrackerSetSummary = {
+  id: string;
+  name: string;
+  displayName: string;
+  series: string | null;
+  releaseYear: string | null;
+  cardCount: number | null;
+};
+
+export type PokemonPriceTrackerSetSearchResponse = {
+  query: string;
+  sets: PokemonPriceTrackerSetSummary[];
+};
+
+export type PokemonPriceTrackerSetCardsResponse = {
+  setName: string;
+  cards: CardLookupCandidate[];
 };
 
 export type CardImageLookupResponse = {

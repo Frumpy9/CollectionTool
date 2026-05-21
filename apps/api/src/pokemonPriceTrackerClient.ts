@@ -1,9 +1,14 @@
 import type {
+  CardLanguage,
   CardLookupCandidate,
+  CreateInventoryItemRequest,
   InventoryItem,
   InventoryItemType,
   MarketPriceConfidence,
   PokemonPriceTrackerPricingCandidate,
+  PokemonPriceTrackerSetCardsResponse,
+  PokemonPriceTrackerSetSearchResponse,
+  PokemonPriceTrackerSetSummary,
   PricingHistoryPoint
 } from "@collection-tool/shared";
 
@@ -15,11 +20,16 @@ type PokemonPriceTrackerCard = {
   tcgPlayerUrl?: string | null;
   setName?: string | null;
   set?: string | null;
+  setCode?: string | null;
+  setId?: string | null;
   name?: string | null;
   cardNumber?: string | number | null;
   number?: string | number | null;
   totalSetNumber?: string | number | null;
   rarity?: string | null;
+  releaseDate?: string | null;
+  year?: string | number | null;
+  language?: string | null;
   imageUrl?: string | null;
   imageCdnUrl?: string | null;
   imageCdnUrl200?: string | null;
@@ -95,6 +105,15 @@ type PokemonPriceTrackerParseTitleResponse = PokemonPriceTrackerCardsResponse & 
   prices?: unknown;
 };
 
+type PokemonPriceTrackerSetsResponse = {
+  data?: unknown;
+  sets?: unknown;
+  matches?: unknown;
+  results?: unknown;
+  error?: string;
+  message?: string;
+};
+
 type PokemonPriceTrackerCardSearchRequest = {
   search: string;
   set?: string;
@@ -117,6 +136,136 @@ export type PokemonPriceTrackerPricingLookupResult =
       message: string;
       cardImageUrl?: string | null;
     };
+
+export async function lookupPokemonPriceTrackerCardById({
+  apiKey,
+  sourceCardId,
+  language
+}: {
+  apiKey: string;
+  sourceCardId: string;
+  language: CardLanguage | "all";
+}): Promise<CardLookupCandidate[]> {
+  if (!apiKey) {
+    return [];
+  }
+
+  const normalizedSourceCardId = sourceCardId.trim();
+
+  if (!normalizedSourceCardId) {
+    return [];
+  }
+
+  const cards = await fetchPokemonPriceTrackerCardsByDirectId({
+    apiKey,
+    sourceCardId: normalizedSourceCardId,
+    language
+  });
+
+  return cards.map((card) =>
+    pokemonPriceTrackerLookupCandidateFromCard(card, normalizedSourceCardId, language)
+  );
+}
+
+export async function searchPokemonPriceTrackerSets({
+  apiKey,
+  query
+}: {
+  apiKey: string;
+  query: string;
+}): Promise<PokemonPriceTrackerSetSearchResponse> {
+  const normalizedQuery = query.trim();
+
+  if (!apiKey || !normalizedQuery) {
+    return { query: normalizedQuery, sets: [] };
+  }
+
+  const setsByKey = new Map<string, PokemonPriceTrackerSetSummary>();
+  const searchTerms = pokemonPriceTrackerSetSearchTerms(normalizedQuery);
+
+  for (const [termIndex, term] of searchTerms.entries()) {
+    for (const [paramsIndex, params] of pokemonPriceTrackerSetSearchParamVariants(term).entries()) {
+      const shouldRequireSuccess = searchTerms.length === 1 && termIndex === 0 && paramsIndex === 0;
+      const sets =
+        shouldRequireSuccess
+          ? await fetchSetsWithParams(apiKey, params)
+          : await fetchSetsWithParamsSafely(apiKey, params);
+
+      for (const set of sets) {
+        const key = normalizeText(set.name || set.displayName || set.id);
+
+        if (key && !setsByKey.has(key)) {
+          setsByKey.set(key, set);
+        }
+      }
+
+      if (setsByKey.size >= 12) {
+        break;
+      }
+    }
+
+    if (setsByKey.size >= 12) {
+      break;
+    }
+  }
+
+  return {
+    query: normalizedQuery,
+    sets: Array.from(setsByKey.values()).slice(0, 12)
+  };
+}
+
+export async function lookupPokemonPriceTrackerSetCards({
+  apiKey,
+  setName
+}: {
+  apiKey: string;
+  setName: string;
+}): Promise<PokemonPriceTrackerSetCardsResponse> {
+  const normalizedSetName = setName.trim();
+
+  if (!apiKey || !normalizedSetName) {
+    return { setName: normalizedSetName, cards: [] };
+  }
+
+  const cardsById = new Map<string, PokemonPriceTrackerCard>();
+  const setTerms = pokemonPriceTrackerSetSearchTerms(normalizedSetName);
+
+  for (const [termIndex, term] of setTerms.entries()) {
+    for (const [paramsIndex, params] of pokemonPriceTrackerSetCardsParamVariants(term).entries()) {
+      const shouldRequireSuccess = setTerms.length === 1 && termIndex === 0 && paramsIndex === 0;
+      const cards =
+        shouldRequireSuccess
+          ? await fetchCardsWithParams(apiKey, params)
+          : await fetchCardsWithParamsSafely(apiKey, params);
+
+      for (const card of cards) {
+        const sourceId = sourceCardIdForCard(card);
+
+        if (!cardsById.has(sourceId)) {
+          cardsById.set(sourceId, card);
+        }
+      }
+    }
+
+    if (cardsById.size > 0) {
+      break;
+    }
+  }
+
+  return {
+    setName: normalizedSetName,
+    cards: Array.from(cardsById.values())
+      .map((card) =>
+        pokemonPriceTrackerLookupCandidateFromCard(
+          card,
+          sourceCardIdForCard(card),
+          pokemonPriceTrackerLookupLanguage(card, "all")
+        )
+      )
+      .sort(comparePokemonPriceTrackerLookupCandidates)
+  };
+}
 
 export async function lookupPokemonPriceTrackerPricing({
   apiKey,
@@ -141,7 +290,15 @@ export async function lookupPokemonPriceTrackerPricing({
     };
   }
 
-  let cards = await searchPokemonPriceTrackerCards({ apiKey, item });
+  let cards = preferredSourceCardId
+    ? await fetchPokemonPriceTrackerCardsBySourceId({
+        apiKey,
+        item,
+        sourceCardId: preferredSourceCardId,
+        includeHistory: false,
+        days: 30
+      })
+    : await searchPokemonPriceTrackerCards({ apiKey, item });
   let candidates = rankedCandidates(item, cards).slice(0, 5);
 
   if (item.itemType === "graded" && candidates.length === 0) {
@@ -168,7 +325,7 @@ export async function lookupPokemonPriceTrackerPricing({
       candidates: [],
       message:
         item.itemType === "raw"
-          ? "PokemonPriceTracker did not return priced raw-card matches."
+          ? missingRawPriceMessage(matchedCardName, bestCard)
           : missingGradedPriceMessage(item, matchedCardName, bestCard),
       cardImageUrl
     };
@@ -213,7 +370,13 @@ export async function findPokemonPriceTrackerPricingCandidateByIds({
     throw new Error("POKEMON_PRICE_TRACKER_API_KEY is not configured.");
   }
 
-  const cards = await searchPokemonPriceTrackerCards({ apiKey, item });
+  const cards = await fetchPokemonPriceTrackerCardsBySourceId({
+    apiKey,
+    item,
+    sourceCardId,
+    includeHistory: false,
+    days: 30
+  });
   return rankedCandidates(item, cards).find(
     (candidate) =>
       candidate.sourceCardId === sourceCardId && candidate.sourceVariantId === sourceVariantId
@@ -358,9 +521,10 @@ async function fetchPokemonPriceTrackerCardsBySourceId({
   const numericSourceId = /^\d+$/.test(sourceCardId) ? sourceCardId : null;
 
   if (numericSourceId) {
-    const params = baseCardParams(item, includeHistory, days);
-    params.set("tcgPlayerId", numericSourceId);
-    candidates.push(...(await fetchCardsWithParams(apiKey, params)));
+    for (const params of sourceIdLookupParamVariants(item, includeHistory, days)) {
+      params.set("tcgPlayerId", numericSourceId);
+      candidates.push(...(await fetchCardsWithParamsSafely(apiKey, params)));
+    }
   }
 
   const searched = await searchPokemonPriceTrackerCards({ apiKey, item, includeHistory, days });
@@ -368,6 +532,181 @@ async function fetchPokemonPriceTrackerCardsBySourceId({
     (card, index, cards) =>
       cards.findIndex((candidate) => sourceCardIdForCard(candidate) === sourceCardIdForCard(card)) === index
   );
+}
+
+function sourceIdLookupParamVariants(item: InventoryItem, includeHistory: boolean, days: number) {
+  const baseParams = baseCardParams(item, includeHistory, days);
+  const variants = [
+    baseParams,
+    languageOverrideParams(baseParams, "japanese"),
+    languageOverrideParams(baseParams, "english"),
+    languageOverrideParams(baseParams, null)
+  ];
+  const seen = new Set<string>();
+
+  return variants.filter((params) => {
+    const key = params.toString();
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function languageOverrideParams(baseParams: URLSearchParams, language: "english" | "japanese" | null) {
+  const params = new URLSearchParams(baseParams);
+
+  if (language) {
+    params.set("language", language);
+  } else {
+    params.delete("language");
+  }
+
+  return params;
+}
+
+async function fetchPokemonPriceTrackerCardsByDirectId({
+  apiKey,
+  sourceCardId,
+  language
+}: {
+  apiKey: string;
+  sourceCardId: string;
+  language: CardLanguage | "all";
+}) {
+  const requestParams: URLSearchParams[] = [];
+  const numericSourceId = /^\d+$/.test(sourceCardId) ? sourceCardId : null;
+
+  if (numericSourceId) {
+    for (const key of ["tcgPlayerId", "id", "cardId"]) {
+      for (const params of lookupCardParamVariants(language)) {
+        params.set(key, numericSourceId);
+        requestParams.push(params);
+      }
+    }
+  }
+
+  for (const searchParams of lookupCardParamVariants(language)) {
+    searchParams.set("search", sourceCardId);
+    requestParams.push(searchParams);
+  }
+
+  const cards: PokemonPriceTrackerCard[] = [];
+
+  for (const params of requestParams) {
+    const result = await fetchCardsWithParamsSafely(apiKey, params);
+    const directMatches = result.filter((card) =>
+      pokemonPriceTrackerCardMatchesDirectId(card, sourceCardId)
+    );
+
+    if (directMatches.length > 0) {
+      cards.push(...directMatches);
+      break;
+    }
+  }
+
+  return cards.filter(
+    (card, index, allCards) =>
+      allCards.findIndex((candidate) => sourceCardIdForCard(candidate) === sourceCardIdForCard(card)) === index
+  );
+}
+
+async function fetchCardsWithParamsSafely(apiKey: string, params: URLSearchParams) {
+  try {
+    return await fetchCardsWithParams(apiKey, params);
+  } catch (error) {
+    if (error instanceof Error && /rate limit/i.test(error.message)) {
+      throw error;
+    }
+
+    return [];
+  }
+}
+
+async function fetchSetsWithParams(apiKey: string, params: URLSearchParams) {
+  const response = await fetch(`${pokemonPriceTrackerBaseUrl}/sets?${params}`, {
+    headers: pokemonPriceTrackerHeaders(apiKey)
+  });
+  const payload = (await response.json().catch(() => ({}))) as PokemonPriceTrackerSetsResponse;
+
+  if (response.status === 429) {
+    throw new Error("PokemonPriceTracker rate limit reached. Try again later.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      payload.error ?? payload.message ?? `PokemonPriceTracker returned ${response.status}.`
+    );
+  }
+
+  return normalizePokemonPriceTrackerSets(payload);
+}
+
+async function fetchSetsWithParamsSafely(apiKey: string, params: URLSearchParams) {
+  try {
+    return await fetchSetsWithParams(apiKey, params);
+  } catch (error) {
+    if (error instanceof Error && /rate limit/i.test(error.message)) {
+      throw error;
+    }
+
+    return [];
+  }
+}
+
+function lookupCardParams(language: CardLanguage | "all") {
+  const params = new URLSearchParams({
+    days: "30",
+    limit: "8"
+  });
+
+  if (language === "ja") {
+    params.set("language", "japanese");
+  } else if (language === "en") {
+    params.set("language", "english");
+  }
+
+  return params;
+}
+
+function lookupCardParamVariants(language: CardLanguage | "all") {
+  if (language !== "all") {
+    return [lookupCardParams(language)];
+  }
+
+  return [lookupCardParams("all"), lookupCardParams("ja"), lookupCardParams("en")];
+}
+
+function pokemonPriceTrackerSetSearchParamVariants(search: string) {
+  return pokemonPriceTrackerLanguageParamVariants(
+    new URLSearchParams({
+      search,
+      limit: "12"
+    })
+  );
+}
+
+function pokemonPriceTrackerSetCardsParamVariants(setName: string) {
+  return pokemonPriceTrackerLanguageParamVariants(
+    new URLSearchParams({
+      set: setName,
+      fetchAllInSet: "true",
+      limit: "250"
+    })
+  );
+}
+
+function pokemonPriceTrackerLanguageParamVariants(baseParams: URLSearchParams) {
+  const allParams = new URLSearchParams(baseParams);
+  const japaneseParams = new URLSearchParams(baseParams);
+  japaneseParams.set("language", "japanese");
+  const englishParams = new URLSearchParams(baseParams);
+  englishParams.set("language", "english");
+
+  return [allParams, japaneseParams, englishParams];
 }
 
 function baseCardParams(item: InventoryItem, includeHistory: boolean, days: number) {
@@ -400,10 +739,7 @@ function baseCardParams(item: InventoryItem, includeHistory: boolean, days: numb
 
 async function fetchCardsWithParams(apiKey: string, params: URLSearchParams) {
   const response = await fetch(`${pokemonPriceTrackerBaseUrl}/cards?${params}`, {
-    headers: {
-      accept: "application/json",
-      Authorization: `Bearer ${apiKey}`
-    }
+    headers: pokemonPriceTrackerHeaders(apiKey)
   });
   const payload = (await response.json().catch(() => ({}))) as PokemonPriceTrackerCardsResponse;
 
@@ -418,6 +754,13 @@ async function fetchCardsWithParams(apiKey: string, params: URLSearchParams) {
   }
 
   return cardsFromResponse(payload);
+}
+
+function pokemonPriceTrackerHeaders(apiKey: string) {
+  return {
+    accept: "application/json",
+    Authorization: `Bearer ${apiKey}`
+  };
 }
 
 async function parseTitleCards({ apiKey, item }: { apiKey: string; item: InventoryItem }) {
@@ -500,6 +843,106 @@ function normalizeCards(values: unknown[]) {
 
 function isProbablyCard(value: Record<string, unknown>) {
   return Boolean(value.name || value.id || value.tcgPlayerId);
+}
+
+function normalizePokemonPriceTrackerSets(
+  payload: PokemonPriceTrackerSetsResponse
+): PokemonPriceTrackerSetSummary[] {
+  const sets = normalizeSetRecords([payload.data, payload.sets, payload.matches, payload.results]);
+  const seen = new Set<string>();
+
+  return sets
+    .map(pokemonPriceTrackerSetSummaryFromPayload)
+    .filter((set): set is PokemonPriceTrackerSetSummary => Boolean(set))
+    .filter((set) => {
+      const key = normalizeText(set.name || set.displayName || set.id);
+
+      if (!key || seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizeSetRecords(values: unknown[]): Record<string, unknown>[] {
+  const sets: Record<string, unknown>[] = [];
+
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      sets.push(...normalizeSetRecords(value));
+      continue;
+    }
+
+    if (!isRecord(value)) {
+      continue;
+    }
+
+    const nestedSet = value.set;
+
+    if (isRecord(nestedSet)) {
+      sets.push(nestedSet);
+    } else if (value.name || value.setName || value.displayName || value.id) {
+      sets.push(value);
+    }
+  }
+
+  return sets;
+}
+
+function pokemonPriceTrackerSetSummaryFromPayload(
+  value: Record<string, unknown>
+): PokemonPriceTrackerSetSummary | null {
+  const name = stringifyFirst(value, ["name", "setName", "displayName", "title"]);
+
+  if (!name) {
+    return null;
+  }
+
+  const id = stringifyFirst(value, ["id", "setId", "slug", "code"]) || name;
+  const displayName = stringifyFirst(value, ["displayName", "name", "setName", "title"]) || name;
+  const series = stringifyFirst(value, ["series", "era", "block"]);
+  const releaseYear =
+    releaseYearFromUnknown(stringifyFirst(value, ["releaseYear", "year", "releaseDate"])) ?? null;
+  const cardCount = numberOrNull(
+    value.cardCount ?? value.totalCards ?? value.totalSetNumber ?? value.printedTotal
+  );
+
+  return {
+    id,
+    name,
+    displayName,
+    series,
+    releaseYear,
+    cardCount
+  };
+}
+
+function pokemonPriceTrackerSetSearchTerms(value: string | null | undefined) {
+  const raw = String(value ?? "").trim();
+  const normalized = normalizeText(raw);
+  const aliases: string[] = [raw];
+
+  if (
+    normalized === "japanese fossil" ||
+    normalized === "fossil japanese" ||
+    normalized === "jp fossil" ||
+    normalized === "jpn fossil" ||
+    normalized.includes("japanese fossil")
+  ) {
+    aliases.push("Mystery of the Fossils");
+  }
+
+  if (
+    normalized === "mystery fossil" ||
+    normalized === "mystery fossils" ||
+    normalized === "mystery of fossils"
+  ) {
+    aliases.push("Mystery of the Fossils");
+  }
+
+  return uniqueNormalizedStrings(aliases);
 }
 
 function buildSearchRequests(item: InventoryItem) {
@@ -1130,6 +1573,53 @@ function rawPriceVariantScore(itemVariants: string, source: string) {
   return score;
 }
 
+function missingRawPriceMessage(
+  matchedCardName: string | null,
+  card: PokemonPriceTrackerCard | undefined
+) {
+  if (!matchedCardName) {
+    return "PokemonPriceTracker did not return raw-card matches.";
+  }
+
+  const priceLabels = rawPriceLabels(card).slice(0, 6);
+  let message = `PokemonPriceTracker found ${matchedCardName}, but the API did not return a usable raw market price.`;
+
+  if (priceLabels.length > 0) {
+    message += ` Available raw price labels: ${priceLabels.join(", ")}.`;
+  }
+
+  return message;
+}
+
+function rawPriceLabels(card: PokemonPriceTrackerCard | undefined) {
+  const prices = isRecord(card?.prices) ? card.prices : {};
+  const labels = new Set<string>();
+
+  if (typeof prices.primaryPrinting === "string") {
+    labels.add(humanizePriceKey(prices.primaryPrinting));
+  }
+
+  for (const key of ["market", "marketPrice", "tcgplayerMarket", "tcgPlayerMarket"]) {
+    if (prices[key] !== undefined && prices[key] !== null) {
+      labels.add(humanizePriceKey(key));
+    }
+  }
+
+  if (isRecord(prices.variants)) {
+    for (const [printing, conditionValues] of Object.entries(prices.variants)) {
+      if (!isRecord(conditionValues)) {
+        continue;
+      }
+
+      for (const condition of Object.keys(conditionValues)) {
+        labels.add(humanizePriceKey(`${printing} ${condition}`));
+      }
+    }
+  }
+
+  return [...labels].filter(Boolean);
+}
+
 function gradedPriceToCents(summary: PokemonPriceTrackerGradeSummary | undefined) {
   return (
     priceToCents(summary?.smartMarketPrice?.price) ??
@@ -1559,7 +2049,159 @@ function numberOrNull(value: unknown) {
 }
 
 function sourceCardIdForCard(card: PokemonPriceTrackerCard) {
-  return String(card.id || card.tcgPlayerId || card.externalCatalogId || card.name || "unknown");
+  return String(card.tcgPlayerId || card.id || card.externalCatalogId || card.name || "unknown");
+}
+
+function pokemonPriceTrackerCardMatchesDirectId(card: PokemonPriceTrackerCard, sourceCardId: string) {
+  const normalizedSourceCardId = normalizeText(sourceCardId);
+  const identifiers = [
+    card.id,
+    card.tcgPlayerId,
+    card.externalCatalogId,
+    sourceCardIdForCard(card)
+  ].map((value) => normalizeText(value));
+
+  return identifiers.includes(normalizedSourceCardId);
+}
+
+function pokemonPriceTrackerLookupCandidateFromCard(
+  card: PokemonPriceTrackerCard,
+  sourceCardId: string,
+  requestedLanguage: CardLanguage | "all"
+): CardLookupCandidate {
+  const cardName = String(card.name ?? "").trim() || `PokemonPriceTracker ${sourceCardId}`;
+  const cardNumber = normalizedDisplayCardNumber(card);
+  const setName = String(card.setName ?? card.set ?? "").trim() || null;
+  const setCode = String(card.setCode ?? card.setId ?? "").trim() || null;
+  const rarity = String(card.rarity ?? "").trim() || null;
+  const language = pokemonPriceTrackerLookupLanguage(card, requestedLanguage);
+  const releaseYear = releaseYearFromPokemonPriceTrackerCard(card);
+  const sourceId = sourceCardIdForCard(card);
+  const item: CreateInventoryItemRequest = {
+    name: cardName,
+    setName: setName ?? undefined,
+    setCode: setCode ?? undefined,
+    cardNumber: cardNumber ?? undefined,
+    language,
+    rarity: rarity ?? undefined,
+    releaseYear: releaseYear ?? undefined,
+    imageUrl: imageUrlFromCard(card) ?? undefined,
+    itemType: "raw",
+    quantity: 1,
+    notes: `PokemonPriceTracker card ${sourceId}`
+  };
+
+  return {
+    id: `pokemonpricetracker:${sourceId}`,
+    source: "pokemonpricetracker",
+    sourceId,
+    confidence: "exact",
+    name: cardName,
+    setName,
+    setCode,
+    cardNumber,
+    language,
+    rarity,
+    imageUrl: imageUrlFromCard(card),
+    item,
+    score: sourceId === sourceCardId ? 100 : 95
+  };
+}
+
+function pokemonPriceTrackerLookupLanguage(
+  card: PokemonPriceTrackerCard,
+  requestedLanguage: CardLanguage | "all"
+): CardLanguage {
+  const cardLanguage = normalizeText(card.language);
+  const priceLanguageText = normalizeText(JSON.stringify(card.prices ?? {}));
+
+  if (cardLanguage.includes("japanese") || cardLanguage === "ja" || cardLanguage === "jp") {
+    return "ja";
+  }
+
+  if (cardLanguage.includes("english") || cardLanguage === "en") {
+    return "en";
+  }
+
+  if (priceLanguageText.includes("japanese")) {
+    return "ja";
+  }
+
+  if (priceLanguageText.includes("english")) {
+    return "en";
+  }
+
+  if (requestedLanguage === "ja" || requestedLanguage === "en") {
+    return requestedLanguage;
+  }
+
+  return hasJapaneseText([card.name, card.setName, card.set].filter(Boolean).join(" "))
+    ? "ja"
+    : "en";
+}
+
+function releaseYearFromPokemonPriceTrackerCard(card: PokemonPriceTrackerCard) {
+  return releaseYearFromUnknown(card.releaseDate ?? card.year);
+}
+
+function hasJapaneseText(value: string) {
+  return /[\u3040-\u30ff\u3400-\u9fff]/.test(value);
+}
+
+function comparePokemonPriceTrackerLookupCandidates(
+  left: CardLookupCandidate,
+  right: CardLookupCandidate
+) {
+  const leftNumber = firstNumericCardNumber(left.cardNumber);
+  const rightNumber = firstNumericCardNumber(right.cardNumber);
+
+  if (leftNumber !== null && rightNumber !== null && leftNumber !== rightNumber) {
+    return leftNumber - rightNumber;
+  }
+
+  if (leftNumber !== null && rightNumber === null) {
+    return -1;
+  }
+
+  if (leftNumber === null && rightNumber !== null) {
+    return 1;
+  }
+
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
+function firstNumericCardNumber(value: string | null | undefined) {
+  const match = String(value ?? "").match(/\d+/);
+
+  if (!match) {
+    return null;
+  }
+
+  const number = Number(match[0]);
+
+  return Number.isFinite(number) ? number : null;
+}
+
+function releaseYearFromUnknown(value: unknown) {
+  const match = String(value ?? "").match(/\b(19[5-9]\d|20[0-4]\d)\b/);
+
+  return match?.[1] ?? null;
+}
+
+function stringifyFirst(value: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const candidate = value[key];
+
+    if (typeof candidate === "string" || typeof candidate === "number") {
+      const text = String(candidate).trim();
+
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizedDisplayCardNumber(card: PokemonPriceTrackerCard) {

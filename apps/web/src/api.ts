@@ -1,4 +1,8 @@
 import type {
+  AddCollectionMemberRequest,
+  AdminCollectionStatusResponse,
+  AdminUser,
+  AdminUsersResponse,
   AuthMeResponse,
   BackupSqliteResponse,
   BulkDeleteInventoryItemsRequest,
@@ -13,10 +17,15 @@ import type {
   CardImageLookupResponse,
   CardLookupRequest,
   CardLookupResponse,
+  CollectionMember,
+  CollectionMembersResponse,
+  CreateAdminUserRequest,
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryListResponse,
   MarketPriceSnapshotsResponse,
+  PokemonPriceTrackerSetCardsResponse,
+  PokemonPriceTrackerSetSearchResponse,
   PsaCertLookupRequest,
   PsaCertLookupResponse,
   PricingHistoryResponse,
@@ -24,6 +33,9 @@ import type {
   RefreshPricingResponse,
   SelectPokemonPriceTrackerPricingRequest,
   SelectPricingRequest,
+  ResetAdminUserPasswordRequest,
+  UpdateAdminUserRequest,
+  UpdateCollectionMemberRequest,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest,
   ValueOverrideHistoryResponse
@@ -100,6 +112,54 @@ export const api = {
       method: "POST",
       body: JSON.stringify({})
     }),
+  listAdminUsers: () => request<AdminUsersResponse>("/api/admin/users"),
+  createAdminUser: (payload: CreateAdminUserRequest) =>
+    request<{ user: AdminUser }>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateAdminUser: (userId: string, payload: UpdateAdminUserRequest) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  resetAdminUserPassword: (userId: string, payload: ResetAdminUserPasswordRequest) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}/password`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  disableAdminUser: (userId: string) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}/disable`, {
+      method: "POST",
+      body: JSON.stringify({})
+    }),
+  enableAdminUser: (userId: string) =>
+    request<{ user: AdminUser }>(`/api/admin/users/${userId}/enable`, {
+      method: "POST",
+      body: JSON.stringify({})
+    }),
+  listCollectionMembers: (collectionId: string) =>
+    request<CollectionMembersResponse>(`/api/collections/${collectionId}/members`),
+  addCollectionMember: (collectionId: string, payload: AddCollectionMemberRequest) =>
+    request<{ member: CollectionMember }>(`/api/collections/${collectionId}/members`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  updateCollectionMember: (
+    collectionId: string,
+    userId: string,
+    payload: UpdateCollectionMemberRequest
+  ) =>
+    request<{ member: CollectionMember }>(`/api/collections/${collectionId}/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  removeCollectionMember: (collectionId: string, userId: string) =>
+    request<{ ok: true }>(`/api/collections/${collectionId}/members/${userId}`, {
+      method: "DELETE"
+    }),
+  getAdminStatus: (collectionId: string) =>
+    request<AdminCollectionStatusResponse>(`/api/collections/${collectionId}/admin/status`),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
   getBulkPriceQueue: (collectionId: string) =>
@@ -164,6 +224,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  searchPokemonPriceTrackerSets: (search: string) =>
+    request<PokemonPriceTrackerSetSearchResponse>(
+      `/api/cards/pokemonpricetracker/sets?search=${encodeURIComponent(search)}`
+    ),
+  getPokemonPriceTrackerSetCards: (setName: string) =>
+    request<PokemonPriceTrackerSetCardsResponse>(
+      `/api/cards/pokemonpricetracker/sets/${encodeURIComponent(setName)}/cards`
+    ),
   lookupPokemonPriceTrackerImageCandidates: (collectionId: string, itemId: string) =>
     request<CardImageLookupResponse>(
       `/api/collections/${collectionId}/items/${itemId}/pricing/image-candidates`

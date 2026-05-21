@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { BackupSqliteResponse } from "@collection-tool/shared";
+import type { AdminBackupSummary, BackupSqliteResponse } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
@@ -58,6 +58,33 @@ export function pruneOldSqliteBackups(
   }
 
   return removed;
+}
+
+export function listSqliteBackups(
+  database: AppDatabase,
+  limit = 5
+): AdminBackupSummary[] {
+  const backupDirectory = backupDirectoryForDatabase(database);
+
+  if (!existsSync(backupDirectory)) {
+    return [];
+  }
+
+  return readdirSync(backupDirectory)
+    .filter(isBackupFileName)
+    .map((fileName) => {
+      const backupPath = join(backupDirectory, fileName);
+      const stat = statSync(backupPath);
+
+      return {
+        fileName,
+        path: backupPath,
+        sizeBytes: stat.size,
+        createdAt: stat.mtime.toISOString()
+      };
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, limit);
 }
 
 export function startScheduledSqliteBackups(

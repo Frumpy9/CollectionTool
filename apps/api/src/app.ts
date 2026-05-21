@@ -5,6 +5,7 @@ import type { HealthResponse } from "@collection-tool/shared";
 import { startScheduledSqliteBackups } from "./backups.js";
 import type { AppConfig } from "./config.js";
 import type { AppDatabase } from "./db.js";
+import { registerAdminRoutes } from "./routes/adminRoutes.js";
 import { registerAuthRoutes } from "./routes/authRoutes.js";
 import { registerBackupRoutes } from "./routes/backupRoutes.js";
 import { registerCardLookupRoutes } from "./routes/cardLookupRoutes.js";
@@ -40,6 +41,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
     }
   }));
 
+  await registerAdminRoutes(app, config, database);
   await registerAuthRoutes(app, config, database);
   await registerBackupRoutes(app, database);
   await registerCardLookupRoutes(app, config, database);

@@ -7,11 +7,13 @@ import type {
 } from "@collection-tool/shared";
 import type { AppDatabase } from "./db.js";
 import { japanesePokemonNameMap } from "./japanesePokemonNames.js";
+import { lookupPokemonPriceTrackerCardById } from "./pokemonPriceTrackerClient.js";
 
 type CardLookupOptions = {
   query: string;
   language: CardLanguage | "all";
   pokemonTcgApiKey: string;
+  pokemonPriceTrackerApiKey: string;
   database: AppDatabase;
 };
 
@@ -113,12 +115,38 @@ export async function lookupCards({
   query,
   language,
   pokemonTcgApiKey,
+  pokemonPriceTrackerApiKey,
   database
 }: CardLookupOptions): Promise<CardLookupResponse> {
   const normalizedQuery = query.trim();
   const parsed = parseCardQuery(normalizedQuery);
   const lookupTasks: Array<Promise<CardLookupCandidate[]>> = [];
   const cachedCandidates: CardLookupCandidate[] = [];
+  const pokemonPriceTrackerId = parsePokemonPriceTrackerLookupId(normalizedQuery);
+
+  if (pokemonPriceTrackerId) {
+    if (pokemonPriceTrackerId === normalizedQuery) {
+      const directCandidates = await lookupPokemonPriceTrackerCardById({
+        apiKey: pokemonPriceTrackerApiKey,
+        sourceCardId: pokemonPriceTrackerId,
+        language
+      });
+
+      return {
+        query: normalizedQuery,
+        parsed,
+        candidates: directCandidates.slice(0, 12)
+      };
+    }
+
+    lookupTasks.push(
+      lookupPokemonPriceTrackerCardById({
+        apiKey: pokemonPriceTrackerApiKey,
+        sourceCardId: pokemonPriceTrackerId,
+        language
+      })
+    );
+  }
 
   if (language === "all" || language === "en") {
     lookupTasks.push(lookupPokemonTcgCards(parsed, normalizedQuery, pokemonTcgApiKey));
@@ -151,6 +179,30 @@ export async function lookupCards({
         : buildParsedFallbackCandidate(parsed)
     ).slice(0, 12)
   };
+}
+
+function parsePokemonPriceTrackerLookupId(query: string) {
+  const urlMatch = query.match(/pokemonpricetracker\.com\/[^\s?#]+(?:\?[^#\s]*)?/i);
+
+  if (urlMatch) {
+    const idFromUrl =
+      urlMatch[0].match(/[?&](?:id|cardId|tcgPlayerId)=([a-z0-9-]+)/i)?.[1] ??
+      urlMatch[0].match(/(?:card|cards|pokemon-prices)\/([a-z0-9-]+)/i)?.[1];
+
+    if (idFromUrl) {
+      return idFromUrl;
+    }
+  }
+
+  const labeledId = query.match(/\b(?:ppt|price\s*tracker|pokemon\s*price\s*tracker)[:#\s-]+([a-z0-9-]{4,})\b/i)?.[1];
+
+  if (labeledId) {
+    return labeledId;
+  }
+
+  const bareNumericId = query.match(/^\d{5,}$/)?.[0];
+
+  return bareNumericId ?? null;
 }
 
 export function parseCardQuery(query: string): ParsedCardQuery {

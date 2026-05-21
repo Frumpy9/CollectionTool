@@ -13,6 +13,7 @@ import {
   Grid2X2,
   HardDriveDownload,
   Image as ImageIcon,
+  KeyRound,
   ListFilter,
   Play,
   Plus,
@@ -23,6 +24,8 @@ import {
   Tags,
   Trash2,
   Upload,
+  UserPlus,
+  Users,
   X,
   XCircle
 } from "lucide-react";
@@ -30,17 +33,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthMeResponse,
   AuthUser,
+  AdminCollectionStatusResponse,
+  AdminUser,
   BulkPriceQueueResponse,
   BulkVariantEditMode,
   CardLanguage,
   CardLookupCandidate,
   CardLookupResponse,
+  CollectionMember,
+  CollectionMemberCandidate,
+  CollectionMembersResponse,
   CollectionSummary,
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
   MarketPriceSnapshot,
+  PokemonPriceTrackerSetSummary,
   PricingCandidate,
   PsaCertLookupResponse,
   ValueOverrideHistoryEntry
@@ -52,7 +61,14 @@ type HealthState =
   | { status: "ok"; timestamp: string; migrationsApplied: number }
   | { status: "error"; message: string };
 
-type InventorySortMode = "newest" | "name" | "set" | "value" | "quantity";
+type InventorySortMode =
+  | "newest"
+  | "name"
+  | "set"
+  | "value"
+  | "quantity"
+  | "price-change"
+  | "psa-pop";
 type InventoryValueFilter = "all" | "with-value" | "missing-value";
 
 type InventoryFilterState = {
@@ -117,7 +133,16 @@ type CsvImportPreviewRow = {
 };
 
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
-type WorkspaceSection = "collection" | "graded" | "storage" | "data";
+type WorkspaceSection = "collection" | "graded" | "search" | "storage" | "data" | "admin" | "credits";
+type AdminTab = "accounts" | "members" | "maintenance";
+type DeepSearchStatus = "idle" | "loading" | "error";
+
+type ApiCredit = {
+  name: string;
+  url: string;
+  role: string;
+  status: "Active" | "Fallback" | "Legacy" | "Reference";
+};
 
 type PendingDuplicateDecision = {
   id: string;
@@ -141,14 +166,68 @@ const variantOptions = [
 
 const workspaceNavItems = [
   { section: "collection", label: "Collection", icon: Grid2X2 },
-  { section: "graded", label: "Graded cards", icon: ShieldCheck },
+  { section: "search", label: "Search", icon: Search },
   { section: "storage", label: "Storage", icon: Tags },
-  { section: "data", label: "Data", icon: Database }
+  { section: "data", label: "Data", icon: Database },
+  { section: "admin", label: "Admin", icon: Users, adminOnly: true },
+  { section: "credits", label: "Credits", icon: ExternalLink }
 ] satisfies Array<{
   section: WorkspaceSection;
   label: string;
   icon: typeof Grid2X2;
+  adminOnly?: boolean;
 }>;
+
+const apiCredits: ApiCredit[] = [
+  {
+    name: "TCGdex",
+    url: "https://tcgdex.dev/",
+    role: "Free English and Japanese Pokemon TCG metadata for card lookup.",
+    status: "Active"
+  },
+  {
+    name: "PokemonTCG.io",
+    url: "https://docs.pokemontcg.io/",
+    role: "English card metadata fallback and optional API-key-backed lookup.",
+    status: "Active"
+  },
+  {
+    name: "PokemonPriceTracker",
+    url: "https://www.pokemonpricetracker.com/api",
+    role: "Primary raw and graded market pricing, saved price matches, image candidates, and history.",
+    status: "Active"
+  },
+  {
+    name: "PSA Public API",
+    url: "https://www.psacard.com/publicapi",
+    role: "PSA cert lookup, slab labels, population details, and cert metadata.",
+    status: "Active"
+  },
+  {
+    name: "PokéAPI",
+    url: "https://pokeapi.co/",
+    role: "Pokemon species-name enrichment for Japanese card imports.",
+    status: "Reference"
+  },
+  {
+    name: "Pokemon Card Game Trainers Website",
+    url: "https://www.pokemon-card.com/",
+    role: "Official Japanese card-page imports and set/card-number fallback metadata.",
+    status: "Fallback"
+  },
+  {
+    name: "Limitless TCG",
+    url: "https://limitlesstcg.com/",
+    role: "Fallback Japanese card pages and images when primary Japanese sources miss a card.",
+    status: "Fallback"
+  },
+  {
+    name: "JustTCG",
+    url: "https://www.justtcg.com/",
+    role: "Deprecated raw-pricing source; old saved prices remain readable but new refreshes use PokemonPriceTracker.",
+    status: "Legacy"
+  }
+];
 
 const defaultInventoryFilters: InventoryFilterState = {
   query: "",
@@ -273,7 +352,7 @@ export function App() {
 
 function workspaceSectionMeta(
   section: WorkspaceSection,
-  counts: { totalCards: number; gradedRows: number; storageGroups: number }
+  counts: { totalCards: number; gradedRows: number; rawRows: number; storageGroups: number }
 ) {
   if (section === "graded") {
     return {
@@ -295,11 +374,45 @@ function workspaceSectionMeta(
     };
   }
 
+  if (section === "search") {
+    return {
+      eyebrow: "Import",
+      title: "Deep search",
+      description: "Search cards, PokemonPriceTracker IDs, PSA certs, and full sets with thumbnails."
+    };
+  }
+
   if (section === "data") {
     return {
       eyebrow: "Maintenance",
       title: "Data tools",
-      description: "Export inventory, import CSV rows, back up SQLite, and monitor price jobs."
+      description: "Export inventory and import CSV rows for this local collection."
+    };
+  }
+
+  if (section === "admin") {
+    return {
+      eyebrow: "Admin",
+      title: "Admin tools",
+      description: "Manage local accounts, collection access, backups, and maintenance status."
+    };
+  }
+
+  if (section === "credits") {
+    return {
+      eyebrow: "Credits",
+      title: "API credits",
+      description: "Data sources and services that help power lookup, cert import, and pricing."
+    };
+  }
+
+  if (section === "collection") {
+    return {
+      eyebrow: "Raw inventory",
+      title: "Raw cards",
+      description: `${counts.rawRows} raw row${
+        counts.rawRows === 1 ? "" : "s"
+      } ready for lookup, pricing, and organization.`
     };
   }
 
@@ -328,6 +441,8 @@ function WorkspaceShell({
     collections.find((collection) => collection.id === activeCollectionId) ?? collections[0];
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("collection");
   const [showCollectionMenu, setShowCollectionMenu] = useState(false);
+  const [showCollectionTypeMenu, setShowCollectionTypeMenu] = useState(false);
+  const [collectionResultScope, setCollectionResultScope] = useState<"raw" | "all">("raw");
   const [inventory, setInventory] = useState<InventoryListResponse>({
     items: [],
     summary: {
@@ -350,9 +465,28 @@ function WorkspaceShell({
   const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
   const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
   const [lookupError, setLookupError] = useState("");
+  const [deepSearchQuery, setDeepSearchQuery] = useState("");
+  const [deepSearchLanguage, setDeepSearchLanguage] = useState<CardLanguage | "all">("all");
+  const [deepSearchStatus, setDeepSearchStatus] = useState<DeepSearchStatus>("idle");
+  const [deepSearchMessage, setDeepSearchMessage] = useState("");
+  const [deepSearchLookupResult, setDeepSearchLookupResult] = useState<CardLookupResponse | null>(null);
+  const [deepSearchSets, setDeepSearchSets] = useState<PokemonPriceTrackerSetSummary[]>([]);
+  const [deepSearchSetCards, setDeepSearchSetCards] = useState<CardLookupCandidate[]>([]);
+  const [deepSearchSelectedSet, setDeepSearchSelectedSet] =
+    useState<PokemonPriceTrackerSetSummary | null>(null);
   const [exportStatus, setExportStatus] = useState<"idle" | "loading" | "error">("idle");
   const [backupStatus, setBackupStatus] = useState<"idle" | "loading" | "error">("idle");
   const [dataActionMessage, setDataActionMessage] = useState("");
+  const [adminTab, setAdminTab] = useState<AdminTab>(
+    authUser.systemRole === "admin" ? "accounts" : "members"
+  );
+  const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
+  const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>([]);
+  const [memberCandidates, setMemberCandidates] = useState<CollectionMemberCandidate[]>([]);
+  const [adminStatus, setAdminStatus] = useState<AdminCollectionStatusResponse | null>(null);
+  const [adminLoadStatus, setAdminLoadStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [adminActionStatus, setAdminActionStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [adminMessage, setAdminMessage] = useState("");
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [bulkPriceQueue, setBulkPriceQueue] = useState<BulkPriceQueueResponse | null>(null);
@@ -372,6 +506,13 @@ function WorkspaceShell({
       bulkPriceQueue.summary.running +
       bulkPriceQueue.summary.rateLimited
     : 0;
+  const canUseAdmin =
+    authUser.systemRole === "admin" ||
+    activeCollection?.role === "owner" ||
+    activeCollection?.role === "admin";
+  const visibleWorkspaceNavItems = workspaceNavItems.filter(
+    (item) => !item.adminOnly || canUseAdmin
+  );
 
   useEffect(() => {
     const firstCollection = collections[0];
@@ -391,6 +532,7 @@ function WorkspaceShell({
     setSelectedItem(null);
     setShowFilters(false);
     setShowCollectionMenu(false);
+    setShowCollectionTypeMenu(false);
     setInventoryFilters(defaultInventoryFilters);
     setLookupQuery("");
     setLookupResult(null);
@@ -401,6 +543,13 @@ function WorkspaceShell({
     setBulkVariantMessage("");
     setBulkPriceMessage("");
     setDataActionMessage("");
+    setAdminMessage("");
+    setAdminStatus(null);
+    setCollectionMembers([]);
+    setMemberCandidates([]);
+    if (authUser.systemRole !== "admin") {
+      setAdminTab("members");
+    }
   }, [activeCollection?.id]);
 
   useEffect(() => {
@@ -507,9 +656,53 @@ function WorkspaceShell({
   }, [activeCollection?.id]);
 
   useEffect(() => {
+    if (!activeCollection || activeSection !== "admin" || !canUseAdmin) {
+      return;
+    }
+
+    void refreshAdminData();
+  }, [activeCollection?.id, activeSection, canUseAdmin, authUser.systemRole]);
+
+  useEffect(() => {
+    if (activeSection === "admin" && !canUseAdmin) {
+      setActiveSection("collection");
+    }
+  }, [activeSection, canUseAdmin]);
+
+  useEffect(() => {
     const availableItemIds = new Set(inventory.items.map((item) => item.id));
     setSelectedItemIds((current) => current.filter((itemId) => availableItemIds.has(itemId)));
   }, [inventory.items]);
+
+  async function refreshAdminData() {
+    if (!activeCollection || !canUseAdmin) {
+      return;
+    }
+
+    setAdminLoadStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const [membersResponse, statusResponse, usersResponse] = await Promise.all([
+        api.listCollectionMembers(activeCollection.id),
+        api.getAdminStatus(activeCollection.id),
+        authUser.systemRole === "admin" ? api.listAdminUsers() : Promise.resolve(null)
+      ]);
+
+      setCollectionMembers(membersResponse.members);
+      setMemberCandidates(membersResponse.candidates);
+      setAdminStatus(statusResponse);
+
+      if (usersResponse) {
+        setAdminUsers(usersResponse.users);
+      }
+
+      setAdminLoadStatus("idle");
+    } catch (error) {
+      setAdminLoadStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to load admin tools.");
+    }
+  }
 
   function requestDuplicateDecision(
     existingItem: InventoryItem,
@@ -615,31 +808,81 @@ function WorkspaceShell({
     [inventoryFilters]
   );
   const hasActiveInventoryFilters = activeFilterChips.length > 0;
+  const rawItems = useMemo(
+    () => inventory.items.filter((item) => item.itemType === "raw"),
+    [inventory.items]
+  );
   const gradedItems = useMemo(
     () => inventory.items.filter((item) => item.itemType === "graded"),
     [inventory.items]
   );
   const storageGroups = useMemo(() => getStorageGroups(inventory.items), [inventory.items]);
   const variantGroups = useMemo(() => getVariantGroups(inventory.items), [inventory.items]);
-  const sectionItems = activeSection === "graded" ? gradedItems : inventory.items;
+  const sectionItems =
+    activeSection === "graded"
+      ? gradedItems
+      : activeSection === "collection"
+        ? collectionResultScope === "all" || inventoryFilters.itemType !== "all"
+          ? inventory.items
+          : rawItems
+        : inventory.items;
+  const isAllCollectionResultScope =
+    activeSection === "collection" &&
+    (collectionResultScope === "all" || inventoryFilters.itemType !== "all");
   const visibleItems =
     activeSection === "collection" || activeSection === "graded"
       ? filterInventoryItems(sectionItems, inventoryFilters)
       : [];
-  const sectionMeta = workspaceSectionMeta(activeSection, {
-    totalCards: inventory.summary.cardCount,
-    gradedRows: gradedItems.length,
-    storageGroups: storageGroups.length
-  });
+  const inventoryRowKindLabel = isAllCollectionResultScope
+    ? "matching rows"
+    : activeSection === "graded"
+      ? "graded rows"
+      : "raw rows";
+  const sectionMeta = isAllCollectionResultScope
+    ? {
+        eyebrow: "Collection",
+        title: "Matching cards",
+        description: `${visibleItems.length} row${
+          visibleItems.length === 1 ? "" : "s"
+        } across raw and graded inventory.`
+      }
+    : workspaceSectionMeta(activeSection, {
+        totalCards: inventory.summary.cardCount,
+        gradedRows: gradedItems.length,
+        rawRows: rawItems.length,
+        storageGroups: storageGroups.length
+      });
 
   const workspaceStats = [
-    { label: "Total cards", value: String(inventory.summary.cardCount), icon: Grid2X2 },
+    {
+      label:
+        activeSection === "graded"
+          ? "Graded rows"
+          : isAllCollectionResultScope
+            ? "Matching rows"
+            : activeSection === "collection"
+              ? "Raw rows"
+              : "Total cards",
+      value:
+        activeSection === "graded"
+          ? String(gradedItems.length)
+          : isAllCollectionResultScope
+            ? String(visibleItems.length)
+            : activeSection === "collection"
+            ? String(rawItems.length)
+            : String(inventory.summary.cardCount),
+      icon: Grid2X2
+    },
     {
       label: "Estimated value",
       value: formatCurrency(inventory.summary.estimatedValueCents),
       icon: CircleDollarSign
     },
-    { label: "Inventory rows", value: String(inventory.summary.itemCount), icon: Sparkles },
+    {
+      label: "Inventory rows",
+      value: activeSection === "graded" || activeSection === "collection" ? String(sectionItems.length) : String(inventory.summary.itemCount),
+      icon: Sparkles
+    },
     {
       label: "Inventory",
       value: inventoryStatus === "loading" ? "Loading" : "Local",
@@ -649,9 +892,18 @@ function WorkspaceShell({
 
   function changeSection(section: WorkspaceSection) {
     setActiveSection(section);
+    if (section === "collection") {
+      setCollectionResultScope("raw");
+    }
+    setShowCollectionTypeMenu(false);
     setActivePanel(null);
     setLookupResult(null);
     setLookupError("");
+    setDeepSearchMessage("");
+    setDeepSearchLookupResult(null);
+    setDeepSearchSets([]);
+    setDeepSearchSetCards([]);
+    setDeepSearchSelectedSet(null);
     setSelectedItem(null);
     setSelectionMode(false);
     setSelectedItemIds([]);
@@ -671,6 +923,7 @@ function WorkspaceShell({
       changeSection("data");
     } else {
       setActiveSection("collection");
+      setCollectionResultScope("raw");
     }
 
     setActivePanel((current) => (current === panel ? null : panel));
@@ -682,6 +935,7 @@ function WorkspaceShell({
       storageLocation
     });
     setActiveSection("collection");
+    setCollectionResultScope("all");
     setShowFilters(true);
   }
 
@@ -691,6 +945,7 @@ function WorkspaceShell({
       variants: [variant]
     });
     setActiveSection("collection");
+    setCollectionResultScope("all");
     setShowFilters(true);
   }
 
@@ -698,7 +953,13 @@ function WorkspaceShell({
     const nextFilters = filtersFromInventoryTag(filter);
 
     setInventoryFilters(nextFilters);
-    setActiveSection("collection");
+    if (filter.type === "itemType") {
+      setActiveSection(filter.value === "graded" ? "graded" : "collection");
+      setCollectionResultScope("raw");
+    } else {
+      setActiveSection("collection");
+      setCollectionResultScope("all");
+    }
     setActivePanel(null);
     setSelectedItem(null);
     setSelectionMode(false);
@@ -730,6 +991,121 @@ function WorkspaceShell({
     }
   }
 
+  async function handleDeepSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const query = deepSearchQuery.trim();
+
+    if (!query) {
+      setDeepSearchStatus("error");
+      setDeepSearchMessage("Enter a card, set, cert, or PokemonPriceTracker ID.");
+      return;
+    }
+
+    setDeepSearchStatus("loading");
+    setDeepSearchMessage("");
+    setDeepSearchLookupResult(null);
+    setDeepSearchSets([]);
+    setDeepSearchSetCards([]);
+    setDeepSearchSelectedSet(null);
+
+    try {
+      const [lookupResult, setResult] = await Promise.allSettled([
+        api.lookupCards({
+          query,
+          language: deepSearchLanguage
+        }),
+        api.searchPokemonPriceTrackerSets(query)
+      ]);
+
+      if (lookupResult.status === "fulfilled") {
+        setDeepSearchLookupResult(lookupResult.value);
+      }
+
+      if (setResult.status === "fulfilled") {
+        setDeepSearchSets(setResult.value.sets);
+
+        if (setResult.value.sets.length === 1) {
+          await loadDeepSearchSet(setResult.value.sets[0], { keepStatusLoading: true });
+        }
+      }
+
+      const lookupCount =
+        lookupResult.status === "fulfilled" ? lookupResult.value.candidates.length : 0;
+      const setCount = setResult.status === "fulfilled" ? setResult.value.sets.length : 0;
+      let fallbackSetCardCount = 0;
+
+      if (setCount === 0) {
+        try {
+          const fallbackSetCardsResult = await api.getPokemonPriceTrackerSetCards(query);
+          fallbackSetCardCount = fallbackSetCardsResult.cards.length;
+
+          if (fallbackSetCardCount > 0) {
+            setDeepSearchSelectedSet({
+              id: `query:${query}`,
+              name: query,
+              displayName: fallbackSetCardsResult.setName || query,
+              series: null,
+              releaseYear: null,
+              cardCount: fallbackSetCardCount
+            });
+            setDeepSearchSetCards(fallbackSetCardsResult.cards);
+          }
+        } catch (error) {
+          if (error instanceof Error && /rate limit/i.test(error.message)) {
+            throw error;
+          }
+        }
+      }
+
+      if (lookupResult.status === "rejected" && setResult.status === "rejected") {
+        throw lookupResult.reason;
+      }
+
+      if (lookupCount === 0 && setCount === 0 && fallbackSetCardCount === 0) {
+        setDeepSearchMessage("No direct card, set, or set-card matches found.");
+      } else if (setCount > 1) {
+        setDeepSearchMessage("Choose a PokemonPriceTracker set to load every card.");
+      } else {
+        setDeepSearchMessage("");
+      }
+
+      setDeepSearchStatus("idle");
+    } catch (error) {
+      setDeepSearchStatus("error");
+      setDeepSearchMessage(error instanceof Error ? error.message : "Unable to run deep search.");
+    }
+  }
+
+  async function loadDeepSearchSet(
+    set: PokemonPriceTrackerSetSummary,
+    options: { keepStatusLoading?: boolean } = {}
+  ) {
+    if (!options.keepStatusLoading) {
+      setDeepSearchStatus("loading");
+      setDeepSearchMessage("");
+    }
+
+    setDeepSearchSelectedSet(set);
+    setDeepSearchSetCards([]);
+
+    try {
+      const response = await api.getPokemonPriceTrackerSetCards(set.name);
+      setDeepSearchSetCards(response.cards);
+
+      if (response.cards.length === 0) {
+        setDeepSearchMessage("PokemonPriceTracker did not return cards for that set.");
+      }
+    } catch (error) {
+      setDeepSearchStatus("error");
+      setDeepSearchMessage(error instanceof Error ? error.message : "Unable to load set cards.");
+    } finally {
+      if (!options.keepStatusLoading) {
+        setDeepSearchStatus("idle");
+      }
+    }
+  }
+
   async function handleExportInventoryCsv() {
     if (!activeCollection) {
       return;
@@ -758,16 +1134,188 @@ function WorkspaceShell({
     setBackupStatus("loading");
     setExportStatus("idle");
     setDataActionMessage("");
+    setAdminMessage("");
 
     try {
       const response = await api.createSqliteBackup(activeCollection.id);
       setBackupStatus("idle");
-      setDataActionMessage(
-        `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`
-      );
+      const message = `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`;
+      setDataActionMessage(message);
+      setAdminMessage(message);
+      void refreshAdminData();
     } catch (error) {
       setBackupStatus("error");
-      setDataActionMessage(error instanceof Error ? error.message : "Unable to create backup.");
+      const message = error instanceof Error ? error.message : "Unable to create backup.";
+      setDataActionMessage(message);
+      setAdminMessage(message);
+    }
+  }
+
+  async function handleCreateAdminUser(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const formData = new FormData(event.currentTarget);
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.createAdminUser({
+        displayName: String(formData.get("displayName") ?? ""),
+        email: String(formData.get("email") ?? ""),
+        username: String(formData.get("username") ?? ""),
+        password: String(formData.get("password") ?? ""),
+        systemRole: String(formData.get("systemRole") ?? "user") as "admin" | "user"
+      });
+
+      setAdminUsers((current) => [...current, response.user]);
+      form.reset();
+      setAdminActionStatus("idle");
+      setAdminMessage(`Created @${response.user.username}.`);
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to create user.");
+    }
+  }
+
+  async function handleUpdateAdminUser(userId: string, payload: {
+    displayName: string;
+    email: string;
+    username: string;
+    systemRole: "admin" | "user";
+  }) {
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.updateAdminUser(userId, payload);
+      setAdminUsers((current) =>
+        current.map((user) => (user.id === userId ? response.user : user))
+      );
+      setAdminActionStatus("idle");
+      setAdminMessage(`Updated @${response.user.username}.`);
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to update user.");
+    }
+  }
+
+  async function handleResetAdminUserPassword(user: AdminUser, password: string) {
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.resetAdminUserPassword(user.id, { password });
+      setAdminUsers((current) =>
+        current.map((adminUser) => (adminUser.id === user.id ? response.user : adminUser))
+      );
+      setAdminActionStatus("idle");
+      setAdminMessage(`Reset password for @${response.user.username}.`);
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to reset password.");
+    }
+  }
+
+  async function handleToggleAdminUser(user: AdminUser) {
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = user.disabledAt
+        ? await api.enableAdminUser(user.id)
+        : await api.disableAdminUser(user.id);
+      setAdminUsers((current) =>
+        current.map((adminUser) => (adminUser.id === user.id ? response.user : adminUser))
+      );
+      setAdminActionStatus("idle");
+      setAdminMessage(
+        `${response.user.disabledAt ? "Disabled" : "Enabled"} @${response.user.username}.`
+      );
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to update account status.");
+    }
+  }
+
+  async function handleAddCollectionMember(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!activeCollection) {
+      return;
+    }
+
+    const form = event.currentTarget;
+    const formData = new FormData(event.currentTarget);
+    const userId = String(formData.get("userId") ?? "");
+    const role = String(formData.get("role") ?? "viewer") as "admin" | "editor" | "viewer";
+
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.addCollectionMember(activeCollection.id, { userId, role });
+      setCollectionMembers((current) => [...current, response.member]);
+      form.reset();
+      setAdminActionStatus("idle");
+      setAdminMessage(`Added @${response.member.username} as ${response.member.role}.`);
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to add member.");
+    }
+  }
+
+  async function handleUpdateCollectionMember(userId: string, role: "admin" | "editor" | "viewer") {
+    if (!activeCollection) {
+      return;
+    }
+
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.updateCollectionMember(activeCollection.id, userId, { role });
+      setCollectionMembers((current) =>
+        current.map((member) => (member.userId === userId ? response.member : member))
+      );
+      setAdminActionStatus("idle");
+      setAdminMessage(`Updated @${response.member.username} to ${response.member.role}.`);
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to update member.");
+    }
+  }
+
+  async function handleRemoveCollectionMember(member: CollectionMember) {
+    if (!activeCollection) {
+      return;
+    }
+
+    const confirmed = window.confirm(`Remove @${member.username} from this collection?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setAdminActionStatus("loading");
+    setAdminMessage("");
+
+    try {
+      await api.removeCollectionMember(activeCollection.id, member.userId);
+      setCollectionMembers((current) =>
+        current.filter((currentMember) => currentMember.userId !== member.userId)
+      );
+      setAdminActionStatus("idle");
+      setAdminMessage(`Removed @${member.username} from this collection.`);
+      void refreshAdminData();
+    } catch (error) {
+      setAdminActionStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to remove member.");
     }
   }
 
@@ -1123,8 +1671,51 @@ function WorkspaceShell({
         </div>
 
         <nav className="nav-stack" aria-label="Primary">
-          {workspaceNavItems.map((item) => {
+          {visibleWorkspaceNavItems.map((item) => {
             const Icon = item.icon;
+
+            if (item.section === "collection") {
+              const isCollectionGroupActive = activeSection === "collection" || activeSection === "graded";
+
+              return (
+                <div className="nav-group" key={item.section}>
+                  <button
+                    aria-expanded={showCollectionTypeMenu}
+                    aria-haspopup="menu"
+                    className={`nav-item ${isCollectionGroupActive ? "active" : ""}`}
+                    onClick={() => setShowCollectionTypeMenu((isOpen) => !isOpen)}
+                    type="button"
+                  >
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{item.label}</span>
+                    <ChevronDown className="nav-item-chevron" size={16} aria-hidden="true" />
+                  </button>
+                  {showCollectionTypeMenu ? (
+                    <div className="nav-submenu" role="menu" aria-label="Collection views">
+                      <button
+                        className={activeSection === "collection" ? "active" : ""}
+                        onClick={() => changeSection("collection")}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <Grid2X2 size={16} aria-hidden="true" />
+                        Raw cards
+                      </button>
+                      <button
+                        className={activeSection === "graded" ? "active" : ""}
+                        onClick={() => changeSection("graded")}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <ShieldCheck size={16} aria-hidden="true" />
+                        Graded cards
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }
+
             return (
               <button
                 className={`nav-item ${activeSection === item.section ? "active" : ""}`}
@@ -1229,6 +1820,25 @@ function WorkspaceShell({
           </form>
         ) : null}
 
+        {activeSection === "search" && activeCollection ? (
+          <DeepSearchWorkspacePanel
+            collectionId={activeCollection.id}
+            language={deepSearchLanguage}
+            lookupResult={deepSearchLookupResult}
+            message={deepSearchMessage}
+            query={deepSearchQuery}
+            selectedSet={deepSearchSelectedSet}
+            setCards={deepSearchSetCards}
+            sets={deepSearchSets}
+            status={deepSearchStatus}
+            onCreateItem={createOrMergeInventoryItem}
+            onLanguageChange={setDeepSearchLanguage}
+            onLoadSet={loadDeepSearchSet}
+            onQueryChange={setDeepSearchQuery}
+            onSearch={handleDeepSearch}
+          />
+        ) : null}
+
         {(activeSection === "collection" || activeSection === "graded") && showFilters ? (
           <InventoryFilterPanel
             chips={activeFilterChips}
@@ -1315,7 +1925,8 @@ function WorkspaceShell({
                   <p>
                     Showing <strong>{visibleItems.length}</strong> of{" "}
                     <strong>{sectionItems.length}</strong>
-                    {activeSection === "graded" ? " graded rows" : " inventory rows"}
+                    {" "}
+                    {inventoryRowKindLabel}
                   </p>
                   <div className="inventory-list-actions">
                     {hasActiveInventoryFilters ? (
@@ -1404,12 +2015,12 @@ function WorkspaceShell({
                   <h3>
                     {activeSection === "graded"
                       ? "No graded cards yet."
-                      : "Your collection will live here."}
+                      : "No raw cards yet."}
                   </h3>
                   <p>
                     {activeSection === "graded"
                       ? "Import a PSA cert or mark a manual entry as graded to track slab details, values, and price history."
-                      : "Use lookup, PSA cert import, bulk paste, CSV import, or manual entry to add cards to this local collection."}
+                      : "Use lookup, bulk paste, CSV import, or manual entry to add raw cards to this local collection."}
                   </p>
                 </div>
               </section>
@@ -1419,6 +2030,7 @@ function WorkspaceShell({
 
         {activeSection === "storage" ? (
           <StorageInsights
+            items={inventory.items}
             storageGroups={storageGroups}
             variantGroups={variantGroups}
             onSelectStorage={applyStorageFilter}
@@ -1429,11 +2041,9 @@ function WorkspaceShell({
         {activeSection === "data" ? (
           <>
             <DataWorkspacePanel
-              backupStatus={backupStatus}
               dataActionMessage={dataActionMessage}
               exportStatus={exportStatus}
               hasCollection={Boolean(activeCollection)}
-              onBackup={handleCreateSqliteBackup}
               onExport={handleExportInventoryCsv}
               onImport={() => openPanel("import")}
             />
@@ -1453,6 +2063,42 @@ function WorkspaceShell({
             ) : null}
           </>
         ) : null}
+
+        {activeSection === "admin" && activeCollection ? (
+          <AdminWorkspacePanel
+            actionStatus={adminActionStatus}
+            activeTab={adminTab}
+            authUser={authUser}
+            backupStatus={backupStatus}
+            canUseAdmin={canUseAdmin}
+            collectionName={activeCollection.name}
+            loadStatus={adminLoadStatus}
+            members={collectionMembers}
+            memberCandidates={memberCandidates}
+            message={adminMessage}
+            priceQueue={bulkPriceQueue}
+            status={adminStatus}
+            users={adminUsers}
+            onAddMember={handleAddCollectionMember}
+            onBackup={handleCreateSqliteBackup}
+            onCancelQueue={handleCancelBulkPriceQueue}
+            onClearCompletedQueue={handleClearCompletedBulkPriceQueue}
+            onCreateUser={handleCreateAdminUser}
+            onIgnorePriceRefresh={handleIgnorePriceRefresh}
+            onOpenItem={setSelectedItem}
+            onRefresh={refreshAdminData}
+            onRemoveMember={handleRemoveCollectionMember}
+            onResetPassword={handleResetAdminUserPassword}
+            onRetryFailedQueue={handleRetryFailedBulkPriceQueue}
+            onResumeQueue={handleResumeBulkPriceQueue}
+            onTabChange={setAdminTab}
+            onToggleUser={handleToggleAdminUser}
+            onUpdateMember={handleUpdateCollectionMember}
+            onUpdateUser={handleUpdateAdminUser}
+          />
+        ) : null}
+
+        {activeSection === "credits" ? <CreditsWorkspacePanel credits={apiCredits} /> : null}
 
         {activeCollection && selectedItem ? (
           <InventoryItemDetail
@@ -1488,95 +2134,209 @@ function WorkspaceShell({
 }
 
 function StorageInsights({
+  items,
   storageGroups,
   variantGroups,
   onSelectStorage,
   onSelectVariant
 }: {
+  items: InventoryItem[];
   storageGroups: InventoryGroupSummary[];
   variantGroups: InventoryGroupSummary[];
   onSelectStorage: (storageLocation: string) => void;
   onSelectVariant: (variant: string) => void;
 }) {
+  const storedQuantity = storageGroups.reduce((total, group) => total + group.count, 0);
+  const storedValueCents = storageGroups.reduce((total, group) => total + group.valueCents, 0);
+  const unassignedItems = items.filter((item) => !item.storageLocation?.trim());
+  const unassignedQuantity = unassignedItems.reduce((total, item) => total + item.quantity, 0);
+  const unassignedValueCents = unassignedItems.reduce(
+    (total, item) => total + inventoryItemValue(item),
+    0
+  );
+  const maxStorageCount = Math.max(1, ...storageGroups.map((group) => group.count));
+  const topStorageGroups = storageGroups.slice(0, 8);
+  const topVariantGroups = variantGroups.slice(0, 12);
+  const overflowStorageGroups = storageGroups.slice(topStorageGroups.length);
+  const overflowVariantGroups = variantGroups.slice(topVariantGroups.length);
+
   return (
-    <section className="insight-grid" aria-label="Storage and variant summaries">
-      <div className="insight-panel">
-        <div className="insight-header">
-          <div>
-            <p className="eyebrow">Storage</p>
-            <h3>Locations</h3>
-          </div>
-          <span>{storageGroups.length}</span>
+    <section className="storage-workspace" aria-label="Storage and variant summaries">
+      <div className="storage-overview">
+        <div>
+          <p className="eyebrow">Storage</p>
+          <h3>Location map</h3>
         </div>
-        <div className="insight-list">
-          {storageGroups.length > 0 ? (
-            storageGroups.map((group) => (
-              <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
-                <span>
-                  <strong>{group.label}</strong>
-                  <small>{group.examples}</small>
-                </span>
-                <span>
-                  <strong>{group.count}</strong>
-                  <small>{formatCurrency(group.valueCents)}</small>
-                </span>
-              </button>
-            ))
-          ) : (
-            <p className="lookup-note">Add storage locations to cards to build this view.</p>
-          )}
+        <div className="storage-metrics" aria-label="Storage summary">
+          <div>
+            <span>Locations</span>
+            <strong>{storageGroups.length}</strong>
+          </div>
+          <div>
+            <span>Stored cards</span>
+            <strong>{storedQuantity}</strong>
+          </div>
+          <div>
+            <span>Stored value</span>
+            <strong>{formatCurrency(storedValueCents)}</strong>
+          </div>
+          <div className={unassignedQuantity > 0 ? "needs-attention" : ""}>
+            <span>Unassigned</span>
+            <strong>{unassignedQuantity}</strong>
+          </div>
         </div>
       </div>
 
-      <div className="insight-panel">
-        <div className="insight-header">
-          <div>
-            <p className="eyebrow">Variants</p>
-            <h3>Tags in use</h3>
+      <div className="storage-layout">
+        <div className="storage-panel storage-panel-primary">
+          <div className="insight-header">
+            <div>
+              <p className="eyebrow">Locations</p>
+              <h3>Stored groups</h3>
+            </div>
+            <span>{storedQuantity}</span>
           </div>
-          <span>{variantGroups.length}</span>
+          <div className="storage-group-list">
+            {topStorageGroups.length > 0 ? (
+              topStorageGroups.map((group) => (
+                <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
+                  <span className="storage-group-main">
+                    <strong>{group.label}</strong>
+                    <small>{group.examples}</small>
+                  </span>
+                  <span className="storage-group-stats">
+                    <strong>{group.count}</strong>
+                    <small>{formatCurrency(group.valueCents)}</small>
+                  </span>
+                  <span className="storage-group-meter" aria-hidden="true">
+                    <span
+                      style={{
+                        width: `${Math.max(8, (group.count / maxStorageCount) * 100)}%`
+                      }}
+                    />
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="lookup-note">No assigned storage locations yet.</p>
+            )}
+          </div>
         </div>
-        <div className="insight-list">
-          {variantGroups.length > 0 ? (
-            variantGroups.map((group) => (
-              <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
-                <span>
-                  <strong>{group.label}</strong>
-                  <small>{group.examples}</small>
-                </span>
-                <span>
-                  <strong>{group.count}</strong>
-                  <small>{formatCurrency(group.valueCents)}</small>
-                </span>
-              </button>
-            ))
-          ) : (
-            <p className="lookup-note">Add variants like Holo, 1st Edition, or Promo to see groups.</p>
-          )}
+
+        <div className="storage-side-stack">
+          <div className="storage-panel">
+            <div className="insight-header">
+              <div>
+                <p className="eyebrow">Loose ends</p>
+                <h3>Unassigned</h3>
+              </div>
+              <span>{unassignedQuantity}</span>
+            </div>
+            <div className="storage-empty-metric">
+              <strong>{formatCurrency(unassignedValueCents)}</strong>
+              <span>{unassignedItems.length} row{unassignedItems.length === 1 ? "" : "s"}</span>
+            </div>
+          </div>
+
+          <div className="storage-panel">
+            <div className="insight-header">
+              <div>
+                <p className="eyebrow">Variants</p>
+                <h3>Tags in use</h3>
+              </div>
+              <span>{variantGroups.length}</span>
+            </div>
+            <div className="storage-variant-list">
+              {topVariantGroups.length > 0 ? (
+                topVariantGroups.map((group) => (
+                  <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
+                    <span>
+                      <strong>{group.label}</strong>
+                      <small>{group.count} · {formatCurrency(group.valueCents)}</small>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <p className="lookup-note">No variant tags yet.</p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+
+      {overflowStorageGroups.length > 0 || overflowVariantGroups.length > 0 ? (
+        <div className="storage-overflow-grid">
+          {overflowStorageGroups.length > 0 ? (
+            <div className="insight-panel">
+              <div className="insight-header">
+                <div>
+                  <p className="eyebrow">All locations</p>
+                  <h3>More groups</h3>
+                </div>
+                <span>{overflowStorageGroups.length}</span>
+              </div>
+              <div className="insight-list">
+                {overflowStorageGroups.map((group) => (
+                  <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
+                    <span>
+                      <strong>{group.label}</strong>
+                      <small>{group.examples}</small>
+                    </span>
+                    <span>
+                      <strong>{group.count}</strong>
+                      <small>{formatCurrency(group.valueCents)}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {overflowVariantGroups.length > 0 ? (
+            <div className="insight-panel">
+              <div className="insight-header">
+                <div>
+                  <p className="eyebrow">All variants</p>
+                  <h3>More tags</h3>
+                </div>
+                <span>{overflowVariantGroups.length}</span>
+              </div>
+              <div className="insight-list">
+                {overflowVariantGroups.map((group) => (
+                  <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
+                    <span>
+                      <strong>{group.label}</strong>
+                      <small>{group.examples}</small>
+                    </span>
+                    <span>
+                      <strong>{group.count}</strong>
+                      <small>{formatCurrency(group.valueCents)}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function DataWorkspacePanel({
-  backupStatus,
   dataActionMessage,
   exportStatus,
   hasCollection,
-  onBackup,
   onExport,
   onImport
 }: {
-  backupStatus: "idle" | "loading" | "error";
   dataActionMessage: string;
   exportStatus: "idle" | "loading" | "error";
   hasCollection: boolean;
-  onBackup: () => void;
   onExport: () => void;
   onImport: () => void;
 }) {
-  const hasError = exportStatus === "error" || backupStatus === "error";
+  const hasError = exportStatus === "error";
 
   return (
     <section className="data-workspace" aria-label="Data tools">
@@ -1586,13 +2346,6 @@ function DataWorkspacePanel({
           <span>
             <strong>{exportStatus === "loading" ? "Exporting..." : "Export CSV"}</strong>
             <small>Download the visible collection as inventory rows.</small>
-          </span>
-        </button>
-        <button disabled={!hasCollection || backupStatus === "loading"} onClick={onBackup} type="button">
-          <HardDriveDownload size={20} aria-hidden="true" />
-          <span>
-            <strong>{backupStatus === "loading" ? "Backing up..." : "Back up SQLite"}</strong>
-            <small>Create a local database snapshot under data/backups.</small>
           </span>
         </button>
         <button disabled={!hasCollection} onClick={onImport} type="button">
@@ -1608,6 +2361,1072 @@ function DataWorkspacePanel({
       ) : null}
     </section>
   );
+}
+
+function CreditsWorkspacePanel({ credits }: { credits: ApiCredit[] }) {
+  const activeCredits = credits.filter((credit) => credit.status === "Active");
+  const supportingCredits = credits.filter((credit) => credit.status !== "Active");
+
+  return (
+    <section className="credits-workspace" aria-label="API credits">
+      <div className="credits-summary">
+        <div>
+          <p className="eyebrow">Active integrations</p>
+          <strong>{activeCredits.length}</strong>
+          <span>Services currently used for lookup, pricing, or cert details.</span>
+        </div>
+        <div>
+          <p className="eyebrow">Fallbacks and references</p>
+          <strong>{supportingCredits.length}</strong>
+          <span>Sources used for enrichment, recovery paths, or legacy saved data.</span>
+        </div>
+      </div>
+
+      <div className="credits-grid">
+        {credits.map((credit) => (
+          <article className="credit-card" key={credit.name}>
+            <div className="credit-card-header">
+              <span className={`credit-status ${credit.status.toLowerCase()}`}>{credit.status}</span>
+              <a href={credit.url} rel="noreferrer" target="_blank">
+                <ExternalLink size={16} aria-hidden="true" />
+                Website
+              </a>
+            </div>
+            <h3>{credit.name}</h3>
+            <p>{credit.role}</p>
+            <small>{credit.url}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AdminWorkspacePanel({
+  actionStatus,
+  activeTab,
+  authUser,
+  backupStatus,
+  canUseAdmin,
+  collectionName,
+  loadStatus,
+  members,
+  memberCandidates,
+  message,
+  priceQueue,
+  status,
+  users,
+  onAddMember,
+  onBackup,
+  onCancelQueue,
+  onClearCompletedQueue,
+  onCreateUser,
+  onIgnorePriceRefresh,
+  onOpenItem,
+  onRefresh,
+  onRemoveMember,
+  onResetPassword,
+  onRetryFailedQueue,
+  onResumeQueue,
+  onTabChange,
+  onToggleUser,
+  onUpdateMember,
+  onUpdateUser
+}: {
+  actionStatus: "idle" | "loading" | "error";
+  activeTab: AdminTab;
+  authUser: AuthUser;
+  backupStatus: "idle" | "loading" | "error";
+  canUseAdmin: boolean;
+  collectionName: string;
+  loadStatus: "idle" | "loading" | "error";
+  members: CollectionMember[];
+  memberCandidates: CollectionMemberCandidate[];
+  message: string;
+  priceQueue: BulkPriceQueueResponse | null;
+  status: AdminCollectionStatusResponse | null;
+  users: AdminUser[];
+  onAddMember: (event: React.FormEvent<HTMLFormElement>) => void;
+  onBackup: () => void;
+  onCancelQueue: () => void;
+  onClearCompletedQueue: () => void;
+  onCreateUser: (event: React.FormEvent<HTMLFormElement>) => void;
+  onIgnorePriceRefresh: (item: InventoryItem) => void;
+  onOpenItem: (item: InventoryItem) => void;
+  onRefresh: () => void;
+  onRemoveMember: (member: CollectionMember) => void;
+  onResetPassword: (user: AdminUser, password: string) => void;
+  onRetryFailedQueue: () => void;
+  onResumeQueue: () => void;
+  onTabChange: (tab: AdminTab) => void;
+  onToggleUser: (user: AdminUser) => void;
+  onUpdateMember: (userId: string, role: "admin" | "editor" | "viewer") => void;
+  onUpdateUser: (
+    userId: string,
+    payload: {
+      displayName: string;
+      email: string;
+      username: string;
+      systemRole: "admin" | "user";
+    }
+  ) => void;
+}) {
+  const tabs: AdminTab[] =
+    authUser.systemRole === "admin" ? ["accounts", "members", "maintenance"] : ["members", "maintenance"];
+  const currentTab = tabs.includes(activeTab) ? activeTab : tabs[0];
+  const isWorking = actionStatus === "loading";
+
+  if (!canUseAdmin) {
+    return (
+      <section className="empty-state">
+        <div className="empty-copy">
+          <p className="eyebrow">Admin</p>
+          <h3>No admin access.</h3>
+          <p>Collection owners and admins can manage this workspace.</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="admin-workspace" aria-label="Admin tools">
+      <div className="admin-tabs" role="tablist" aria-label="Admin tabs">
+        {tabs.map((tab) => (
+          <button
+            aria-selected={currentTab === tab}
+            className={currentTab === tab ? "active" : ""}
+            key={tab}
+            onClick={() => onTabChange(tab)}
+            role="tab"
+            type="button"
+          >
+            {adminTabLabel(tab)}
+          </button>
+        ))}
+        <button
+          className="admin-refresh-button"
+          disabled={loadStatus === "loading"}
+          onClick={onRefresh}
+          type="button"
+        >
+          <RefreshCw size={16} aria-hidden="true" />
+          {loadStatus === "loading" ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      {message ? (
+        <p className={`admin-message ${actionStatus === "error" || loadStatus === "error" ? "error" : "ok"}`}>
+          {message}
+        </p>
+      ) : null}
+
+      {currentTab === "accounts" && authUser.systemRole === "admin" ? (
+        <AdminAccountsPanel
+          currentUserId={authUser.id}
+          isWorking={isWorking}
+          users={users}
+          onCreateUser={onCreateUser}
+          onResetPassword={onResetPassword}
+          onToggleUser={onToggleUser}
+          onUpdateUser={onUpdateUser}
+        />
+      ) : null}
+
+      {currentTab === "members" ? (
+        <AdminMembersPanel
+          collectionName={collectionName}
+          isWorking={isWorking}
+          members={members}
+          memberCandidates={memberCandidates}
+          onAddMember={onAddMember}
+          onRemoveMember={onRemoveMember}
+          onUpdateMember={onUpdateMember}
+        />
+      ) : null}
+
+      {currentTab === "maintenance" ? (
+        <AdminMaintenancePanel
+          backupStatus={backupStatus}
+          isWorking={isWorking}
+          priceQueue={priceQueue}
+          status={status}
+          onBackup={onBackup}
+          onCancelQueue={onCancelQueue}
+          onClearCompletedQueue={onClearCompletedQueue}
+          onIgnorePriceRefresh={onIgnorePriceRefresh}
+          onOpenItem={onOpenItem}
+          onRetryFailedQueue={onRetryFailedQueue}
+          onResumeQueue={onResumeQueue}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function AdminAccountsPanel({
+  currentUserId,
+  isWorking,
+  users,
+  onCreateUser,
+  onResetPassword,
+  onToggleUser,
+  onUpdateUser
+}: {
+  currentUserId: string;
+  isWorking: boolean;
+  users: AdminUser[];
+  onCreateUser: (event: React.FormEvent<HTMLFormElement>) => void;
+  onResetPassword: (user: AdminUser, password: string) => void;
+  onToggleUser: (user: AdminUser) => void;
+  onUpdateUser: (
+    userId: string,
+    payload: {
+      displayName: string;
+      email: string;
+      username: string;
+      systemRole: "admin" | "user";
+    }
+  ) => void;
+}) {
+  return (
+    <div className="admin-panel-stack">
+      <form className="admin-form-grid" onSubmit={onCreateUser}>
+        <label>
+          <span>Display name</span>
+          <input name="displayName" placeholder="Chris" required />
+        </label>
+        <label>
+          <span>Username</span>
+          <input name="username" placeholder="collector" required />
+        </label>
+        <label>
+          <span>Email</span>
+          <input name="email" placeholder="collector@example.test" required type="email" />
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" minLength={8} placeholder="Temporary password" required type="password" />
+        </label>
+        <label>
+          <span>System role</span>
+          <select name="systemRole" defaultValue="user">
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <button disabled={isWorking} type="submit">
+          <UserPlus size={16} aria-hidden="true" />
+          Create user
+        </button>
+      </form>
+
+      <div className="admin-list">
+        {users.map((user) => (
+          <AdminUserRowEditor
+            currentUserId={currentUserId}
+            isWorking={isWorking}
+            key={user.id}
+            user={user}
+            onResetPassword={onResetPassword}
+            onToggleUser={onToggleUser}
+            onUpdateUser={onUpdateUser}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdminUserRowEditor({
+  currentUserId,
+  isWorking,
+  user,
+  onResetPassword,
+  onToggleUser,
+  onUpdateUser
+}: {
+  currentUserId: string;
+  isWorking: boolean;
+  user: AdminUser;
+  onResetPassword: (user: AdminUser, password: string) => void;
+  onToggleUser: (user: AdminUser) => void;
+  onUpdateUser: (
+    userId: string,
+    payload: {
+      displayName: string;
+      email: string;
+      username: string;
+      systemRole: "admin" | "user";
+    }
+  ) => void;
+}) {
+  const [displayName, setDisplayName] = useState(user.displayName);
+  const [username, setUsername] = useState(user.username);
+  const [email, setEmail] = useState(user.email);
+  const [systemRole, setSystemRole] = useState(user.systemRole);
+  const [password, setPassword] = useState("");
+
+  useEffect(() => {
+    setDisplayName(user.displayName);
+    setUsername(user.username);
+    setEmail(user.email);
+    setSystemRole(user.systemRole);
+    setPassword("");
+  }, [user]);
+
+  return (
+    <article className={`admin-row ${user.disabledAt ? "disabled" : ""}`}>
+      <form
+        className="admin-row-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onUpdateUser(user.id, { displayName, email, username, systemRole });
+        }}
+      >
+        <div className="admin-row-heading">
+          <strong>{user.displayName}</strong>
+          <span>
+            @{user.username} · {user.systemRole}
+            {user.disabledAt ? " · disabled" : ""}
+          </span>
+        </div>
+        <input
+          aria-label="Display name"
+          onChange={(event) => setDisplayName(event.target.value)}
+          value={displayName}
+        />
+        <input aria-label="Username" onChange={(event) => setUsername(event.target.value)} value={username} />
+        <input aria-label="Email" onChange={(event) => setEmail(event.target.value)} type="email" value={email} />
+        <select
+          aria-label="System role"
+          onChange={(event) => setSystemRole(event.target.value as "admin" | "user")}
+          value={systemRole}
+        >
+          <option value="user">User</option>
+          <option value="admin">Admin</option>
+        </select>
+        <div className="admin-row-meta">
+          <span>{user.collectionCount} collections</span>
+          <span>{user.activeSessionCount} sessions</span>
+          <span>{user.lastLoginAt ? `Last ${formatHistoryDate(user.lastLoginAt)}` : "Never logged in"}</span>
+        </div>
+        <div className="admin-row-actions">
+          <button disabled={isWorking} type="submit">
+            Save
+          </button>
+          <button disabled={isWorking} onClick={() => onToggleUser(user)} type="button">
+            {user.disabledAt ? "Enable" : currentUserId === user.id ? "Disable self" : "Disable"}
+          </button>
+        </div>
+      </form>
+      <form
+        className="admin-password-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onResetPassword(user, password);
+        }}
+      >
+        <KeyRound size={16} aria-hidden="true" />
+        <input
+          aria-label={`New password for ${user.username}`}
+          minLength={8}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder="New password"
+          type="password"
+          value={password}
+        />
+        <button disabled={isWorking || password.length < 8} type="submit">
+          Reset
+        </button>
+      </form>
+    </article>
+  );
+}
+
+function AdminMembersPanel({
+  collectionName,
+  isWorking,
+  members,
+  memberCandidates,
+  onAddMember,
+  onRemoveMember,
+  onUpdateMember
+}: {
+  collectionName: string;
+  isWorking: boolean;
+  members: CollectionMember[];
+  memberCandidates: CollectionMemberCandidate[];
+  onAddMember: (event: React.FormEvent<HTMLFormElement>) => void;
+  onRemoveMember: (member: CollectionMember) => void;
+  onUpdateMember: (userId: string, role: "admin" | "editor" | "viewer") => void;
+}) {
+  const enabledCandidates = memberCandidates.filter((candidate) => !candidate.disabledAt);
+
+  return (
+    <div className="admin-panel-stack">
+      <form className="admin-form-grid member-add-form" onSubmit={onAddMember}>
+        <label>
+          <span>Add user to {collectionName}</span>
+          <select disabled={enabledCandidates.length === 0} name="userId" required>
+            <option value="">Select a user</option>
+            {enabledCandidates.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.displayName} (@{user.username})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Collection role</span>
+          <select name="role" defaultValue="viewer">
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="admin">Admin</option>
+          </select>
+        </label>
+        <button disabled={isWorking || enabledCandidates.length === 0} type="submit">
+          <UserPlus size={16} aria-hidden="true" />
+          Add member
+        </button>
+      </form>
+
+      <div className="admin-list">
+        {members.map((member) => (
+          <article className={`admin-row member-row ${member.disabledAt ? "disabled" : ""}`} key={member.userId}>
+            <div className="admin-row-heading">
+              <strong>{member.displayName}</strong>
+              <span>
+                @{member.username} · {member.email}
+                {member.disabledAt ? " · disabled" : ""}
+              </span>
+            </div>
+            <div className="admin-row-meta">
+              <span>{member.systemRole} system role</span>
+              <span>Joined {formatHistoryDate(member.createdAt)}</span>
+            </div>
+            <div className="admin-row-actions">
+              <select
+                aria-label={`Collection role for ${member.username}`}
+                disabled={member.isOwner || Boolean(member.disabledAt) || isWorking}
+                onChange={(event) =>
+                  onUpdateMember(member.userId, event.target.value as "admin" | "editor" | "viewer")
+                }
+                value={member.role}
+              >
+                <option value="owner">Owner</option>
+                <option value="admin">Admin</option>
+                <option value="editor">Editor</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button disabled={member.isOwner || isWorking} onClick={() => onRemoveMember(member)} type="button">
+                <Trash2 size={16} aria-hidden="true" />
+                Remove
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdminMaintenancePanel({
+  backupStatus,
+  isWorking,
+  priceQueue,
+  status,
+  onBackup,
+  onCancelQueue,
+  onClearCompletedQueue,
+  onIgnorePriceRefresh,
+  onOpenItem,
+  onRetryFailedQueue,
+  onResumeQueue
+}: {
+  backupStatus: "idle" | "loading" | "error";
+  isWorking: boolean;
+  priceQueue: BulkPriceQueueResponse | null;
+  status: AdminCollectionStatusResponse | null;
+  onBackup: () => void;
+  onCancelQueue: () => void;
+  onClearCompletedQueue: () => void;
+  onIgnorePriceRefresh: (item: InventoryItem) => void;
+  onOpenItem: (item: InventoryItem) => void;
+  onRetryFailedQueue: () => void;
+  onResumeQueue: () => void;
+}) {
+  const pricing = status?.pricing;
+
+  return (
+    <div className="admin-panel-stack">
+      <div className="admin-maintenance-grid">
+        <section className="admin-status-panel">
+          <div className="admin-panel-header">
+            <div>
+              <p className="eyebrow">Backups</p>
+              <h3>SQLite snapshots</h3>
+            </div>
+            <button disabled={backupStatus === "loading" || isWorking} onClick={onBackup} type="button">
+              <HardDriveDownload size={16} aria-hidden="true" />
+              {backupStatus === "loading" ? "Backing up..." : "Back up now"}
+            </button>
+          </div>
+          <div className="admin-fact-grid">
+            <AdminFact label="Scheduled" value={status?.backups.scheduledEnabled ? "On" : "Off"} />
+            <AdminFact label="Interval" value={`${status?.backups.intervalHours ?? 0}h`} />
+            <AdminFact label="Retention" value={`${status?.backups.retentionDays ?? 0}d`} />
+          </div>
+          <div className="admin-compact-list">
+            {status?.backups.latest.length ? (
+              status.backups.latest.map((backup) => (
+                <div key={backup.fileName}>
+                  <strong>{backup.fileName}</strong>
+                  <span>
+                    {formatFileSize(backup.sizeBytes)} · {formatHistoryDate(backup.createdAt)}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p>No local backups found.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="admin-status-panel">
+          <div className="admin-panel-header">
+            <div>
+              <p className="eyebrow">Pricing</p>
+              <h3>Scheduled refresh</h3>
+            </div>
+          </div>
+          <div className="admin-fact-grid">
+            <AdminFact label="Scheduled" value={pricing?.scheduledEnabled ? "On" : "Off"} />
+            <AdminFact label="Interval" value={`${pricing?.intervalHours ?? 0}h`} />
+            <AdminFact label="Batch" value={String(pricing?.batchSize ?? 0)} />
+            <AdminFact label="Queue" value={String(pricing?.queueSummary.total ?? 0)} />
+            <AdminFact label="Review" value={String(pricing?.queueSummary.needsReview ?? 0)} />
+            <AdminFact label="Failed" value={String(pricing?.queueSummary.failed ?? 0)} />
+          </div>
+          <div className="admin-compact-list">
+            <div>
+              <strong>Last completed</strong>
+              <span>{pricing?.runCompletedAt ? formatHistoryDate(pricing.runCompletedAt) : "Not completed yet"}</span>
+            </div>
+            <div>
+              <strong>Next due</strong>
+              <span>{pricing?.nextDueAt ? formatHistoryDate(pricing.nextDueAt) : "Waiting for first run"}</span>
+            </div>
+            <div>
+              <strong>Current cursor</strong>
+              <span>{pricing?.cursorItemId ?? "None"}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <section className="admin-status-panel">
+        <div className="admin-panel-header">
+          <div>
+            <p className="eyebrow">Ignored cards</p>
+            <h3>{pricing?.ignoredCount ?? 0} skipped by scheduler</h3>
+          </div>
+        </div>
+        <div className="admin-compact-list">
+          {pricing?.ignoredItems.length ? (
+            pricing.ignoredItems.map((item) => (
+              <div key={item.itemId}>
+                <strong>{item.name}</strong>
+                <span>
+                  {[item.setName, item.cardNumber].filter(Boolean).join(" · ") || "No set data"} ·{" "}
+                  {formatHistoryDate(item.ignoredAt)}
+                </span>
+              </div>
+            ))
+          ) : (
+            <p>No ignored price-refresh cards.</p>
+          )}
+        </div>
+      </section>
+
+      {priceQueue && priceQueue.summary.total > 0 ? (
+        <BulkPriceQueuePanel
+          isWorking={isWorking}
+          message=""
+          queue={priceQueue}
+          status="idle"
+          onCancel={onCancelQueue}
+          onClearCompleted={onClearCompletedQueue}
+          onIgnoreItem={onIgnorePriceRefresh}
+          onOpenItem={onOpenItem}
+          onResume={onResumeQueue}
+          onRetryFailed={onRetryFailedQueue}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function AdminFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="admin-fact">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function adminTabLabel(tab: AdminTab) {
+  if (tab === "accounts") {
+    return "Accounts";
+  }
+
+  if (tab === "members") {
+    return "Members";
+  }
+
+  return "Maintenance";
+}
+
+function DeepSearchWorkspacePanel({
+  collectionId,
+  language,
+  lookupResult,
+  message,
+  query,
+  selectedSet,
+  setCards,
+  sets,
+  status,
+  onCreateItem,
+  onLanguageChange,
+  onLoadSet,
+  onQueryChange,
+  onSearch
+}: {
+  collectionId: string;
+  language: CardLanguage | "all";
+  lookupResult: CardLookupResponse | null;
+  message: string;
+  query: string;
+  selectedSet: PokemonPriceTrackerSetSummary | null;
+  setCards: CardLookupCandidate[];
+  sets: PokemonPriceTrackerSetSummary[];
+  status: DeepSearchStatus;
+  onCreateItem: (
+    collectionId: string,
+    payload: CreateInventoryItemRequest
+  ) => Promise<InventoryItem | null>;
+  onLanguageChange: (language: CardLanguage | "all") => void;
+  onLoadSet: (set: PokemonPriceTrackerSetSummary) => Promise<void>;
+  onQueryChange: (query: string) => void;
+  onSearch: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const [itemType, setItemType] = useState<InventoryItemType>("raw");
+  const [grader, setGrader] = useState("PSA");
+  const [grade, setGrade] = useState("");
+  const [certNumber, setCertNumber] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [storageLocation, setStorageLocation] = useState("");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [workingId, setWorkingId] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionStatus, setActionStatus] = useState<"idle" | "loading" | "error">("idle");
+  const directCandidates = lookupResult?.candidates ?? [];
+  const candidates = useMemo(
+    () => mergeDeepSearchCandidates([...setCards, ...directCandidates]),
+    [directCandidates, setCards]
+  );
+  const selectedCandidateSet = useMemo(
+    () => new Set(selectedCandidateIds),
+    [selectedCandidateIds]
+  );
+  const selectedCandidates = candidates.filter((candidate) => selectedCandidateSet.has(candidate.id));
+  const isLoading = status === "loading";
+
+  useEffect(() => {
+    setSelectedCandidateIds((current) =>
+      current.filter((id) => candidates.some((candidate) => candidate.id === id))
+    );
+  }, [candidates]);
+
+  useEffect(() => {
+    setActionMessage("");
+    setActionStatus("idle");
+  }, [query, status]);
+
+  async function addCandidate(candidate: CardLookupCandidate) {
+    setActionMessage("");
+    setActionStatus("loading");
+    setWorkingId(candidate.id);
+
+    try {
+      const item = await onCreateItem(
+        collectionId,
+        deepSearchPayloadForCandidate(candidate, {
+          certNumber,
+          grade,
+          grader,
+          itemType,
+          quantity,
+          storageLocation
+        })
+      );
+
+      if (item) {
+        setActionMessage(`Imported ${item.card.name}.`);
+      }
+
+      setActionStatus("idle");
+    } catch (error) {
+      setActionStatus("error");
+      setActionMessage(error instanceof Error ? error.message : "Unable to import card.");
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  async function importSelected() {
+    if (selectedCandidates.length === 0) {
+      setActionStatus("error");
+      setActionMessage("Select at least one card to import.");
+      return;
+    }
+
+    setActionMessage("");
+    setActionStatus("loading");
+    setWorkingId("selected");
+
+    let imported = 0;
+
+    try {
+      for (const candidate of selectedCandidates) {
+        const item = await onCreateItem(
+          collectionId,
+          deepSearchPayloadForCandidate(candidate, {
+            certNumber,
+            grade,
+            grader,
+            itemType,
+            quantity,
+            storageLocation
+          })
+        );
+
+        if (item) {
+          imported += 1;
+        }
+      }
+
+      setSelectedCandidateIds([]);
+      setActionStatus("idle");
+      setActionMessage(`Imported ${imported} card${imported === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setActionStatus("error");
+      setActionMessage(
+        error instanceof Error ? error.message : "Unable to import selected cards."
+      );
+    } finally {
+      setWorkingId("");
+    }
+  }
+
+  function toggleCandidate(candidateId: string) {
+    setSelectedCandidateIds((current) =>
+      current.includes(candidateId)
+        ? current.filter((id) => id !== candidateId)
+        : [...current, candidateId]
+    );
+  }
+
+  function toggleAllVisible() {
+    setSelectedCandidateIds((current) =>
+      current.length === candidates.length ? [] : candidates.map((candidate) => candidate.id)
+    );
+  }
+
+  async function copySourceId(candidate: CardLookupCandidate) {
+    try {
+      await navigator.clipboard.writeText(candidate.sourceId);
+      setActionStatus("idle");
+      setActionMessage(`Copied ${candidate.sourceId}.`);
+    } catch {
+      setActionStatus("error");
+      setActionMessage("Unable to copy that ID.");
+    }
+  }
+
+  return (
+    <section className="deep-search-workspace" aria-label="Deep card search">
+      <form className="deep-search-panel" onSubmit={onSearch}>
+        <div className="search-control">
+          <Search size={20} aria-hidden="true" />
+          <input
+            aria-label="Deep search"
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search a card, set, PSA cert, or PokemonPriceTracker ID..."
+            value={query}
+          />
+        </div>
+        <div className="mode-actions">
+          <select
+            aria-label="Deep search language"
+            onChange={(event) => onLanguageChange(event.target.value as CardLanguage | "all")}
+            value={language}
+          >
+            <option value="all">All</option>
+            <option value="en">English</option>
+            <option value="ja">Japanese</option>
+          </select>
+          <button disabled={isLoading} type="submit">
+            <Search size={18} aria-hidden="true" />
+            {isLoading ? "Searching..." : "Search"}
+          </button>
+        </div>
+      </form>
+
+      <div className="deep-search-panel">
+        <div className="deep-search-controls">
+          <label>
+            Import as
+            <select
+              onChange={(event) => setItemType(event.target.value as InventoryItemType)}
+              value={itemType}
+            >
+              <option value="raw">Raw</option>
+              <option value="graded">Graded</option>
+            </select>
+          </label>
+          {itemType === "graded" ? (
+            <>
+              <label>
+                Grader
+                <select onChange={(event) => setGrader(event.target.value)} value={grader}>
+                  <option value="PSA">PSA</option>
+                  <option value="CGC">CGC</option>
+                  <option value="BGS">BGS</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label>
+                Grade
+                <input onChange={(event) => setGrade(event.target.value)} placeholder="10" value={grade} />
+              </label>
+              <label>
+                Cert #
+                <input
+                  onChange={(event) => setCertNumber(event.target.value)}
+                  placeholder="Optional"
+                  value={certNumber}
+                />
+              </label>
+            </>
+          ) : null}
+          <label>
+            Qty
+            <input
+              min="1"
+              onChange={(event) => setQuantity(event.target.value)}
+              type="number"
+              value={quantity}
+            />
+          </label>
+          <label>
+            Storage
+            <input
+              onChange={(event) => setStorageLocation(event.target.value)}
+              placeholder="Binder, box, vault..."
+              value={storageLocation}
+            />
+          </label>
+        </div>
+        <div className="deep-search-actions">
+          <button
+            disabled={candidates.length === 0 || actionStatus === "loading"}
+            onClick={toggleAllVisible}
+            type="button"
+          >
+            {selectedCandidateIds.length === candidates.length && candidates.length > 0
+              ? "Clear selection"
+              : "Select all visible"}
+          </button>
+          <button
+            className="primary-button"
+            disabled={selectedCandidates.length === 0 || actionStatus === "loading"}
+            onClick={importSelected}
+            type="button"
+          >
+            <Download size={18} aria-hidden="true" />
+            {workingId === "selected" ? "Importing..." : `Import selected (${selectedCandidates.length})`}
+          </button>
+        </div>
+      </div>
+
+      {message ? <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p> : null}
+      {actionMessage ? (
+        <p className={actionStatus === "error" ? "form-error" : "lookup-note"}>{actionMessage}</p>
+      ) : null}
+
+      {sets.length > 0 ? (
+        <section className="deep-search-panel">
+          <div className="deep-search-section-header">
+            <div>
+              <p className="eyebrow">PokemonPriceTracker sets</p>
+              <h3>Set matches</h3>
+            </div>
+            <span>{sets.length}</span>
+          </div>
+          <div className="set-result-grid">
+            {sets.map((set) => (
+              <button
+                className={selectedSet?.id === set.id ? "active" : ""}
+                key={set.id}
+                onClick={() => void onLoadSet(set)}
+                type="button"
+              >
+                <strong>{set.displayName}</strong>
+                <span>
+                  {[set.series, set.releaseYear, set.cardCount ? `${set.cardCount} cards` : null]
+                    .filter(Boolean)
+                    .join(" · ") || "PokemonPriceTracker set"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {selectedSet ? (
+        <section className="deep-search-panel">
+          <div className="deep-search-section-header">
+            <div>
+              <p className="eyebrow">Loaded set</p>
+              <h3>{selectedSet.displayName}</h3>
+            </div>
+            <span>{setCards.length}</span>
+          </div>
+        </section>
+      ) : null}
+
+      {candidates.length > 0 ? (
+        <section className="deep-search-panel">
+          <div className="deep-search-section-header">
+            <div>
+              <p className="eyebrow">Cards</p>
+              <h3>Import candidates</h3>
+            </div>
+            <span>{candidates.length}</span>
+          </div>
+          <div className="deep-card-grid">
+            {candidates.map((candidate) => (
+              <article className="deep-card" key={candidate.id}>
+                <label className="deep-card-select">
+                  <input
+                    checked={selectedCandidateSet.has(candidate.id)}
+                    onChange={() => toggleCandidate(candidate.id)}
+                    type="checkbox"
+                  />
+                  <span>Select</span>
+                </label>
+                <div className="deep-card-image" aria-hidden="true">
+                  {candidate.imageUrl ? <img alt="" src={candidate.imageUrl} /> : <Gem size={34} />}
+                </div>
+                <div className="deep-card-copy">
+                  <p className="eyebrow">
+                    {candidate.language.toUpperCase()} · {candidate.source}
+                  </p>
+                  <h4>{candidate.name}</h4>
+                  <p>
+                    {[candidate.cardNumber, candidate.setName, candidate.rarity]
+                      .filter(Boolean)
+                      .join(" · ") || "No set details"}
+                  </p>
+                </div>
+                <div className="deep-card-actions">
+                  {displayLookupSourceId(candidate) ? (
+                    <button
+                      className="source-id-pill"
+                      onClick={() => void copySourceId(candidate)}
+                      title="Copy PokemonPriceTracker ID"
+                      type="button"
+                    >
+                      {candidate.sourceId}
+                    </button>
+                  ) : null}
+                  <button
+                    disabled={workingId === candidate.id || actionStatus === "loading"}
+                    onClick={() => void addCandidate(candidate)}
+                    type="button"
+                  >
+                    <Plus size={16} aria-hidden="true" />
+                    {workingId === candidate.id ? "Adding..." : "Add"}
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </section>
+  );
+}
+
+function mergeDeepSearchCandidates(candidates: CardLookupCandidate[]) {
+  const candidateMap = new Map<string, CardLookupCandidate>();
+
+  for (const candidate of candidates) {
+    const key = [
+      candidate.source,
+      candidate.sourceId,
+      candidate.name,
+      candidate.cardNumber,
+      candidate.setName
+    ].join("|");
+
+    if (!candidateMap.has(key)) {
+      candidateMap.set(key, candidate);
+    }
+  }
+
+  return [...candidateMap.values()];
+}
+
+function deepSearchPayloadForCandidate(
+  candidate: CardLookupCandidate,
+  options: {
+    certNumber: string;
+    grade: string;
+    grader: string;
+    itemType: InventoryItemType;
+    quantity: string;
+    storageLocation: string;
+  }
+): CreateInventoryItemRequest {
+  return {
+    ...candidate.item,
+    itemType: options.itemType,
+    quantity: normalizeQuantity(options.quantity),
+    storageLocation: options.storageLocation,
+    grader: options.itemType === "graded" ? options.grader : "",
+    grade: options.itemType === "graded" ? options.grade : "",
+    certNumber: options.itemType === "graded" ? options.certNumber : "",
+    pricingSource:
+      candidate.source === "pokemonpricetracker"
+        ? {
+            source: "pokemonpricetracker",
+            sourceCardId: candidate.sourceId,
+            confidence: candidate.confidence
+          }
+        : undefined,
+    notes: [
+      candidate.item.notes,
+      candidate.source === "pokemonpricetracker"
+        ? `PokemonPriceTracker card ${candidate.sourceId}`
+        : null,
+      `Lookup confidence: ${candidate.confidence}`
+    ]
+      .filter(Boolean)
+      .join("\n")
+  };
 }
 
 function CardLookupPanel({
@@ -2841,6 +4660,8 @@ function InventoryFilterPanel({
             <option value="name">Name A-Z</option>
             <option value="set">Set/code</option>
             <option value="value">Highest value</option>
+            <option value="price-change">Recent price change</option>
+            <option value="psa-pop">PSA pop low first</option>
             <option value="quantity">Quantity</option>
           </select>
         </label>
@@ -3501,8 +5322,7 @@ function RawMarketPriceSummary({
           </h4>
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
-          <EbaySoldCompsLink item={item} />
-          <PokemonPriceTrackerLink item={item} />
+          <PricingResearchLinks item={item} />
           <button disabled={isRefreshing} onClick={onRefresh} type="button">
             <RefreshCw size={16} aria-hidden="true" />
             {isRefreshing ? "Refreshing..." : "Refresh raw price"}
@@ -3615,8 +5435,7 @@ function GradedMarketPriceSummary({
           </h4>
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
-          <EbaySoldCompsLink item={item} />
-          <PokemonPriceTrackerLink item={item} />
+          <PricingResearchLinks item={item} />
           <button disabled={isRefreshing} onClick={onRefresh} type="button">
             <RefreshCw size={16} aria-hidden="true" />
             {isRefreshing ? "Refreshing..." : "Refresh graded price"}
@@ -3702,31 +5521,44 @@ function GradedMarketPriceSummary({
   );
 }
 
-function EbaySoldCompsLink({ item }: { item: InventoryItem }) {
-  return (
-    <a
-      href={buildEbaySoldSearchUrl(item)}
-      rel="noreferrer"
-      target="_blank"
-      title="Open eBay sold listings search"
-    >
-      <ExternalLink size={16} aria-hidden="true" />
-      eBay solds
-    </a>
-  );
-}
+function PricingResearchLinks({ item }: { item: InventoryItem }) {
+  const links = [
+    {
+      href: buildEbaySoldSearchUrl(item),
+      label: "eBay solds",
+      title: "Open eBay sold listings search"
+    },
+    {
+      href: buildEbayActiveSearchUrl(item),
+      label: "eBay listings",
+      title: "Open current eBay listings search"
+    },
+    {
+      href: buildPokemonPriceTrackerUrl(item),
+      label: "PriceTracker",
+      title: "Open PokemonPriceTracker search"
+    },
+    {
+      href: buildPriceChartingUrl(item),
+      label: "PriceCharting",
+      title: "Open PriceCharting search"
+    }
+  ];
 
-function PokemonPriceTrackerLink({ item }: { item: InventoryItem }) {
   return (
-    <a
-      href={buildPokemonPriceTrackerUrl(item)}
-      rel="noreferrer"
-      target="_blank"
-      title="Open PokemonPriceTracker search"
-    >
-      <ExternalLink size={16} aria-hidden="true" />
-      PriceTracker
-    </a>
+    <details className="research-links-menu">
+      <summary>
+        <ExternalLink size={16} aria-hidden="true" />
+        Research links
+      </summary>
+      <div>
+        {links.map((link) => (
+          <a href={link.href} key={link.label} rel="noreferrer" target="_blank" title={link.title}>
+            {link.label}
+          </a>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -3762,22 +5594,7 @@ function SavedPriceHistoryPanel({
       </div>
 
       {hasSnapshots ? (
-        <div className="price-history-chart" aria-hidden="true">
-          {snapshots.map((snapshot) => {
-            const height = 18 + ((snapshot.priceCents - minPrice) / range) * 82;
-
-            return (
-              <span
-                className={priceChangeClass(snapshot.deltaCents)}
-                key={snapshot.id}
-                style={{ height: `${height}%` }}
-                title={`${formatHistoryDate(snapshot.capturedAt)}: ${formatCurrency(
-                  snapshot.priceCents
-                )}`}
-              />
-            );
-          })}
-        </div>
+        <PriceHistoryLineChart maxPrice={maxPrice} minPrice={minPrice} points={snapshots} range={range} />
       ) : (
         <p className="lookup-note">{emptyMessage}</p>
       )}
@@ -3816,6 +5633,73 @@ function SavedPriceHistoryPanel({
         <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
       ) : null}
     </section>
+  );
+}
+
+function PriceHistoryLineChart({
+  maxPrice,
+  minPrice,
+  points,
+  range
+}: {
+  maxPrice: number;
+  minPrice: number;
+  points: MarketPriceSnapshot[];
+  range: number;
+}) {
+  const chartWidth = 100;
+  const chartHeight = 100;
+  const coordinates = points.map((point, index) => {
+    const x = points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth;
+    const y = chartHeight - ((point.priceCents - minPrice) / range) * 82 - 9;
+
+    return { point, x, y };
+  });
+  const linePath = coordinates
+    .map((coordinate, index) => `${index === 0 ? "M" : "L"} ${coordinate.x} ${coordinate.y}`)
+    .join(" ");
+  const firstPoint = points[0];
+  const latestPoint = points[points.length - 1];
+  const isFlat = minPrice === maxPrice;
+
+  return (
+    <div className="price-history-chart line-chart" aria-label="Saved price history line chart">
+      <div className="line-chart-topline">
+        <div>
+          <span>Start</span>
+          <strong>{formatCurrency(firstPoint.priceCents)}</strong>
+        </div>
+        <div>
+          <span>Latest</span>
+          <strong>{formatCurrency(latestPoint.priceCents)}</strong>
+        </div>
+        <div>
+          <span>Range</span>
+          <strong>
+            {isFlat ? "No movement" : `${formatCurrency(minPrice)} to ${formatCurrency(maxPrice)}`}
+          </strong>
+        </div>
+      </div>
+      <svg aria-hidden="true" className={isFlat ? "flat" : ""} preserveAspectRatio="none" viewBox="0 0 100 100">
+        <line className="chart-grid-line" x1="0" x2="100" y1="9" y2="9" />
+        <line className="chart-grid-line" x1="0" x2="100" y1="91" y2="91" />
+        {coordinates.length > 1 ? <path className="price-history-line" d={linePath} /> : null}
+        {coordinates.map(({ point, x, y }, index) => (
+          <circle
+            className={priceChangeClass(point.deltaCents)}
+            cx={x}
+            cy={y}
+            key={point.id}
+            r={index === 0 || index === coordinates.length - 1 ? "3.4" : "2.4"}
+          />
+        ))}
+      </svg>
+      <div className="line-chart-footer">
+        <span>{formatHistoryDate(firstPoint.capturedAt)}</span>
+        <span>{points.length} refresh{points.length === 1 ? "" : "es"}</span>
+        <span>{formatHistoryDate(latestPoint.capturedAt)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -6245,6 +8129,42 @@ function compareInventoryItems(left: InventoryItem, right: InventoryItem, sort: 
     return inventoryItemValue(right) - inventoryItemValue(left);
   }
 
+  if (sort === "price-change") {
+    const leftChanged = left.marketPriceChangeCents !== null;
+    const rightChanged = right.marketPriceChangeCents !== null;
+
+    if (leftChanged !== rightChanged) {
+      return rightChanged ? 1 : -1;
+    }
+
+    const leftUpdatedAt = timestampForSort(left.marketPriceUpdatedAt);
+    const rightUpdatedAt = timestampForSort(right.marketPriceUpdatedAt);
+
+    if (leftUpdatedAt !== rightUpdatedAt) {
+      return rightUpdatedAt - leftUpdatedAt;
+    }
+
+    return Math.abs(right.marketPriceChangeCents ?? 0) - Math.abs(left.marketPriceChangeCents ?? 0);
+  }
+
+  if (sort === "psa-pop") {
+    const leftPopulation = populationNumberForSort(left.certPopulation);
+    const rightPopulation = populationNumberForSort(right.certPopulation);
+
+    if (leftPopulation !== rightPopulation) {
+      return leftPopulation - rightPopulation;
+    }
+
+    const leftHigherPopulation = populationNumberForSort(left.certPopulationHigher);
+    const rightHigherPopulation = populationNumberForSort(right.certPopulationHigher);
+
+    if (leftHigherPopulation !== rightHigherPopulation) {
+      return leftHigherPopulation - rightHigherPopulation;
+    }
+
+    return left.card.name.localeCompare(right.card.name, undefined, { sensitivity: "base" });
+  }
+
   if (sort === "quantity") {
     return right.quantity - left.quantity;
   }
@@ -6425,6 +8345,28 @@ function inventoryItemValue(item: InventoryItem) {
   return (item.valueOverrideCents ?? item.marketPriceCents ?? item.purchasePriceCents ?? 0) * item.quantity;
 }
 
+function timestampForSort(value: string | null) {
+  if (!value) {
+    return 0;
+  }
+
+  const timestamp = new Date(value).getTime();
+
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function populationNumberForSort(value: string | null) {
+  const match = String(value ?? "").match(/\d[\d,]*/);
+
+  if (!match) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const parsed = Number(match[0].replaceAll(",", ""));
+
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+}
+
 function normalizeSearchText(value: string) {
   return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
@@ -6452,6 +8394,14 @@ function sortLabel(sort: InventorySortMode) {
 
   if (sort === "value") {
     return "Highest value";
+  }
+
+  if (sort === "price-change") {
+    return "Recent price change";
+  }
+
+  if (sort === "psa-pop") {
+    return "PSA pop low first";
   }
 
   if (sort === "quantity") {
@@ -6493,6 +8443,26 @@ function marketPriceSourceLabel(source: InventoryItem["marketPriceSource"]) {
 }
 
 function buildEbaySoldSearchUrl(item: InventoryItem) {
+  const params = new URLSearchParams({
+    _nkw: buildEbaySearchQuery(item),
+    _sacat: "0",
+    LH_Sold: "1",
+    LH_Complete: "1"
+  });
+
+  return `https://www.ebay.com/sch/i.html?${params.toString()}`;
+}
+
+function buildEbayActiveSearchUrl(item: InventoryItem) {
+  const params = new URLSearchParams({
+    _nkw: buildEbaySearchQuery(item),
+    _sacat: "0"
+  });
+
+  return `https://www.ebay.com/sch/i.html?${params.toString()}`;
+}
+
+function buildEbaySearchQuery(item: InventoryItem) {
   const gradeNumber = String(item.grade ?? "").match(/\d+(?:\.\d+)?/)?.[0] ?? "";
   const gradedTerm =
     item.itemType === "graded"
@@ -6510,14 +8480,8 @@ function buildEbaySoldSearchUrl(item: InventoryItem) {
     gradedTerm,
     "Pokemon"
   ]).join(" ");
-  const params = new URLSearchParams({
-    _nkw: query,
-    _sacat: "0",
-    LH_Sold: "1",
-    LH_Complete: "1"
-  });
 
-  return `https://www.ebay.com/sch/i.html?${params.toString()}`;
+  return query;
 }
 
 function buildPokemonPriceTrackerUrl(item: InventoryItem) {
@@ -6526,6 +8490,23 @@ function buildPokemonPriceTrackerUrl(item: InventoryItem) {
   });
 
   return `https://www.pokemonpricetracker.com/pokemon-prices?${params.toString()}`;
+}
+
+function buildPriceChartingUrl(item: InventoryItem) {
+  const query = uniqueSearchTerms([
+    "Pokemon",
+    ebaySearchCardName(item.card.name, item.card.cardNumber),
+    item.card.cardNumber,
+    item.card.setName,
+    item.itemType === "graded" ? [item.grader, item.grade].filter(Boolean).join(" ") : "",
+    item.card.language === "ja" ? "Japanese" : ""
+  ]).join(" ");
+  const params = new URLSearchParams({
+    q: query,
+    type: "prices"
+  });
+
+  return `https://www.pricecharting.com/search-products?${params.toString()}`;
 }
 
 function ebaySearchCardName(name: string, cardNumber: string | null | undefined) {

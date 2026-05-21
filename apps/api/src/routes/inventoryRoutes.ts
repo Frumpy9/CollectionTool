@@ -620,6 +620,8 @@ function createInventoryItem(
         nullIfBlank(input.certLookupAt)
       );
 
+    saveInitialPricingSourceMatch(database, itemId, input);
+
     database.connection.exec("COMMIT");
   } catch (error) {
     database.connection.exec("ROLLBACK");
@@ -627,6 +629,47 @@ function createInventoryItem(
   }
 
   return listInventoryItems(database, collectionId).find((item) => item.id === itemId);
+}
+
+function saveInitialPricingSourceMatch(
+  database: AppDatabase,
+  itemId: string,
+  input: CreateInventoryItemRequest
+) {
+  const source = input.pricingSource;
+
+  if (source?.source !== "pokemonpricetracker" || !nullIfBlank(source.sourceCardId)) {
+    return;
+  }
+
+  database.connection
+    .prepare(
+      `
+        INSERT INTO item_price_source_matches (
+          owned_item_id,
+          source,
+          source_card_id,
+          source_variant_id,
+          match_kind,
+          confidence,
+          created_at,
+          updated_at
+        )
+        VALUES (?, 'pokemonpricetracker', ?, ?, 'automatic', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(owned_item_id, source) DO UPDATE SET
+          source_card_id = excluded.source_card_id,
+          source_variant_id = excluded.source_variant_id,
+          match_kind = excluded.match_kind,
+          confidence = excluded.confidence,
+          updated_at = CURRENT_TIMESTAMP
+      `
+    )
+    .run(
+      itemId,
+      source.sourceCardId.trim(),
+      nullIfBlank(source.sourceVariantId) ?? "",
+      normalizeMarketPriceConfidence(source.confidence)
+    );
 }
 
 function updateInventoryItem(
@@ -1458,6 +1501,14 @@ function normalizeLanguage(language: CardLanguage): CardLanguage {
 
 function normalizeItemType(itemType: InventoryItemType): InventoryItemType {
   return itemType === "graded" ? "graded" : "raw";
+}
+
+function normalizeMarketPriceConfidence(
+  confidence: MarketPriceConfidence | undefined
+): MarketPriceConfidence {
+  return confidence === "exact" || confidence === "strong" || confidence === "possible"
+    ? confidence
+    : "possible";
 }
 
 function normalizeCents(value: number | undefined) {

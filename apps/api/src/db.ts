@@ -490,6 +490,17 @@ const migrations: Migration[] = [
       SET value = '17', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 18,
+    name: "disabled_users",
+    sql: `
+      ALTER TABLE users ADD COLUMN disabled_at TEXT;
+
+      UPDATE app_metadata
+      SET value = '18', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

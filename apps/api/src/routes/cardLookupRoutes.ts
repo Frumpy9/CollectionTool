@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type {
   CardLookupRequest,
   JapaneseCardCacheResponse,
+  PokemonPriceTrackerSetCardsResponse,
+  PokemonPriceTrackerSetSearchResponse,
   UpsertJapaneseCardCacheRequest
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
@@ -9,6 +11,10 @@ import { getAuthContext, getCollectionRole, listCollectionsForUser } from "../au
 import { lookupCards, parseCardQuery } from "../cardLookupClient.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import {
+  lookupPokemonPriceTrackerSetCards,
+  searchPokemonPriceTrackerSets
+} from "../pokemonPriceTrackerClient.js";
 
 export async function registerCardLookupRoutes(
   app: FastifyInstance,
@@ -29,9 +35,48 @@ export async function registerCardLookupRoutes(
       query: body.query,
       language: body.language,
       pokemonTcgApiKey: config.pokemonTcgApiKey,
+      pokemonPriceTrackerApiKey: config.pokemonPriceTrackerApiKey,
       database
     });
   });
+
+  app.get(
+    "/api/cards/pokemonpricetracker/sets",
+    async (request, reply): Promise<PokemonPriceTrackerSetSearchResponse | { error: string }> => {
+      const auth = getAuthContext(request, database);
+
+      if (!auth) {
+        reply.code(401);
+        return { error: "Unauthorized" };
+      }
+
+      const search = normalizeSetSearchQuery((request.query as { search?: string }).search);
+
+      return searchPokemonPriceTrackerSets({
+        apiKey: config.pokemonPriceTrackerApiKey,
+        query: search
+      });
+    }
+  );
+
+  app.get(
+    "/api/cards/pokemonpricetracker/sets/:setName/cards",
+    async (request, reply): Promise<PokemonPriceTrackerSetCardsResponse | { error: string }> => {
+      const auth = getAuthContext(request, database);
+
+      if (!auth) {
+        reply.code(401);
+        return { error: "Unauthorized" };
+      }
+
+      const setName = normalizeSetSearchQuery((request.params as { setName?: string }).setName);
+
+      return lookupPokemonPriceTrackerSetCards({
+        apiKey: config.pokemonPriceTrackerApiKey,
+        setName
+      });
+    }
+  );
 
   app.post(
     "/api/cards/japanese-cache",
@@ -63,6 +108,20 @@ export async function registerCardLookupRoutes(
   );
 }
 
+function normalizeSetSearchQuery(value: string | undefined) {
+  const query = value?.trim();
+
+  if (!query || query.length < 2) {
+    throw new Error("Enter at least 2 characters.");
+  }
+
+  if (query.length > 180) {
+    throw new Error("Search text is too long.");
+  }
+
+  return query;
+}
+
 function normalizeCardLookupRequest(input: CardLookupRequest): Required<CardLookupRequest> {
   const query = input.query?.trim();
   const language = input.language ?? "all";
@@ -71,7 +130,7 @@ function normalizeCardLookupRequest(input: CardLookupRequest): Required<CardLook
     throw new Error("Enter at least 2 characters to look up a card.");
   }
 
-  if (query.length > 80) {
+  if (query.length > 220) {
     throw new Error("Lookup text is too long.");
   }
 

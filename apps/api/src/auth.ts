@@ -20,6 +20,7 @@ type UserRow = {
   password_hash: string;
   password_salt: string;
   system_role: "admin" | "user";
+  disabled_at: string | null;
 };
 
 type SessionUserRow = UserRow & {
@@ -61,7 +62,8 @@ export function mapUser(row: UserRow): AuthUser {
     email: row.email,
     username: row.username,
     displayName: row.display_name,
-    systemRole: row.system_role
+    systemRole: row.system_role,
+    disabledAt: row.disabled_at
   };
 }
 
@@ -162,6 +164,20 @@ export function getCollectionRole(
     | undefined;
 
   return row?.role ?? null;
+}
+
+export function canManageCollection(
+  database: AppDatabase,
+  collectionId: string,
+  user: AuthUser
+) {
+  if (user.systemRole === "admin") {
+    return true;
+  }
+
+  const role = getCollectionRole(database, collectionId, user.id);
+
+  return role === "owner" || role === "admin";
 }
 
 export function createCollectionInvite(
@@ -303,7 +319,7 @@ export function getUserById(database: AppDatabase, userId: string) {
   const row = database.connection
     .prepare(
       `
-        SELECT id, email, display_name, password_hash, password_salt, system_role
+        SELECT id, email, display_name, password_hash, password_salt, system_role, disabled_at
         , username
         FROM users
         WHERE id = ?
@@ -322,14 +338,14 @@ export function authenticateLogin(
   const row = database.connection
     .prepare(
       `
-        SELECT id, email, username, display_name, password_hash, password_salt, system_role
+        SELECT id, email, username, display_name, password_hash, password_salt, system_role, disabled_at
         FROM users
         WHERE email = ? OR username = ?
       `
     )
     .get(identifier, identifier) as UserRow | undefined;
 
-  if (!row || !verifyPassword(input.password, row.password_salt, row.password_hash)) {
+  if (!row || row.disabled_at || !verifyPassword(input.password, row.password_salt, row.password_hash)) {
     return null;
   }
 
@@ -350,7 +366,7 @@ export function getAuthContext(request: FastifyRequest, database: AppDatabase): 
   const row = database.connection
     .prepare(
       `
-        SELECT u.id, u.email, u.username, u.display_name, u.password_hash, u.password_salt, u.system_role, s.expires_at
+        SELECT u.id, u.email, u.username, u.display_name, u.password_hash, u.password_salt, u.system_role, u.disabled_at, s.expires_at
         FROM sessions s
         INNER JOIN users u ON u.id = s.user_id
         WHERE s.token_hash = ?
@@ -358,7 +374,7 @@ export function getAuthContext(request: FastifyRequest, database: AppDatabase): 
     )
     .get(hashToken(token)) as SessionUserRow | undefined;
 
-  if (!row || new Date(row.expires_at).getTime() <= Date.now()) {
+  if (!row || row.disabled_at || new Date(row.expires_at).getTime() <= Date.now()) {
     return null;
   }
 

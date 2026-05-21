@@ -32,6 +32,7 @@ try {
             password_hash = ?,
             password_salt = ?,
             system_role = 'admin',
+            disabled_at = NULL,
             updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
         `

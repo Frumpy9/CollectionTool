@@ -24,9 +24,9 @@ collection-2026-05-16T20-48-57-123Z.sqlite
 
 ## Create A Backup
 
-In the app, sign in as a collection owner or admin and click the database backup button in the top bar. The API writes a new `.sqlite` file under the backups directory.
+In the app, sign in as a system admin or collection owner/admin, open the Admin workspace, and click **Back up now** in Maintenance. The API writes a new `.sqlite` file under the backups directory.
 
-You can also export inventory as CSV from the top bar. CSV exports are useful for spreadsheet review and manual import, but the SQLite backup is the full restore point.
+You can also export inventory as CSV from the Data workspace. CSV exports are useful for spreadsheet review and manual import, but the SQLite backup is the full restore point.
 
 ## Scheduled Backups
 
