@@ -838,6 +838,8 @@ function WorkspaceShell({
     : activeSection === "graded"
       ? "graded rows"
       : "raw rows";
+  const overallValueChangeCents = collectionValueChangeCents(inventory.items);
+  const overallValueClassName = priceChangeClassName(overallValueChangeCents);
   const sectionMeta = isAllCollectionResultScope
     ? {
         eyebrow: "Collection",
@@ -876,6 +878,7 @@ function WorkspaceShell({
     {
       label: "Estimated value",
       value: formatCurrency(inventory.summary.estimatedValueCents),
+      valueClassName: overallValueClassName,
       icon: CircleDollarSign
     },
     {
@@ -1913,7 +1916,7 @@ function WorkspaceShell({
                   <article className="stat-tile" key={stat.label}>
                     <Icon size={20} aria-hidden="true" />
                     <span>{stat.label}</span>
-                    <strong>{stat.value}</strong>
+                    <strong className={stat.valueClassName}>{stat.value}</strong>
                   </article>
                 );
               })}
@@ -5758,6 +5761,24 @@ function priceChangeClass(deltaCents: number | null) {
   }
 
   return deltaCents > 0 ? "price-change-positive" : "price-change-negative";
+}
+
+function priceChangeClassName(deltaCents: number) {
+  if (deltaCents === 0) {
+    return "";
+  }
+
+  return deltaCents > 0 ? "price-change-positive" : "price-change-negative";
+}
+
+function collectionValueChangeCents(items: InventoryItem[]) {
+  return items.reduce((total, item) => {
+    if (item.valueOverrideCents !== null || item.marketPriceChangeCents === null) {
+      return total;
+    }
+
+    return total + item.marketPriceChangeCents * item.quantity;
+  }, 0);
 }
 
 function priceChangeLabel(snapshot: Pick<MarketPriceSnapshot, "deltaCents">) {

@@ -46,11 +46,33 @@ That creates or resets a local-only account with username `admin` and password `
 
 ```bash
 cp .env.example .env
-docker compose up --build
+npm run prod
+```
+
+Edit `.env` before starting production. Set `APP_URL` to your HTTPS domain and replace `SESSION_SECRET` with a long random value. Production startup rejects localhost URLs and default/short session secrets.
+
+The production Docker app publishes the website only on `127.0.0.1:5173`. Point host-installed `cloudflared` at `http://localhost:5173`; nginx inside the web container proxies `/api`, `/uploads`, and `/health` to the private API container.
+
+Useful production commands:
+
+```bash
+npm run prod          # build/start containers
+npm run prod:logs     # follow logs
+npm run prod:ps       # show container status
+npm run prod:restart  # restart containers
+npm run prod:stop     # stop containers, keep data volume
+```
+
+To update later:
+
+```bash
+git pull
+npm run prod
+npm run prod:logs
 ```
 
 The SQLite database is stored in the `collection-data` Docker volume at `/data/collection.sqlite`.
-Uploaded card images are stored in the same volume under `/data/uploads`.
+Uploaded card images are stored in the same volume under `/data/uploads`. Do not run `docker compose down -v` unless you intentionally want to delete the stored collection data.
 
 ## Backups And Restore
 

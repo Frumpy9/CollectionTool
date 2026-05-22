@@ -301,7 +301,7 @@ export function setSessionCookie(reply: FastifyReply, config: AppConfig, token: 
   reply.setCookie(sessionCookieName, token, {
     httpOnly: true,
     path: "/",
-    sameSite: "lax",
+    sameSite: config.isProduction ? "strict" : "lax",
     secure: config.cookieSecure,
     maxAge: sessionDays * 24 * 60 * 60
   });
@@ -311,7 +311,7 @@ export function clearSessionCookie(reply: FastifyReply, config: AppConfig) {
   reply.clearCookie(sessionCookieName, {
     path: "/",
     secure: config.cookieSecure,
-    sameSite: "lax"
+    sameSite: config.isProduction ? "strict" : "lax"
   });
 }
 

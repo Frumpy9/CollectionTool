@@ -15,12 +15,12 @@ RUN npm run build --workspace @collection-tool/api
 
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production
+ENV PORT=7317
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/shared/package.json packages/shared/package.json
 RUN npm install --omit=dev
 COPY --from=build /app/apps/api/dist apps/api/dist
-EXPOSE 3000
+EXPOSE 7317
 CMD ["node", "apps/api/dist/server.js"]
-

@@ -9,6 +9,11 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @collection-tool/api & npm run dev --workspace @collection-tool/web",
+    "prod": "docker compose up -d --build",
+    "prod:logs": "docker compose logs -f",
+    "prod:ps": "docker compose ps",
+    "prod:restart": "docker compose restart",
+    "prod:stop": "docker compose down",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
@@ -17,4 +22,3 @@
     "node": ">=22.5.0"
   }
 }
-

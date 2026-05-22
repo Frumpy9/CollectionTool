@@ -9,7 +9,8 @@
     "seed:dev-admin": "tsc -p tsconfig.json && DATABASE_PATH=../../data/collection.sqlite node dist/scripts/seedDevAdmin.js",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --import tsx \"src/test/**/*.test.ts\""
   },
   "dependencies": {
     "@collection-tool/shared": "file:../../packages/shared",

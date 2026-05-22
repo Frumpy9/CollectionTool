@@ -844,6 +844,10 @@ small {
   background: #e9f8ef;
 }
 
+.stat-tile strong.price-change-positive {
+  color: #0f6b3f;
+}
+
 .price-history-chart circle.price-change-positive {
   fill: #20a464;
 }
@@ -853,6 +857,10 @@ small {
 .price-change-delta.price-change-negative {
   color: #a11d2a;
   background: #fff0f1;
+}
+
+.stat-tile strong.price-change-negative {
+  color: #a11d2a;
 }
 
 .price-history-chart circle.price-change-negative {

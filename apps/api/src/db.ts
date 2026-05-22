@@ -401,7 +401,8 @@ const migrations: Migration[] = [
     id: 13,
     name: "card_release_year",
     sql: `
-      ALTER TABLE cards ADD COLUMN release_year TEXT;
+      -- release_year is present in fresh databases from the base cards table.
+      -- Older local databases are repaired by ensureCardReleaseYearColumn().
 
       UPDATE app_metadata
       SET value = '13', updated_at = CURRENT_TIMESTAMP

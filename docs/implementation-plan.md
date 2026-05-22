@@ -159,7 +159,7 @@
 - [x] Add practical Admin workspace for account management, collection membership, backups, and maintenance visibility.
 - [x] Add in-app API credits page with source roles and external links.
 - [ ] Add Playwright tests for auth and manual inventory.
-- [ ] Add backend tests for auth, permissions, and inventory routes.
+- [x] Add backend tests for auth, permissions, and inventory routes.
 - [ ] Run Docker Compose on the Ubuntu target server.
 - [ ] Add screenshots to README.
 - [ ] Confirm no secrets, databases, cached images, backups, sessions, or logs are tracked.
@@ -186,10 +186,10 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 ## Current Checkpoint
 
-- Current working branch: `codex/local-price-history`.
+- Current working branch: `main`.
 - Local admin tooling adds migration id `18` for disabled users because migration id `17` is already used by local market price snapshots.
 - Admin v1 is local-first: system admins create users directly; email delivery, invite acceptance, user deletion, and collection ownership transfer are intentionally out of scope.
 - Current dev database has migrations through local market price snapshots applied; admin account disabling is applied by migration id `18`.
-- Browser verification needed after implementation: account creation/login, collection role changes, user disable/session blocking, backup-now from Admin, and maintenance status rendering.
+- Backend coverage now verifies admin lockout protections, disabled user login/session blocking, collection member permissions, and inventory pricing-source hint persistence.
 - PSA estimate remains hidden because the public PSA lookup response has not reliably returned estimate values.
 - Next best feature: add Japanese set import/refresh maintenance tooling or formal Playwright coverage for admin/auth flows.
