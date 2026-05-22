@@ -826,11 +826,12 @@ function WorkspaceShell({
           ? inventory.items
           : rawItems
         : inventory.items;
+  const isInventorySelectionSection = activeSection === "collection" || activeSection === "graded";
   const isAllCollectionResultScope =
     activeSection === "collection" &&
     (collectionResultScope === "all" || inventoryFilters.itemType !== "all");
   const visibleItems =
-    activeSection === "collection" || activeSection === "graded"
+    isInventorySelectionSection
       ? filterInventoryItems(sectionItems, inventoryFilters)
       : [];
   const inventoryRowKindLabel = isAllCollectionResultScope
@@ -1937,14 +1938,14 @@ function WorkspaceShell({
                         Clear filters
                       </button>
                     ) : null}
-                    {activeSection === "collection" ? (
+                    {isInventorySelectionSection ? (
                       <button type="button" onClick={toggleSelectionMode}>
                         {selectionMode ? "Cancel select" : "Select"}
                       </button>
                     ) : null}
                   </div>
                 </div>
-                {activeSection === "collection" && selectionMode ? (
+                {isInventorySelectionSection && selectionMode ? (
                   <BulkSelectionBar
                     includeExisting={bulkPriceIncludeExisting}
                     isWorking={bulkPriceStatus === "loading"}
@@ -1959,7 +1960,7 @@ function WorkspaceShell({
                     onSelectVisible={selectVisibleItems}
                   />
                 ) : null}
-                {activeSection === "collection" && selectionMode && bulkVariantEditorOpen ? (
+                {isInventorySelectionSection && selectionMode && bulkVariantEditorOpen ? (
                   <BulkVariantEditor
                     clearMarketPrices={bulkVariantClearMarketPrices}
                     isWorking={bulkVariantStatus === "loading"}
@@ -1974,7 +1975,7 @@ function WorkspaceShell({
                     onToggleVariant={toggleBulkVariantValue}
                   />
                 ) : null}
-                {activeSection === "collection" && bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
+                {isInventorySelectionSection && bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
                   <BulkPriceQueuePanel
                     isWorking={bulkPriceStatus === "loading"}
                     message={bulkPriceMessage}
@@ -1990,7 +1991,7 @@ function WorkspaceShell({
                 ) : null}
                 {visibleItems.length > 0 ? (
                   <InventoryGrid
-                    isSelecting={activeSection === "collection" && selectionMode}
+                    isSelecting={isInventorySelectionSection && selectionMode}
                     items={visibleItems}
                     selectedItemIds={selectedItemIdSet}
                     onSelect={setSelectedItem}
