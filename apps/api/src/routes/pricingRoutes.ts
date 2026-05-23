@@ -5,6 +5,7 @@ import type {
   BulkPriceQueueResponse,
   BulkPriceQueueStatus,
   CardImageLookupResponse,
+  CollectionValueHistoryResponse,
   EnqueueBulkPriceRefreshRequest,
   InventoryMarketPriceSource,
   InventoryItem,
@@ -38,6 +39,29 @@ export async function registerPricingRoutes(
   config: AppConfig,
   database: AppDatabase
 ) {
+  app.get(
+    "/api/collections/:collectionId/pricing/value-history",
+    async (request, reply): Promise<CollectionValueHistoryResponse | { error: string }> => {
+      const access = getCollectionPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const points = listCollectionValueHistory(database, access.collectionId);
+
+      return {
+        collectionId: access.collectionId,
+        points,
+        message:
+          points.length > 0
+            ? "Loaded saved collection value history."
+            : "No collection value history has been saved yet."
+      };
+    }
+  );
+
   app.post(
     "/api/collections/:collectionId/items/:itemId/pricing/refresh",
     async (request, reply) => {
@@ -2079,6 +2103,98 @@ function listMarketPriceSnapshots(database: AppDatabase, itemId: string): Market
     confidence: row.confidence,
     capturedAt: row.captured_at
   }));
+}
+
+function listCollectionValueHistory(
+  database: AppDatabase,
+  collectionId: string
+): CollectionValueHistoryResponse["points"] {
+  const items = listInventoryItems(database, collectionId);
+
+  if (items.length === 0) {
+    return [];
+  }
+
+  const itemsById = new Map(items.map((item) => [item.id, item]));
+  const marketPricesByItemId = new Map<string, number>();
+  const rows = database.connection
+    .prepare(
+      `
+        SELECT
+          snapshots.owned_item_id,
+          snapshots.price_cents,
+          snapshots.captured_at
+        FROM item_market_price_snapshots snapshots
+        INNER JOIN owned_items oi ON oi.id = snapshots.owned_item_id
+        WHERE oi.collection_id = ?
+        ORDER BY snapshots.captured_at ASC, snapshots.created_at ASC
+      `
+    )
+    .all(collectionId) as {
+    owned_item_id: string;
+    price_cents: number;
+    captured_at: string;
+  }[];
+
+  const points: CollectionValueHistoryResponse["points"] = [];
+  let index = 0;
+
+  while (index < rows.length) {
+    const capturedAt = rows[index].captured_at;
+    let refreshedItemCount = 0;
+
+    while (index < rows.length && rows[index].captured_at === capturedAt) {
+      const row = rows[index];
+
+      if (itemsById.has(row.owned_item_id)) {
+        marketPricesByItemId.set(row.owned_item_id, row.price_cents);
+        refreshedItemCount += 1;
+      }
+
+      index += 1;
+    }
+
+    const previousValueCents = points[points.length - 1]?.valueCents ?? null;
+    const valueCents = collectionValueCentsAt(items, marketPricesByItemId, capturedAt);
+
+    points.push({
+      id: `${capturedAt}-${points.length}`,
+      capturedAt,
+      valueCents,
+      deltaCents: previousValueCents === null ? null : valueCents - previousValueCents,
+      refreshedItemCount
+    });
+  }
+
+  return points;
+}
+
+function collectionValueCentsAt(
+  items: InventoryItem[],
+  marketPricesByItemId: Map<string, number>,
+  capturedAt: string
+) {
+  const capturedAtMs = Date.parse(capturedAt);
+
+  return items.reduce((total, item) => {
+    const createdAtMs = Date.parse(item.createdAt);
+
+    if (
+      Number.isFinite(capturedAtMs) &&
+      Number.isFinite(createdAtMs) &&
+      createdAtMs > capturedAtMs
+    ) {
+      return total;
+    }
+
+    const valueCents =
+      item.valueOverrideCents ??
+      marketPricesByItemId.get(item.id) ??
+      item.purchasePriceCents ??
+      0;
+
+    return total + valueCents * item.quantity;
+  }, 0);
 }
 
 function toPublicPricingCandidates(

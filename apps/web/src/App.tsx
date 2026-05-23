@@ -44,6 +44,7 @@ import type {
   CollectionMemberCandidate,
   CollectionMembersResponse,
   CollectionSummary,
+  CollectionValueHistoryPoint,
   CreateInventoryItemRequest,
   InventoryItem,
   InventoryItemType,
@@ -500,6 +501,12 @@ function WorkspaceShell({
   const [bulkVariantValues, setBulkVariantValues] = useState<string[]>([]);
   const [bulkVariantClearMarketPrices, setBulkVariantClearMarketPrices] = useState(true);
   const [duplicateDecision, setDuplicateDecision] = useState<PendingDuplicateDecision | null>(null);
+  const [collectionValueHistoryOpen, setCollectionValueHistoryOpen] = useState(false);
+  const [collectionValueHistory, setCollectionValueHistory] = useState<CollectionValueHistoryPoint[]>([]);
+  const [collectionValueHistoryStatus, setCollectionValueHistoryStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [collectionValueHistoryMessage, setCollectionValueHistoryMessage] = useState("");
   const inventoryRef = useRef(inventory);
   const activeBulkPriceJobCount = bulkPriceQueue
     ? bulkPriceQueue.summary.queued +
@@ -547,6 +554,10 @@ function WorkspaceShell({
     setAdminStatus(null);
     setCollectionMembers([]);
     setMemberCandidates([]);
+    setCollectionValueHistoryOpen(false);
+    setCollectionValueHistory([]);
+    setCollectionValueHistoryStatus("idle");
+    setCollectionValueHistoryMessage("");
     if (authUser.systemRole !== "admin") {
       setAdminTab("members");
     }
@@ -880,7 +891,9 @@ function WorkspaceShell({
       label: "Estimated value",
       value: formatCurrency(inventory.summary.estimatedValueCents),
       valueClassName: overallValueClassName,
-      icon: CircleDollarSign
+      icon: CircleDollarSign,
+      action: openCollectionValueHistory,
+      title: "Open collection value history"
     },
     {
       label: "Inventory rows",
@@ -1609,6 +1622,28 @@ function WorkspaceShell({
     }
   }
 
+  async function openCollectionValueHistory() {
+    if (!activeCollection) {
+      return;
+    }
+
+    setCollectionValueHistoryOpen(true);
+    setCollectionValueHistoryStatus("loading");
+    setCollectionValueHistoryMessage("");
+
+    try {
+      const response = await api.getCollectionValueHistory(activeCollection.id);
+      setCollectionValueHistory(response.points);
+      setCollectionValueHistoryStatus("idle");
+      setCollectionValueHistoryMessage(response.message);
+    } catch (error) {
+      setCollectionValueHistoryStatus("error");
+      setCollectionValueHistoryMessage(
+        error instanceof Error ? error.message : "Unable to load collection value history."
+      );
+    }
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Collection navigation">
@@ -1913,11 +1948,31 @@ function WorkspaceShell({
             <section className="stats-grid" aria-label="Collection summary">
               {workspaceStats.map((stat) => {
                 const Icon = stat.icon;
-                return (
-                  <article className="stat-tile" key={stat.label}>
+                const statContent = (
+                  <>
                     <Icon size={20} aria-hidden="true" />
                     <span>{stat.label}</span>
                     <strong className={stat.valueClassName}>{stat.value}</strong>
+                  </>
+                );
+
+                if (stat.action) {
+                  return (
+                    <button
+                      aria-label={stat.title}
+                      className="stat-tile stat-button"
+                      key={stat.label}
+                      onClick={stat.action}
+                      type="button"
+                    >
+                      {statContent}
+                    </button>
+                  );
+                }
+
+                return (
+                  <article className="stat-tile" key={stat.label}>
+                    {statContent}
                   </article>
                 );
               })}
@@ -2126,6 +2181,16 @@ function WorkspaceShell({
           />
         ) : null}
 
+        {collectionValueHistoryOpen ? (
+          <CollectionValueHistoryDialog
+            currentValueCents={inventory.summary.estimatedValueCents}
+            message={collectionValueHistoryMessage}
+            points={collectionValueHistory}
+            status={collectionValueHistoryStatus}
+            onClose={() => setCollectionValueHistoryOpen(false)}
+          />
+        ) : null}
+
         {duplicateDecision ? (
           <DuplicateMergeDialog
             decision={duplicateDecision}
@@ -2135,6 +2200,229 @@ function WorkspaceShell({
       </section>
     </main>
   );
+}
+
+function CollectionValueHistoryDialog({
+  currentValueCents,
+  message,
+  points,
+  status,
+  onClose
+}: {
+  currentValueCents: number;
+  message: string;
+  points: CollectionValueHistoryPoint[];
+  status: "idle" | "loading" | "error";
+  onClose: () => void;
+}) {
+  const latestPoint = points[points.length - 1] ?? null;
+  const valueDelta =
+    points.length > 1 ? points[points.length - 1].valueCents - points[0].valueCents : null;
+  const heading = status === "loading" ? "Loading value history" : "Collection value history";
+  const emptyMessage =
+    status === "loading"
+      ? "Loading saved collection value history..."
+      : "Collection value points will appear after market prices are refreshed.";
+
+  return (
+    <div className="detail-backdrop" role="presentation" onClick={onClose}>
+      <section
+        aria-labelledby="collection-value-history-title"
+        className="detail-panel value-history-dialog"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+      >
+        <div className="detail-header">
+          <div>
+            <p className="eyebrow">Estimated value</p>
+            <h3 id="collection-value-history-title">{heading}</h3>
+          </div>
+          <button className="icon-button" onClick={onClose} type="button" aria-label="Close value history">
+            <X size={20} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="collection-value-summary">
+          <div>
+            <span>Current</span>
+            <strong>{formatCurrency(currentValueCents)}</strong>
+          </div>
+          <div>
+            <span>Latest saved</span>
+            <strong>{latestPoint ? formatCurrency(latestPoint.valueCents) : "None"}</strong>
+          </div>
+          <div>
+            <span>Total movement</span>
+            <strong className={priceChangeClass(valueDelta)}>
+              {valueDelta === null ? "Baseline" : priceChangeLabel({ deltaCents: valueDelta })}
+            </strong>
+          </div>
+        </div>
+
+        {points.length > 0 ? (
+          <CollectionValueHistoryLineChart points={points} />
+        ) : (
+          <p className="lookup-note">{emptyMessage}</p>
+        )}
+
+        {points.length > 0 ? (
+          <div className="value-history-list">
+            {points
+              .slice()
+              .reverse()
+              .slice(0, 6)
+              .map((point) => (
+                <div className="value-history-row" key={`collection-${point.id}`}>
+                  <div>
+                    <strong>{formatCurrency(point.valueCents)}</strong>
+                    <span>
+                      {point.deltaCents !== null ? priceChangeLabel(point) : "baseline"} ·{" "}
+                      {point.refreshedItemCount} refresh
+                      {point.refreshedItemCount === 1 ? "" : "es"}
+                    </span>
+                  </div>
+                  <time dateTime={point.capturedAt}>{formatHistoryDate(point.capturedAt)}</time>
+                </div>
+              ))}
+          </div>
+        ) : null}
+
+        {message ? (
+          <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function CollectionValueHistoryLineChart({
+  points
+}: {
+  points: CollectionValueHistoryPoint[];
+}) {
+  const chartPoints = sampleCollectionValueHistoryPoints(points);
+  const minValue = Math.min(...points.map((point) => point.valueCents));
+  const maxValue = Math.max(...points.map((point) => point.valueCents));
+  const range = Math.max(1, maxValue - minValue);
+  const chartWidth = 320;
+  const chartHeight = 170;
+  const padding = { top: 12, right: 10, bottom: 26, left: 48 };
+  const plotWidth = chartWidth - padding.left - padding.right;
+  const plotHeight = chartHeight - padding.top - padding.bottom;
+  const coordinates = chartPoints.map((point, index) => {
+    const x =
+      chartPoints.length === 1
+        ? padding.left + plotWidth / 2
+        : padding.left + (index / (chartPoints.length - 1)) * plotWidth;
+    const y = padding.top + plotHeight - ((point.valueCents - minValue) / range) * plotHeight;
+
+    return { point, x, y };
+  });
+  const linePath = coordinates
+    .map((coordinate, index) => `${index === 0 ? "M" : "L"} ${coordinate.x} ${coordinate.y}`)
+    .join(" ");
+  const areaPath =
+    coordinates.length > 1
+      ? `${linePath} L ${coordinates[coordinates.length - 1].x} ${
+          chartHeight - padding.bottom
+        } L ${coordinates[0].x} ${chartHeight - padding.bottom} Z`
+      : "";
+  const firstPoint = points[0];
+  const latestPoint = points[points.length - 1];
+  const isFlat = minValue === maxValue;
+  const startCoordinate = coordinates[0];
+  const latestCoordinate = coordinates[coordinates.length - 1];
+  const middleValue = Math.round((minValue + maxValue) / 2);
+
+  return (
+    <div className="collection-value-chart" aria-label="Collection value history line chart">
+      <div className="collection-chart-range">
+        <span>{isFlat ? "No movement" : "Range"}</span>
+        <strong>
+          {isFlat ? formatCurrency(maxValue) : `${formatCurrency(minValue)} to ${formatCurrency(maxValue)}`}
+        </strong>
+      </div>
+      <svg aria-hidden="true" className={isFlat ? "flat" : ""} viewBox={`0 0 ${chartWidth} ${chartHeight}`}>
+        <line
+          className="chart-grid-line"
+          x1={padding.left}
+          x2={chartWidth - padding.right}
+          y1={padding.top}
+          y2={padding.top}
+        />
+        <line
+          className="chart-grid-line"
+          x1={padding.left}
+          x2={chartWidth - padding.right}
+          y1={padding.top + plotHeight / 2}
+          y2={padding.top + plotHeight / 2}
+        />
+        <line
+          className="chart-grid-line"
+          x1={padding.left}
+          x2={chartWidth - padding.right}
+          y1={chartHeight - padding.bottom}
+          y2={chartHeight - padding.bottom}
+        />
+        <text className="chart-axis-label" x="6" y={padding.top + 4}>
+          {formatCurrency(maxValue)}
+        </text>
+        <text className="chart-axis-label" x="6" y={padding.top + plotHeight / 2 + 4}>
+          {formatCurrency(middleValue)}
+        </text>
+        <text className="chart-axis-label" x="6" y={chartHeight - padding.bottom + 4}>
+          {formatCurrency(minValue)}
+        </text>
+        {areaPath ? <path className="collection-value-area" d={areaPath} /> : null}
+        {coordinates.length > 1 ? <path className="collection-value-line" d={linePath} /> : null}
+        {startCoordinate ? (
+          <circle
+            className="collection-value-point start"
+            cx={startCoordinate.x}
+            cy={startCoordinate.y}
+            r="3.4"
+          />
+        ) : null}
+        {latestCoordinate ? (
+          <circle
+            className="collection-value-point latest"
+            cx={latestCoordinate.x}
+            cy={latestCoordinate.y}
+            r="4"
+          />
+        ) : null}
+      </svg>
+      <div className="collection-chart-footer">
+        <span>{formatHistoryDate(firstPoint.capturedAt)}</span>
+        <span>
+          {points.length} refresh point{points.length === 1 ? "" : "s"}
+        </span>
+        <span>{formatHistoryDate(latestPoint.capturedAt)}</span>
+      </div>
+    </div>
+  );
+}
+
+function sampleCollectionValueHistoryPoints(
+  points: CollectionValueHistoryPoint[],
+  maxPoints = 120
+) {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+
+  const sampled: CollectionValueHistoryPoint[] = [];
+
+  for (let index = 0; index < maxPoints; index += 1) {
+    const sourceIndex = Math.round((index / (maxPoints - 1)) * (points.length - 1));
+    const point = points[sourceIndex];
+
+    if (sampled[sampled.length - 1]?.id !== point.id) {
+      sampled.push(point);
+    }
+  }
+
+  return sampled;
 }
 
 function StorageInsights({

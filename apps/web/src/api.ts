@@ -17,6 +17,7 @@ import type {
   CardImageLookupResponse,
   CardLookupRequest,
   CardLookupResponse,
+  CollectionValueHistoryResponse,
   CollectionMember,
   CollectionMembersResponse,
   CreateAdminUserRequest,
@@ -164,6 +165,10 @@ export const api = {
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
   getBulkPriceQueue: (collectionId: string) =>
     request<BulkPriceQueueResponse>(`/api/collections/${collectionId}/pricing/bulk/queue`),
+  getCollectionValueHistory: (collectionId: string) =>
+    request<CollectionValueHistoryResponse>(
+      `/api/collections/${collectionId}/pricing/value-history`
+    ),
   enqueueBulkPriceRefresh: (
     collectionId: string,
     payload: { itemIds: string[]; mode: BulkPriceQueueMode; includeExisting?: boolean }

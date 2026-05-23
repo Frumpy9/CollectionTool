@@ -267,6 +267,20 @@ export type MarketPriceSnapshotsResponse = {
   snapshots: MarketPriceSnapshot[];
 };
 
+export type CollectionValueHistoryPoint = {
+  id: string;
+  capturedAt: string;
+  valueCents: number;
+  deltaCents: number | null;
+  refreshedItemCount: number;
+};
+
+export type CollectionValueHistoryResponse = {
+  collectionId: string;
+  points: CollectionValueHistoryPoint[];
+  message: string;
+};
+
 export type CreateInventoryItemRequest = {
   name: string;
   setName?: string;
