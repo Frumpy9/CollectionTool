@@ -299,12 +299,12 @@ export async function lookupPokemonPriceTrackerPricing({
         days: 30
       })
     : await searchPokemonPriceTrackerCards({ apiKey, item });
-  let candidates = rankedCandidates(item, cards).slice(0, 5);
+  let candidates = rankedCandidates(item, cards, preferredSourceVariantId).slice(0, 5);
 
   if (item.itemType === "graded" && candidates.length === 0) {
     const parsedCards = await parseTitleCards({ apiKey, item });
     cards = mergeCards(cards, parsedCards);
-    candidates = rankedCandidates(item, cards).slice(0, 5);
+    candidates = rankedCandidates(item, cards, preferredSourceVariantId).slice(0, 5);
   }
 
   if (preferredSourceCardId) {
@@ -377,7 +377,7 @@ export async function findPokemonPriceTrackerPricingCandidateByIds({
     includeHistory: false,
     days: 30
   });
-  return rankedCandidates(item, cards).find(
+  return rankedCandidates(item, cards, sourceVariantId).find(
     (candidate) =>
       candidate.sourceCardId === sourceCardId && candidate.sourceVariantId === sourceVariantId
   );
@@ -1195,10 +1195,16 @@ function japaneseSetAliases(value: string | null | undefined) {
   return aliases;
 }
 
-function rankedCandidates(item: InventoryItem, cards: PokemonPriceTrackerCard[]) {
+function rankedCandidates(
+  item: InventoryItem,
+  cards: PokemonPriceTrackerCard[],
+  preferredSourceVariantId?: string | null
+) {
   return cards
     .flatMap((card) =>
-      item.itemType === "raw" ? rawCandidateFromCard(item, card) : gradedCandidateFromCard(item, card)
+      item.itemType === "raw"
+        ? rawCandidateFromCard(item, card, preferredSourceVariantId)
+        : gradedCandidateFromCard(item, card)
     )
     .sort((left, right) => right.score - left.score);
 }
@@ -1284,13 +1290,14 @@ function pokemonPriceTrackerImageCandidateFromCard(
 
 function rawCandidateFromCard(
   item: InventoryItem,
-  card: PokemonPriceTrackerCard
+  card: PokemonPriceTrackerCard,
+  preferredSourceVariantId?: string | null
 ): PokemonPriceTrackerPricingCandidateWithPayload[] {
   if (cardIdentityConflicts(item, card)) {
     return [];
   }
 
-  const rawPrice = rawPriceFromCard(card, item);
+  const rawPrice = rawPriceFromCard(card, item, preferredSourceVariantId);
 
   if (!rawPrice) {
     return [];
@@ -1402,15 +1409,22 @@ function gradedCandidateFromCard(
   ];
 }
 
-function rawPriceFromCard(card: PokemonPriceTrackerCard, item: InventoryItem) {
+function rawPriceFromCard(
+  card: PokemonPriceTrackerCard,
+  item: InventoryItem,
+  preferredSourceVariantId?: string | null
+) {
   const prices = isRecord(card.prices) ? card.prices : {};
   const itemVariants = itemVariantPreferenceText(item);
   const candidates = collectRawPriceCandidates(prices, itemVariants);
   const pricedCandidates = candidates.filter((candidate) => candidate.priceCents !== null) as Array<
     Omit<RawPriceCandidate, "priceCents"> & { priceCents: number }
   >;
+  const preferredCandidate = preferredSourceVariantId
+    ? pricedCandidates.find((candidate) => candidate.variantId === preferredSourceVariantId)
+    : null;
 
-  return pricedCandidates.sort((left, right) => right.score - left.score)[0] ?? null;
+  return preferredCandidate ?? pricedCandidates.sort((left, right) => right.score - left.score)[0] ?? null;
 }
 
 type RawPriceCandidate = {
