@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @collection-tool/api & npm run dev --workspace @collection-tool/web",
-    "prod": "docker compose up -d --build",
+    "prod": "APP_VERSION=$(node scripts/public-version.mjs) docker compose up -d --build",
+    "public-version": "node scripts/public-version.mjs",
     "prod:logs": "docker compose logs -f",
     "prod:ps": "docker compose ps",
     "prod:restart": "docker compose restart",

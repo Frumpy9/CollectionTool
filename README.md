@@ -63,6 +63,8 @@ npm run prod:restart  # restart containers
 npm run prod:stop     # stop containers, keep data volume
 ```
 
+`npm run prod` computes `APP_VERSION` from the local Git commit count before Docker builds the web image, so the Credits page can show the deployed public version even though the container does not include `.git`.
+
 To update later:
 
 ```bash

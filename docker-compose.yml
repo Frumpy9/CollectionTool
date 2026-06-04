@@ -29,6 +29,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-}
     ports:
       - "127.0.0.1:5173:5173"
     depends_on:
