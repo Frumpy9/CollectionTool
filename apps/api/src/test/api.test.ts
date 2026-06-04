@@ -205,6 +205,84 @@ test("inventory creation persists PokemonPriceTracker pricing source hints", asy
   }
 });
 
+test("bulk storage location updates selected inventory rows", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const firstItemResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Psyduck",
+        setName: "Fossil",
+        setCode: "FO",
+        cardNumber: "53",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        storageLocation: "Binder A"
+      }
+    });
+    const secondItemResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Golduck",
+        setName: "Fossil",
+        setCode: "FO",
+        cardNumber: "35",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        storageLocation: "Binder B"
+      }
+    });
+
+    assert.equal(firstItemResponse.statusCode, 201);
+    assert.equal(secondItemResponse.statusCode, 201);
+
+    const firstItemId = firstItemResponse.json().item.id;
+    const secondItemId = secondItemResponse.json().item.id;
+    const updateResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/bulk/storage-location`,
+      headers: { cookie },
+      payload: {
+        itemIds: [firstItemId, secondItemId, "missing-item"],
+        storageLocation: "Vault Box 2"
+      }
+    });
+
+    assert.equal(updateResponse.statusCode, 200);
+    assert.deepEqual(updateResponse.json().updatedItemIds, [firstItemId, secondItemId]);
+    assert.deepEqual(updateResponse.json().notFoundItemIds, ["missing-item"]);
+    assert.deepEqual(
+      updateResponse
+        .json()
+        .items.map((item: { storageLocation: string | null }) => item.storageLocation),
+      ["Vault Box 2", "Vault Box 2"]
+    );
+
+    const clearResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/bulk/storage-location`,
+      headers: { cookie },
+      payload: {
+        itemIds: [firstItemId],
+        storageLocation: "   "
+      }
+    });
+
+    assert.equal(clearResponse.statusCode, 200);
+    assert.equal(clearResponse.json().items[0].storageLocation, null);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 async function createTestServer(): Promise<TestServer> {
   const root = mkdtempSync(join(tmpdir(), "collection-tool-api-"));
   const databasePath = join(root, "collection.sqlite");

@@ -109,6 +109,8 @@ type InventoryGroupSummary = {
   examples: string;
 };
 
+type BulkStorageEntryMode = "existing" | "new";
+
 type BulkMode = "cards" | "psa";
 type BulkRowStatus = "pending" | "searching" | "selected" | "needs-review" | "failed" | "added" | "skipped";
 
@@ -500,6 +502,12 @@ function WorkspaceShell({
   const [bulkVariantMode, setBulkVariantMode] = useState<BulkVariantEditMode>("add");
   const [bulkVariantValues, setBulkVariantValues] = useState<string[]>([]);
   const [bulkVariantClearMarketPrices, setBulkVariantClearMarketPrices] = useState(true);
+  const [bulkStorageEditorOpen, setBulkStorageEditorOpen] = useState(false);
+  const [bulkStorageStatus, setBulkStorageStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [bulkStorageMessage, setBulkStorageMessage] = useState("");
+  const [bulkStorageLocation, setBulkStorageLocation] = useState("");
+  const [bulkStorageEntryMode, setBulkStorageEntryMode] =
+    useState<BulkStorageEntryMode>("existing");
   const [duplicateDecision, setDuplicateDecision] = useState<PendingDuplicateDecision | null>(null);
   const [collectionValueHistoryOpen, setCollectionValueHistoryOpen] = useState(false);
   const [collectionValueHistory, setCollectionValueHistory] = useState<CollectionValueHistoryPoint[]>([]);
@@ -548,6 +556,10 @@ function WorkspaceShell({
     setSelectedItemIds([]);
     setBulkVariantEditorOpen(false);
     setBulkVariantMessage("");
+    setBulkStorageEditorOpen(false);
+    setBulkStorageMessage("");
+    setBulkStorageEntryMode("existing");
+    setBulkStorageLocation("");
     setBulkPriceMessage("");
     setDataActionMessage("");
     setAdminMessage("");
@@ -771,6 +783,10 @@ function WorkspaceShell({
   const selectedMissingPriceCount = selectedItems.filter(
     (item) => item.marketPriceCents === null
   ).length;
+  const bulkSelectionIsWorking =
+    bulkPriceStatus === "loading" ||
+    bulkVariantStatus === "loading" ||
+    bulkStorageStatus === "loading";
   const filterOptions = useMemo(() => getInventoryFilterOptions(inventory.items), [inventory.items]);
   const activeFilterChips = useMemo(
     () =>
@@ -926,6 +942,10 @@ function WorkspaceShell({
     setSelectedItemIds([]);
     setBulkVariantEditorOpen(false);
     setBulkVariantMessage("");
+    setBulkStorageEditorOpen(false);
+    setBulkStorageMessage("");
+    setBulkStorageEntryMode("existing");
+    setBulkStorageLocation("");
     setShowFilters(false);
   }
 
@@ -981,6 +1001,10 @@ function WorkspaceShell({
     setSelectedItem(null);
     setSelectionMode(false);
     setSelectedItemIds([]);
+    setBulkVariantEditorOpen(false);
+    setBulkStorageEditorOpen(false);
+    setBulkStorageEntryMode("existing");
+    setBulkStorageLocation("");
     setShowFilters(true);
   }
 
@@ -1342,6 +1366,10 @@ function WorkspaceShell({
         setSelectedItemIds([]);
         setBulkVariantEditorOpen(false);
         setBulkVariantMessage("");
+        setBulkStorageEditorOpen(false);
+        setBulkStorageMessage("");
+        setBulkStorageEntryMode("existing");
+        setBulkStorageLocation("");
       }
 
       return !isSelecting;
@@ -1618,6 +1646,58 @@ function WorkspaceShell({
       setBulkVariantStatus("error");
       setBulkVariantMessage(
         error instanceof Error ? error.message : "Unable to update selected variants."
+      );
+    }
+  }
+
+  async function handleBulkUpdateStorageLocation(storageLocation: string) {
+    if (!activeCollection || selectedItemIds.length === 0) {
+      return;
+    }
+
+    const nextStorageLocation = storageLocation.trim();
+    const actionLabel = nextStorageLocation
+      ? `move ${selectedItemIds.length} selected card${
+          selectedItemIds.length === 1 ? "" : "s"
+        } to "${nextStorageLocation}"`
+      : `clear storage for ${selectedItemIds.length} selected card${
+          selectedItemIds.length === 1 ? "" : "s"
+        }`;
+    const confirmed = window.confirm(`Bulk ${actionLabel}?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkStorageStatus("loading");
+    setBulkStorageMessage("");
+
+    try {
+      const response = await api.bulkUpdateInventoryStorageLocation(activeCollection.id, {
+        itemIds: selectedItemIds,
+        storageLocation: nextStorageLocation
+      });
+      const updatedById = new Map(response.items.map((item) => [item.id, item]));
+
+      setInventory((current) =>
+        summarizeInventory(current.items.map((item) => updatedById.get(item.id) ?? item))
+      );
+      setBulkStorageStatus("idle");
+      setBulkStorageMessage(
+        `Updated storage for ${response.updatedItemIds.length} card${
+          response.updatedItemIds.length === 1 ? "" : "s"
+        }.${
+          response.notFoundItemIds.length > 0
+            ? ` ${response.notFoundItemIds.length} selected card${
+                response.notFoundItemIds.length === 1 ? " was" : "s were"
+              } already gone.`
+            : ""
+        }`
+      );
+    } catch (error) {
+      setBulkStorageStatus("error");
+      setBulkStorageMessage(
+        error instanceof Error ? error.message : "Unable to update selected storage locations."
       );
     }
   }
@@ -2003,13 +2083,27 @@ function WorkspaceShell({
                 {isInventorySelectionSection && selectionMode ? (
                   <BulkSelectionBar
                     includeExisting={bulkPriceIncludeExisting}
-                    isWorking={bulkPriceStatus === "loading"}
+                    isWorking={bulkSelectionIsWorking}
                     missingPriceCount={selectedMissingPriceCount}
                     selectedCount={selectedItemIds.length}
                     visibleCount={visibleItems.length}
                     onClear={() => setSelectedItemIds([])}
                     onDeleteSelected={handleBulkDeleteSelected}
-                    onEditVariants={() => setBulkVariantEditorOpen((isOpen) => !isOpen)}
+                    onEditStorageLocation={() => {
+                      if (!bulkStorageEditorOpen) {
+                        setBulkStorageEntryMode(
+                          filterOptions.storageLocations.length > 0 ? "existing" : "new"
+                        );
+                        setBulkStorageLocation("");
+                        setBulkStorageMessage("");
+                      }
+                      setBulkStorageEditorOpen((isOpen) => !isOpen);
+                      setBulkVariantEditorOpen(false);
+                    }}
+                    onEditVariants={() => {
+                      setBulkVariantEditorOpen((isOpen) => !isOpen);
+                      setBulkStorageEditorOpen(false);
+                    }}
                     onIncludeExistingChange={setBulkPriceIncludeExisting}
                     onQueuePriceRefresh={handleQueueBulkPriceRefresh}
                     onSelectVisible={selectVisibleItems}
@@ -2028,6 +2122,21 @@ function WorkspaceShell({
                     onModeChange={setBulkVariantMode}
                     onSubmit={handleBulkUpdateVariants}
                     onToggleVariant={toggleBulkVariantValue}
+                  />
+                ) : null}
+                {isInventorySelectionSection && selectionMode && bulkStorageEditorOpen ? (
+                  <BulkStorageLocationEditor
+                    entryMode={bulkStorageEntryMode}
+                    isWorking={bulkStorageStatus === "loading"}
+                    message={bulkStorageMessage}
+                    selectedCount={selectedItemIds.length}
+                    status={bulkStorageStatus}
+                    storageLocation={bulkStorageLocation}
+                    storageLocations={filterOptions.storageLocations}
+                    onChange={setBulkStorageLocation}
+                    onClear={() => handleBulkUpdateStorageLocation("")}
+                    onEntryModeChange={setBulkStorageEntryMode}
+                    onSubmit={() => handleBulkUpdateStorageLocation(bulkStorageLocation)}
                   />
                 ) : null}
                 {isInventorySelectionSection && bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
@@ -4997,6 +5106,7 @@ function BulkSelectionBar({
   visibleCount,
   onClear,
   onDeleteSelected,
+  onEditStorageLocation,
   onEditVariants,
   onIncludeExistingChange,
   onQueuePriceRefresh,
@@ -5009,6 +5119,7 @@ function BulkSelectionBar({
   visibleCount: number;
   onClear: () => void;
   onDeleteSelected: () => void;
+  onEditStorageLocation: () => void;
   onEditVariants: () => void;
   onIncludeExistingChange: (includeExisting: boolean) => void;
   onQueuePriceRefresh: () => void;
@@ -5042,6 +5153,13 @@ function BulkSelectionBar({
         </button>
         <button disabled={selectedCount === 0 || isWorking} onClick={onEditVariants} type="button">
           Edit variants
+        </button>
+        <button
+          disabled={selectedCount === 0 || isWorking}
+          onClick={onEditStorageLocation}
+          type="button"
+        >
+          Edit storage
         </button>
         <button
           className="danger-button"
@@ -5132,6 +5250,101 @@ function BulkVariantEditor({
         </label>
         <button disabled={!canSubmit} onClick={onSubmit} type="button">
           {isWorking ? "Saving..." : "Apply variant edit"}
+        </button>
+      </div>
+      {message ? (
+        <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function BulkStorageLocationEditor({
+  entryMode,
+  isWorking,
+  message,
+  selectedCount,
+  status,
+  storageLocation,
+  storageLocations,
+  onChange,
+  onClear,
+  onEntryModeChange,
+  onSubmit
+}: {
+  entryMode: BulkStorageEntryMode;
+  isWorking: boolean;
+  message: string;
+  selectedCount: number;
+  status: "idle" | "loading" | "error";
+  storageLocation: string;
+  storageLocations: string[];
+  onChange: (storageLocation: string) => void;
+  onClear: () => void;
+  onEntryModeChange: (mode: BulkStorageEntryMode) => void;
+  onSubmit: () => void;
+}) {
+  const trimmedStorageLocation = storageLocation.trim();
+  const hasStorageLocations = storageLocations.length > 0;
+  const selectedStorageValue =
+    entryMode === "existing" && storageLocations.includes(storageLocation)
+      ? storageLocation
+      : "";
+
+  return (
+    <section className="bulk-storage-panel" aria-label="Bulk storage editor">
+      <div className="bulk-queue-header">
+        <div>
+          <p className="eyebrow">Bulk edit storage</p>
+          <h3>{selectedCount} selected</h3>
+        </div>
+      </div>
+      <label className="bulk-storage-field">
+        Storage location
+        <select
+          disabled={isWorking}
+          onChange={(event) => {
+            if (event.target.value === "__new__") {
+              onEntryModeChange("new");
+              onChange("");
+              return;
+            }
+
+            onEntryModeChange("existing");
+            onChange(event.target.value);
+          }}
+          value={entryMode === "new" ? "__new__" : selectedStorageValue}
+        >
+          <option value="">{hasStorageLocations ? "Choose existing storage" : "No saved locations"}</option>
+          {storageLocations.map((location) => (
+            <option key={location} value={location}>
+              {location}
+            </option>
+          ))}
+          <option value="__new__">New location...</option>
+        </select>
+      </label>
+      {entryMode === "new" ? (
+        <label className="bulk-storage-field">
+          New location
+          <input
+            disabled={isWorking}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Binder A, Shelf 2, Vault box..."
+            value={storageLocation}
+          />
+        </label>
+      ) : null}
+      <div className="bulk-selection-actions">
+        <button
+          disabled={selectedCount === 0 || isWorking || trimmedStorageLocation.length === 0}
+          onClick={onSubmit}
+          type="button"
+        >
+          {isWorking ? "Saving..." : "Apply storage"}
+        </button>
+        <button disabled={selectedCount === 0 || isWorking} onClick={onClear} type="button">
+          Clear storage
         </button>
       </div>
       {message ? (

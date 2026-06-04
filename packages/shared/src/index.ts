@@ -340,6 +340,17 @@ export type BulkUpdateInventoryVariantsResponse = {
   clearedMarketPriceItemIds: string[];
 };
 
+export type BulkUpdateInventoryStorageLocationRequest = {
+  itemIds: string[];
+  storageLocation: string;
+};
+
+export type BulkUpdateInventoryStorageLocationResponse = {
+  items: InventoryItem[];
+  updatedItemIds: string[];
+  notFoundItemIds: string[];
+};
+
 export type BulkDeleteInventoryItemsRequest = {
   itemIds: string[];
 };

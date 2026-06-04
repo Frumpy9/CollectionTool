@@ -93,3 +93,5 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - PSA Public API: free PSA account/API token required for cert lookup.
 - eBay solds: manual research link only; PokemonPriceTracker is the v1 pricing/comps source.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
+
+Scheduled PokemonPriceTracker refreshes are opt-in. Set `ENABLE_SCHEDULED_PRICE_REFRESH=true` only when the API key has enough quota for unattended bulk pricing.

@@ -56,7 +56,7 @@ export function loadConfig(): AppConfig {
     backupRetentionDays: positiveIntegerFromEnv(process.env.BACKUP_RETENTION_DAYS, 30),
     scheduledPriceRefreshEnabled: booleanFromEnv(
       process.env.ENABLE_SCHEDULED_PRICE_REFRESH,
-      Boolean(process.env.POKEMON_PRICE_TRACKER_API_KEY?.trim())
+      false
     ),
     priceRefreshIntervalHours: positiveIntegerFromEnv(
       process.env.PRICE_REFRESH_INTERVAL_HOURS,

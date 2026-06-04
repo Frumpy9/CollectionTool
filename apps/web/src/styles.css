@@ -657,7 +657,8 @@ small {
 
 .bulk-selection-bar,
 .bulk-queue-panel,
-.bulk-variant-panel {
+.bulk-variant-panel,
+.bulk-storage-panel {
   gap: 14px;
   padding: 16px;
   border: 1px solid var(--line);
@@ -680,7 +681,8 @@ small {
 }
 
 .bulk-queue-panel,
-.bulk-variant-panel {
+.bulk-variant-panel,
+.bulk-storage-panel {
   display: grid;
 }
 
@@ -703,6 +705,18 @@ small {
   gap: 8px;
   color: var(--ink);
   font-weight: 800;
+}
+
+.bulk-storage-field {
+  display: grid;
+  gap: 7px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.bulk-storage-field input,
+.bulk-storage-field select {
+  width: min(100%, 520px);
 }
 
 .bulk-selection-actions button,

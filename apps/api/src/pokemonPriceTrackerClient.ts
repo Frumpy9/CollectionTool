@@ -13,6 +13,29 @@ import type {
 } from "@collection-tool/shared";
 
 const pokemonPriceTrackerBaseUrl = "https://www.pokemonpricetracker.com/api/v2";
+const defaultRateLimitCooldownMs = 60 * 1000;
+const maxRateLimitCooldownMs = 60 * 60 * 1000;
+
+let pokemonPriceTrackerCooldownUntil = 0;
+
+export class PokemonPriceTrackerRateLimitError extends Error {
+  readonly statusCode = 429;
+  readonly retryAfterMs: number;
+
+  constructor(retryAfterMs: number, message?: string) {
+    const safeRetryAfterMs = clampRateLimitCooldownMs(retryAfterMs);
+    super(
+      message ??
+        `PokemonPriceTracker rate limit reached. Try again in ${formatRateLimitDelay(safeRetryAfterMs)}.`
+    );
+    this.name = "PokemonPriceTrackerRateLimitError";
+    this.retryAfterMs = safeRetryAfterMs;
+  }
+}
+
+export function pokemonPriceTrackerRateLimitDelayMs(error: unknown) {
+  return error instanceof PokemonPriceTrackerRateLimitError ? error.retryAfterMs : defaultRateLimitCooldownMs;
+}
 
 type PokemonPriceTrackerCard = {
   id?: string | number | null;
@@ -627,22 +650,18 @@ async function fetchCardsWithParamsSafely(apiKey: string, params: URLSearchParam
 }
 
 async function fetchSetsWithParams(apiKey: string, params: URLSearchParams) {
-  const response = await fetch(`${pokemonPriceTrackerBaseUrl}/sets?${params}`, {
-    headers: pokemonPriceTrackerHeaders(apiKey)
-  });
-  const payload = (await response.json().catch(() => ({}))) as PokemonPriceTrackerSetsResponse;
+  const payload = await fetchPokemonPriceTrackerJson<PokemonPriceTrackerSetsResponse>(
+    `${pokemonPriceTrackerBaseUrl}/sets?${params}`,
+    apiKey
+  );
 
-  if (response.status === 429) {
-    throw new Error("PokemonPriceTracker rate limit reached. Try again later.");
-  }
-
-  if (!response.ok) {
+  if (!payload.ok) {
     throw new Error(
-      payload.error ?? payload.message ?? `PokemonPriceTracker returned ${response.status}.`
+      payload.body.error ?? payload.body.message ?? `PokemonPriceTracker returned ${payload.status}.`
     );
   }
 
-  return normalizePokemonPriceTrackerSets(payload);
+  return normalizePokemonPriceTrackerSets(payload.body);
 }
 
 async function fetchSetsWithParamsSafely(apiKey: string, params: URLSearchParams) {
@@ -738,29 +757,18 @@ function baseCardParams(item: InventoryItem, includeHistory: boolean, days: numb
 }
 
 async function fetchCardsWithParams(apiKey: string, params: URLSearchParams) {
-  const response = await fetch(`${pokemonPriceTrackerBaseUrl}/cards?${params}`, {
-    headers: pokemonPriceTrackerHeaders(apiKey)
-  });
-  const payload = (await response.json().catch(() => ({}))) as PokemonPriceTrackerCardsResponse;
+  const payload = await fetchPokemonPriceTrackerJson<PokemonPriceTrackerCardsResponse>(
+    `${pokemonPriceTrackerBaseUrl}/cards?${params}`,
+    apiKey
+  );
 
-  if (response.status === 429) {
-    throw new Error("PokemonPriceTracker rate limit reached. Try again later.");
-  }
-
-  if (!response.ok) {
+  if (!payload.ok) {
     throw new Error(
-      payload.error ?? payload.message ?? `PokemonPriceTracker returned ${response.status}.`
+      payload.body.error ?? payload.body.message ?? `PokemonPriceTracker returned ${payload.status}.`
     );
   }
 
-  return cardsFromResponse(payload);
-}
-
-function pokemonPriceTrackerHeaders(apiKey: string) {
-  return {
-    accept: "application/json",
-    Authorization: `Bearer ${apiKey}`
-  };
+  return cardsFromResponse(payload.body);
 }
 
 async function parseTitleCards({ apiKey, item }: { apiKey: string; item: InventoryItem }) {
@@ -781,33 +789,166 @@ async function parseTitleCards({ apiKey, item }: { apiKey: string; item: Invento
     return [];
   }
 
-  const response = await fetch(`${pokemonPriceTrackerBaseUrl}/parse-title`, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      title,
-      options: {
-        fuzzyMatching: true,
-        maxSuggestions: 5,
-        includeConfidence: true
-      }
-    })
-  });
-  const payload = (await response.json().catch(() => ({}))) as PokemonPriceTrackerParseTitleResponse;
+  const payload = await fetchPokemonPriceTrackerJson<PokemonPriceTrackerParseTitleResponse>(
+    `${pokemonPriceTrackerBaseUrl}/parse-title`,
+    apiKey,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        title,
+        options: {
+          fuzzyMatching: true,
+          maxSuggestions: 5,
+          includeConfidence: true
+        }
+      })
+    }
+  );
 
-  if (response.status === 429) {
-    throw new Error("PokemonPriceTracker rate limit reached. Try again later.");
-  }
-
-  if (!response.ok) {
+  if (!payload.ok) {
     return [];
   }
 
-  return cardsFromParseTitleResponse(payload);
+  return cardsFromParseTitleResponse(payload.body);
+}
+
+export async function fetchPokemonPriceTrackerJson<TBody>(
+  url: string | URL,
+  apiKey: string,
+  init: RequestInit = {}
+) {
+  throwIfPokemonPriceTrackerCoolingDown();
+
+  const response = await fetch(url, {
+    ...init,
+    headers: pokemonPriceTrackerHeaders(apiKey, init.headers)
+  });
+  const body = (await response.json().catch(() => ({}))) as TBody;
+
+  if (response.status === 429) {
+    throw recordPokemonPriceTrackerRateLimit(response.headers);
+  }
+
+  updatePokemonPriceTrackerCooldown(response.headers);
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    body
+  };
+}
+
+function pokemonPriceTrackerHeaders(apiKey: string, headers?: HeadersInit) {
+  const mergedHeaders = new Headers(headers);
+
+  if (!mergedHeaders.has("accept")) {
+    mergedHeaders.set("accept", "application/json");
+  }
+
+  mergedHeaders.set("authorization", `Bearer ${apiKey}`);
+  return mergedHeaders;
+}
+
+function throwIfPokemonPriceTrackerCoolingDown() {
+  const remainingMs = pokemonPriceTrackerCooldownUntil - Date.now();
+
+  if (remainingMs > 0) {
+    throw new PokemonPriceTrackerRateLimitError(remainingMs);
+  }
+}
+
+function recordPokemonPriceTrackerRateLimit(headers: Headers) {
+  const retryAfterMs =
+    retryAfterMsFromHeaders(headers) ??
+    rateLimitResetMsFromHeaders(headers) ??
+    defaultRateLimitCooldownMs;
+  pokemonPriceTrackerCooldownUntil = Math.max(
+    pokemonPriceTrackerCooldownUntil,
+    Date.now() + clampRateLimitCooldownMs(retryAfterMs)
+  );
+
+  return new PokemonPriceTrackerRateLimitError(retryAfterMs);
+}
+
+function updatePokemonPriceTrackerCooldown(headers: Headers) {
+  const remaining = Number(headers.get("x-ratelimit-remaining"));
+
+  if (!Number.isFinite(remaining) || remaining > 0) {
+    return;
+  }
+
+  const cooldownMs =
+    retryAfterMsFromHeaders(headers) ??
+    rateLimitResetMsFromHeaders(headers) ??
+    defaultRateLimitCooldownMs;
+  pokemonPriceTrackerCooldownUntil = Math.max(
+    pokemonPriceTrackerCooldownUntil,
+    Date.now() + clampRateLimitCooldownMs(cooldownMs)
+  );
+}
+
+function retryAfterMsFromHeaders(headers: Headers) {
+  const retryAfter = headers.get("retry-after");
+
+  if (!retryAfter) {
+    return null;
+  }
+
+  const seconds = Number(retryAfter);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+
+  const retryAt = Date.parse(retryAfter);
+
+  if (Number.isFinite(retryAt)) {
+    return Math.max(0, retryAt - Date.now());
+  }
+
+  return null;
+}
+
+function rateLimitResetMsFromHeaders(headers: Headers) {
+  const reset = headers.get("x-ratelimit-reset");
+
+  if (!reset) {
+    return null;
+  }
+
+  const numericReset = Number(reset);
+
+  if (!Number.isFinite(numericReset) || numericReset <= 0) {
+    return null;
+  }
+
+  if (numericReset > 1_000_000_000) {
+    return Math.max(0, numericReset * 1000 - Date.now());
+  }
+
+  return numericReset * 1000;
+}
+
+function clampRateLimitCooldownMs(cooldownMs: number) {
+  if (!Number.isFinite(cooldownMs) || cooldownMs <= 0) {
+    return defaultRateLimitCooldownMs;
+  }
+
+  return Math.min(Math.max(cooldownMs, 1000), maxRateLimitCooldownMs);
+}
+
+function formatRateLimitDelay(delayMs: number) {
+  const seconds = Math.ceil(delayMs / 1000);
+
+  if (seconds < 60) {
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 function cardsFromResponse(payload: PokemonPriceTrackerCardsResponse) {

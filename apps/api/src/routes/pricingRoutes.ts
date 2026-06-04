@@ -27,6 +27,8 @@ import {
   lookupPokemonPriceTrackerImageCandidates,
   lookupPokemonPriceTrackerHistory,
   lookupPokemonPriceTrackerPricing,
+  PokemonPriceTrackerRateLimitError,
+  pokemonPriceTrackerRateLimitDelayMs,
   type PokemonPriceTrackerPricingCandidateWithPayload
 } from "../pokemonPriceTrackerClient.js";
 import { listInventoryItems } from "./inventoryRoutes.js";
@@ -1375,7 +1377,7 @@ async function processBulkPriceQueue({
   collectionId: string;
   ignoreNextAttemptAt?: boolean;
 }) {
-  const maxJobsPerRun = 50;
+  const maxJobsPerRun = 5;
 
   if (activeBulkPriceQueueCollections.has(collectionId)) {
     return;
@@ -1523,7 +1525,12 @@ async function processBulkPriceJob({
       error instanceof Error ? error.message : "Unable to refresh market price for this item.";
 
     if (statusCodeForPricingError(error) === 429) {
-      pauseBulkPriceJobForRateLimit(database, job.id, message);
+      pauseBulkPriceJobForRateLimit(
+        database,
+        job.id,
+        message,
+        pokemonPriceTrackerRateLimitDelayMs(error)
+      );
       return "rate-limited";
     }
 
@@ -1585,9 +1592,14 @@ function finishBulkPriceJob(
     .run(status, message, now, now, jobId);
 }
 
-function pauseBulkPriceJobForRateLimit(database: AppDatabase, jobId: string, message: string) {
+function pauseBulkPriceJobForRateLimit(
+  database: AppDatabase,
+  jobId: string,
+  message: string,
+  retryAfterMs: number
+) {
   const now = new Date();
-  const nextAttemptAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  const nextAttemptAt = new Date(now.getTime() + retryAfterMs).toISOString();
   const nowIso = now.toISOString();
 
   database.connection
@@ -2391,6 +2403,10 @@ function uniqueItemIds(itemIds: string[] | undefined) {
 }
 
 function statusCodeForPricingError(error: unknown) {
+  if (error instanceof PokemonPriceTrackerRateLimitError) {
+    return 429;
+  }
+
   const message = error instanceof Error ? error.message : "";
 
   if (message.includes("rate limit")) {

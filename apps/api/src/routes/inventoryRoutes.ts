@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   BulkDeleteInventoryItemsRequest,
+  BulkUpdateInventoryStorageLocationRequest,
   BulkUpdateInventoryVariantsRequest,
   CardLanguage,
   CreateInventoryItemRequest,
@@ -358,6 +359,39 @@ export async function registerInventoryRoutes(
 
     return result;
   });
+
+  app.post(
+    "/api/collections/:collectionId/items/bulk/storage-location",
+    async (request, reply) => {
+      const auth = getAuthContext(request, database);
+
+      if (!auth) {
+        reply.code(401);
+        return { error: "Unauthorized" };
+      }
+
+      const { collectionId } = request.params as { collectionId: string };
+      const role = getCollectionRole(database, collectionId, auth.user.id);
+
+      if (!role || role === "viewer") {
+        reply.code(403);
+        return { error: "You need editor access to edit cards." };
+      }
+
+      const input = request.body as BulkUpdateInventoryStorageLocationRequest;
+      const itemIds = uniqueItemIds(input.itemIds);
+
+      if (itemIds.length === 0) {
+        reply.code(400);
+        return { error: "Select at least one card before editing storage." };
+      }
+
+      return bulkUpdateInventoryStorageLocation(database, collectionId, {
+        itemIds,
+        storageLocation: nullIfBlank(input.storageLocation)
+      });
+    }
+  );
 }
 
 const inventoryCsvColumns = [
@@ -1060,13 +1094,68 @@ function bulkUpdateInventoryVariants(
   }
 
   const updatedIdSet = new Set(updatedItemIds);
-  const items = listInventoryItems(database, collectionId).filter((item) => updatedIdSet.has(item.id));
+  const items = listInventoryItems(database, collectionId).filter((item) =>
+    updatedIdSet.has(item.id)
+  );
 
   return {
     items,
     updatedItemIds,
     notFoundItemIds,
     clearedMarketPriceItemIds
+  };
+}
+
+function bulkUpdateInventoryStorageLocation(
+  database: AppDatabase,
+  collectionId: string,
+  input: {
+    itemIds: string[];
+    storageLocation: string | null;
+  }
+) {
+  const updatedItemIds: string[] = [];
+  const notFoundItemIds: string[] = [];
+  const currentItemStatement = database.connection.prepare(
+    `
+      SELECT id
+      FROM owned_items
+      WHERE id = ? AND collection_id = ?
+    `
+  );
+  const updateStorageStatement = database.connection.prepare(
+    `
+      UPDATE owned_items
+      SET storage_location = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND collection_id = ?
+    `
+  );
+
+  database.connection.exec("BEGIN");
+  try {
+    for (const itemId of input.itemIds) {
+      if (!currentItemStatement.get(itemId, collectionId)) {
+        notFoundItemIds.push(itemId);
+        continue;
+      }
+
+      updateStorageStatement.run(input.storageLocation, itemId, collectionId);
+      updatedItemIds.push(itemId);
+    }
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  const updatedIdSet = new Set(updatedItemIds);
+  const items = listInventoryItems(database, collectionId).filter((item) => updatedIdSet.has(item.id));
+
+  return {
+    items,
+    updatedItemIds,
+    notFoundItemIds
   };
 }
 

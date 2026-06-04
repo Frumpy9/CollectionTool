@@ -1,4 +1,5 @@
 import type { CreateInventoryItemRequest, PsaCertLookupResponse } from "@collection-tool/shared";
+import { fetchPokemonPriceTrackerJson } from "./pokemonPriceTrackerClient.js";
 
 const psaBaseUrl = "https://api.psacard.com/publicapi";
 const psaSubjectAliases: Record<string, string> = {
@@ -423,19 +424,13 @@ async function lookupPokemonPriceTrackerPsaCard({
       url.searchParams.set("language", "japanese");
     }
 
-    const response = await fetch(url, {
-      headers: {
-        accept: "application/json",
-        Authorization: `Bearer ${apiKey}`
-      }
-    });
+    const response = await fetchPokemonPriceTrackerJson<unknown>(url, apiKey);
 
     if (!response.ok) {
       continue;
     }
 
-    const payload = await response.json().catch(() => ({}));
-    const cards = pokemonPriceTrackerCardsFromResponse(payload);
+    const cards = pokemonPriceTrackerCardsFromResponse(response.body);
     const bestCard = cards
       .filter((card) => pokemonPriceTrackerCardMatchesPsa(card, { cardName, cardNumber }))
       .sort(
@@ -469,19 +464,13 @@ async function fetchPokemonPriceTrackerCardByTcgPlayerId({
     url.searchParams.set("language", "japanese");
   }
 
-  const response = await fetch(url, {
-    headers: {
-      accept: "application/json",
-      Authorization: `Bearer ${apiKey}`
-    }
-  });
+  const response = await fetchPokemonPriceTrackerJson<unknown>(url, apiKey);
 
   if (!response.ok) {
     return null;
   }
 
-  const payload = await response.json().catch(() => ({}));
-  return pokemonPriceTrackerCardsFromResponse(payload)[0] ?? null;
+  return pokemonPriceTrackerCardsFromResponse(response.body)[0] ?? null;
 }
 
 function pokemonPriceTrackerPsaCardFromPayload(

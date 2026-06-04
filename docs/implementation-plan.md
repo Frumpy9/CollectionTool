@@ -47,7 +47,7 @@
 - [x] Added selection-mode bulk variant editing with market-price clearing.
 - [x] Refreshed the frontend workspace UX with real Collection, Graded, Storage, and Data sections.
 - [x] Added local market price snapshots and red/green saved-price change indicators.
-- [x] Reduced scheduled price refresh cadence to 12 hours by default.
+- [x] Made scheduled price refresh opt-in and kept the cadence at 12 hours when enabled.
 - [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.

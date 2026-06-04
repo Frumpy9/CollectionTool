@@ -13,6 +13,7 @@ import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
 import {
   lookupPokemonPriceTrackerSetCards,
+  PokemonPriceTrackerRateLimitError,
   searchPokemonPriceTrackerSets
 } from "../pokemonPriceTrackerClient.js";
 
@@ -55,6 +56,14 @@ export async function registerCardLookupRoutes(
       return searchPokemonPriceTrackerSets({
         apiKey: config.pokemonPriceTrackerApiKey,
         query: search
+      }).catch((error) => {
+        if (error instanceof PokemonPriceTrackerRateLimitError) {
+          reply.code(429);
+          reply.header("Retry-After", String(Math.ceil(error.retryAfterMs / 1000)));
+          return { error: error.message };
+        }
+
+        throw error;
       });
     }
   );
@@ -74,6 +83,14 @@ export async function registerCardLookupRoutes(
       return lookupPokemonPriceTrackerSetCards({
         apiKey: config.pokemonPriceTrackerApiKey,
         setName
+      }).catch((error) => {
+        if (error instanceof PokemonPriceTrackerRateLimitError) {
+          reply.code(429);
+          reply.header("Retry-After", String(Math.ceil(error.retryAfterMs / 1000)));
+          return { error: error.message };
+        }
+
+        throw error;
       });
     }
   );

@@ -9,6 +9,8 @@ import type {
   BulkDeleteInventoryItemsResponse,
   BulkPriceQueueMode,
   BulkPriceQueueResponse,
+  BulkUpdateInventoryStorageLocationRequest,
+  BulkUpdateInventoryStorageLocationResponse,
   BulkUpdateInventoryVariantsRequest,
   BulkUpdateInventoryVariantsResponse,
   BootstrapStatusResponse,
@@ -285,6 +287,17 @@ export const api = {
   ) =>
     request<BulkUpdateInventoryVariantsResponse>(
       `/api/collections/${collectionId}/items/bulk/variants`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
+  bulkUpdateInventoryStorageLocation: (
+    collectionId: string,
+    payload: BulkUpdateInventoryStorageLocationRequest
+  ) =>
+    request<BulkUpdateInventoryStorageLocationResponse>(
+      `/api/collections/${collectionId}/items/bulk/storage-location`,
       {
         method: "POST",
         body: JSON.stringify(payload)
