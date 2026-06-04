@@ -57,6 +57,8 @@ import type {
 } from "@collection-tool/shared";
 import { api } from "./api";
 
+declare const __APP_VERSION__: string;
+
 type HealthState =
   | { status: "loading" }
   | { status: "ok"; timestamp: string; migrationsApplied: number }
@@ -2780,6 +2782,11 @@ function CreditsWorkspacePanel({ credits }: { credits: ApiCredit[] }) {
           <p className="eyebrow">Fallbacks and references</p>
           <strong>{supportingCredits.length}</strong>
           <span>Sources used for enrichment, recovery paths, or legacy saved data.</span>
+        </div>
+        <div>
+          <p className="eyebrow">Public version</p>
+          <strong>v{__APP_VERSION__}</strong>
+          <span>Build version from package major/minor plus Git commit count.</span>
         </div>
       </div>
 
