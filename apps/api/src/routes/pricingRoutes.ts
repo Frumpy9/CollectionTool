@@ -104,7 +104,7 @@ export async function registerPricingRoutes(
             status: "queued" as const,
             item: null,
             candidates: [],
-            message: "Pricing API rate limit reached. This card was added to the price queue.",
+            message: queueMessageForRateLimit(error),
             queue: getBulkQueueResponse(
               database,
               access.collectionId,
@@ -402,8 +402,7 @@ export async function registerPricingRoutes(
             status: "queued" as const,
             item: null,
             candidates: [],
-            message:
-              "PokemonPriceTracker rate limit reached. This card was added to the price queue.",
+            message: queueMessageForRateLimit(error),
             queue: getBulkQueueResponse(
               database,
               access.collectionId,
@@ -2422,4 +2421,23 @@ function statusCodeForPricingError(error: unknown) {
   }
 
   return 502;
+}
+
+function queueMessageForRateLimit(error: unknown) {
+  if (error instanceof PokemonPriceTrackerRateLimitError && error.kind === "cooldown") {
+    return `PokemonPriceTracker asked us to wait ${formatRetryDelay(error.retryAfterMs)} before another pricing request. This card was added to the price queue.`;
+  }
+
+  return "PokemonPriceTracker rate limit reached. This card was added to the price queue.";
+}
+
+function formatRetryDelay(retryAfterMs: number) {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000));
+
+  if (seconds < 60) {
+    return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  }
+
+  const minutes = Math.ceil(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }

@@ -18,18 +18,28 @@ const maxRateLimitCooldownMs = 60 * 60 * 1000;
 
 let pokemonPriceTrackerCooldownUntil = 0;
 
+type PokemonPriceTrackerRateLimitKind = "provider" | "cooldown";
+
 export class PokemonPriceTrackerRateLimitError extends Error {
   readonly statusCode = 429;
   readonly retryAfterMs: number;
+  readonly kind: PokemonPriceTrackerRateLimitKind;
 
-  constructor(retryAfterMs: number, message?: string) {
+  constructor(
+    retryAfterMs: number,
+    kind: PokemonPriceTrackerRateLimitKind = "provider",
+    message?: string
+  ) {
     const safeRetryAfterMs = clampRateLimitCooldownMs(retryAfterMs);
     super(
       message ??
-        `PokemonPriceTracker rate limit reached. Try again in ${formatRateLimitDelay(safeRetryAfterMs)}.`
+        (kind === "cooldown"
+          ? `PokemonPriceTracker is cooling down. Try again in ${formatRateLimitDelay(safeRetryAfterMs)}.`
+          : `PokemonPriceTracker rate limit reached. Try again in ${formatRateLimitDelay(safeRetryAfterMs)}.`)
     );
     this.name = "PokemonPriceTrackerRateLimitError";
     this.retryAfterMs = safeRetryAfterMs;
+    this.kind = kind;
   }
 }
 
@@ -832,8 +842,6 @@ export async function fetchPokemonPriceTrackerJson<TBody>(
     throw recordPokemonPriceTrackerRateLimit(response.headers);
   }
 
-  updatePokemonPriceTrackerCooldown(response.headers);
-
   return {
     ok: response.ok,
     status: response.status,
@@ -856,7 +864,7 @@ function throwIfPokemonPriceTrackerCoolingDown() {
   const remainingMs = pokemonPriceTrackerCooldownUntil - Date.now();
 
   if (remainingMs > 0) {
-    throw new PokemonPriceTrackerRateLimitError(remainingMs);
+    throw new PokemonPriceTrackerRateLimitError(remainingMs, "cooldown");
   }
 }
 
@@ -871,23 +879,6 @@ function recordPokemonPriceTrackerRateLimit(headers: Headers) {
   );
 
   return new PokemonPriceTrackerRateLimitError(retryAfterMs);
-}
-
-function updatePokemonPriceTrackerCooldown(headers: Headers) {
-  const remaining = Number(headers.get("x-ratelimit-remaining"));
-
-  if (!Number.isFinite(remaining) || remaining > 0) {
-    return;
-  }
-
-  const cooldownMs =
-    retryAfterMsFromHeaders(headers) ??
-    rateLimitResetMsFromHeaders(headers) ??
-    defaultRateLimitCooldownMs;
-  pokemonPriceTrackerCooldownUntil = Math.max(
-    pokemonPriceTrackerCooldownUntil,
-    Date.now() + clampRateLimitCooldownMs(cooldownMs)
-  );
 }
 
 function retryAfterMsFromHeaders(headers: Headers) {
