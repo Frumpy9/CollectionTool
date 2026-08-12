@@ -34,6 +34,7 @@ import type {
   InventoryItem,
   InventoryListResponse,
   MarketPriceSnapshotsResponse,
+  NeedsAttentionResponse,
   PokemonPriceTrackerSetCardsResponse,
   PokemonPriceTrackerSetSearchResponse,
   PsaCertLookupRequest,
@@ -180,6 +181,8 @@ export const api = {
     }),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  getNeedsAttention: (collectionId: string) =>
+    request<NeedsAttentionResponse>(`/api/collections/${collectionId}/attention`),
   listTransactions: (collectionId: string, itemId?: string) =>
     request<CollectionTransactionsResponse>(
       `/api/collections/${collectionId}/transactions${

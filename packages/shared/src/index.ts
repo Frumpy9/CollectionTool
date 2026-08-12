@@ -111,6 +111,66 @@ export type InventoryListResponse = {
   };
 };
 
+export type NeedsAttentionCategory =
+  | "missing-price"
+  | "stale-price"
+  | "low-confidence"
+  | "missing-image"
+  | "incomplete-metadata"
+  | "duplicate-cert"
+  | "possible-duplicate"
+  | "failed-work";
+
+export type NeedsAttentionIssue = {
+  id: string;
+  category: NeedsAttentionCategory;
+  title: string;
+  reasons: string[];
+  items: InventoryItem[];
+  totalItemCount: number;
+  itemsTruncated: boolean;
+  work: {
+    kind: "pricing";
+    status: "needs-review" | "failed";
+    message: string | null;
+    updatedAt: string;
+  } | null;
+};
+
+export type NeedsAttentionCategorySummary = {
+  category: NeedsAttentionCategory;
+  groupCount: number;
+  itemCount: number;
+  returnedGroupCount: number;
+  truncated: boolean;
+};
+
+export type NeedsAttentionResponse = {
+  collectionId: string;
+  generatedAt: string;
+  thresholds: {
+    stalePriceDays: number;
+  };
+  summary: {
+    totalGroupCount: number;
+    attentionItemCount: number;
+    categories: NeedsAttentionCategorySummary[];
+  };
+  results: {
+    issues: NeedsAttentionIssue[];
+    returnedGroupCount: number;
+    returnedItemCount: number;
+    truncated: boolean;
+    limitPerCategory: number;
+    itemLimitPerGroup: number;
+  };
+  sources: {
+    inventory: { available: true };
+    pricingQueue: { available: true };
+    importHistory: { available: true } | { available: false; reason: string };
+  };
+};
+
 export type CollectionTransactionType =
   | "purchase"
   | "sale"

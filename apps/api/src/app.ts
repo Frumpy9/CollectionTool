@@ -12,6 +12,7 @@ import { registerCardLookupRoutes } from "./routes/cardLookupRoutes.js";
 import { registerCollectionRoutes } from "./routes/collectionRoutes.js";
 import { registerCsvImportRoutes } from "./routes/csvImportRoutes.js";
 import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
+import { registerNeedsAttentionRoutes } from "./routes/needsAttentionRoutes.js";
 import { registerPricingRoutes, startBulkPriceQueueRunner } from "./routes/pricingRoutes.js";
 import { registerPsaRoutes } from "./routes/psaRoutes.js";
 import { registerUploadRoutes } from "./routes/uploadRoutes.js";
@@ -50,6 +51,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerCollectionRoutes(app, database);
   await registerCsvImportRoutes(app, database);
   await registerInventoryRoutes(app, config, database);
+  await registerNeedsAttentionRoutes(app, database);
   await registerPricingRoutes(app, config, database);
   await registerPsaRoutes(app, config, database);
   await registerTransactionRoutes(app, database);

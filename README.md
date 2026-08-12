@@ -16,6 +16,7 @@ Milestone 1 is focused on the working app shell:
 - SQLite backup-now and scheduled backup flow under `data/backups`
 - Interactive saved-price charts and immutable collection-value history with date ranges and point inspection
 - Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
+- Needs-attention inbox for metadata, image, pricing, duplicate, and failed-work review
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
@@ -147,3 +148,17 @@ is reconstructed once during migration and is labeled as an approximate legacy e
 Use the Transactions workspace to record collection activity without changing inventory counts. Amounts are totals for the whole transaction, never per-card amounts. Purchase and sale totals plus fees feed the cash-flow summary; assigned trade values stay outside cash flow. Cash-sale realized P&L is shown only when a sale has an explicit allocated cost. Trade-given assigned-value P&L is reported separately for the same reason.
 
 Ledger rows retain a snapshot of the card name, set, and number if their inventory item is later deleted. Viewers can read the ledger, while editors, admins, and owners can add, edit, or delete rows. Adjust inventory quantity separately from the linked row's **Edit inventory** action.
+
+## Needs-Attention Inbox
+
+The **Needs attention** workspace runs read-only checks against the current collection and persisted
+pricing queue. It reports missing, stale (30+ days), or possible-confidence prices; missing images;
+incomplete identity or grading metadata; normalized duplicate certs; rows matching the app's complete
+duplicate identity; and the latest failed or needs-review pricing job for each card. Cards explicitly
+ignored for price refresh are omitted from all pricing categories.
+
+Category totals always cover the complete collection. The API returns at most 50 detailed issue
+groups per category and 25 item previews per group, marking truncated results without changing
+those totals. Viewers may inspect issues and open cards; editors, admins, and owners can also queue
+a price refresh. CSV import failure
+history is shown as unavailable because there is currently no persisted server-side evidence source.

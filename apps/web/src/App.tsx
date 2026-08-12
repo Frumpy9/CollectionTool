@@ -13,6 +13,7 @@ import {
   Grid2X2,
   HardDriveDownload,
   Image as ImageIcon,
+  Inbox,
   KeyRound,
   ListFilter,
   Play,
@@ -64,6 +65,7 @@ import type {
 import { api } from "./api";
 import { HistoryChart, type HistoryChartRange } from "./HistoryChart";
 import { PricingReviewWorkspace } from "./PricingReviewWorkspace";
+import { NeedsAttentionPanel } from "./NeedsAttentionPanel";
 
 declare const __APP_VERSION__: string;
 
@@ -139,6 +141,7 @@ type WorkspaceSection =
   | "collection"
   | "graded"
   | "search"
+  | "attention"
   | "storage"
   | "pricing"
   | "ledger"
@@ -177,6 +180,7 @@ const variantOptions = [
 
 const workspaceNavItems = [
   { section: "collection", label: "Collection", icon: Grid2X2 },
+  { section: "attention", label: "Needs attention", icon: Inbox },
   { section: "search", label: "Search", icon: Search },
   { section: "storage", label: "Storage", icon: Tags },
   { section: "pricing", label: "Price Review", icon: AlertTriangle },
@@ -384,6 +388,14 @@ function workspaceSectionMeta(
       description: `${counts.storageGroups} storage group${
         counts.storageGroups === 1 ? "" : "s"
       } across ${counts.totalCards} card${counts.totalCards === 1 ? "" : "s"}.`
+    };
+  }
+
+  if (section === "attention") {
+    return {
+      eyebrow: "Collection health",
+      title: "Needs attention",
+      description: "Review missing details, pricing gaps, possible duplicates, and persisted failed work in one inbox."
     };
   }
 
@@ -2000,6 +2012,19 @@ function WorkspaceShell({
             onLoadSet={loadDeepSearchSet}
             onQueryChange={setDeepSearchQuery}
             onSearch={handleDeepSearch}
+          />
+        ) : null}
+
+        {activeSection === "attention" && activeCollection ? (
+          <NeedsAttentionPanel
+            canEdit={activeCollection.role !== "viewer"}
+            collectionId={activeCollection.id}
+            onOpenItem={setSelectedItem}
+            onPriceQueued={(queue, message) => {
+              applyBulkPriceQueueResponse(queue);
+              setBulkPriceMessage(message);
+              setBulkPriceStatus("idle");
+            }}
           />
         ) : null}
 

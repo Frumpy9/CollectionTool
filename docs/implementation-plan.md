@@ -56,6 +56,7 @@
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
 - [x] Added a permission-aware purchase, sale, trade, gift, disposal, and fee transaction ledger with cash-flow and explicit-cost-basis summaries.
+- [x] Added a viewer-readable needs-attention inbox for pricing gaps, stale/low-confidence matches, images, metadata, duplicate certs/items, and persisted failed pricing work.
 
 ## Branch Roadmap
 
@@ -167,6 +168,7 @@
 - [x] Add in-app API credits page with source roles and external links.
 - [ ] Add Playwright tests for auth and manual inventory.
 - [x] Add backend tests for auth, permissions, and inventory routes.
+- [x] Add backend regression coverage for needs-attention classification, authorization, thresholds, ignored pricing decisions, durable work evidence, duplicate identity, and bounded results.
 - [ ] Run Docker Compose on the Ubuntu target server.
 - [ ] Add screenshots to README.
 - [ ] Confirm no secrets, databases, cached images, backups, sessions, or logs are tracked.
