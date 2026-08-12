@@ -170,7 +170,7 @@ export type CollectionTransactionsResponse = {
 };
 
 export type CreateCollectionTransactionRequest = {
-  itemId?: string;
+  itemId?: string | null;
   type: CollectionTransactionType;
   quantity?: number;
   /** Total for this transaction, never a per-unit amount. */

@@ -2785,7 +2785,7 @@ function TransactionLedgerWorkspace({
     const form = event.currentTarget;
     const data = new FormData(form);
     const payload = {
-      itemId: String(data.get("itemId") ?? "").trim() || undefined,
+      itemId: String(data.get("itemId") ?? "").trim() || null,
       itemName: String(data.get("itemName") ?? "").trim() || undefined,
       type,
       quantity: optionalNumber(data.get("quantity")),

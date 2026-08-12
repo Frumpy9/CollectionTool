@@ -285,7 +285,7 @@ test("trade assigned values never appear in cash flow", async () => {
   }
 });
 
-test("ledger identity and history survive inventory edits and deletion", async () => {
+test("ledger links can be cleared and identity history survives inventory deletion", async () => {
   const server = await createTestServer();
   try {
     const { collectionId, cookie } = await bootstrap(server.app);
@@ -325,6 +325,27 @@ test("ledger identity and history survive inventory edits and deletion", async (
     assert.equal(patch.json().transaction.itemName, "Pikachu");
     assert.equal(patch.json().transaction.itemSetName, "Base Set");
 
+    const unlinked = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/transactions/${transactionId}`,
+      headers: { cookie },
+      payload: { itemId: null }
+    });
+    assert.equal(unlinked.statusCode, 200);
+    assert.equal(unlinked.json().transaction.itemId, null);
+    assert.equal(unlinked.json().transaction.itemName, "Pikachu");
+
+    const relinked = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/transactions/${transactionId}`,
+      headers: { cookie },
+      payload: { itemId }
+    });
+    assert.equal(relinked.statusCode, 200);
+    assert.equal(relinked.json().transaction.itemId, itemId);
+    assert.equal(relinked.json().transaction.itemName, "Raichu");
+    assert.equal(relinked.json().transaction.itemSetName, "Base Set 2");
+
     const deleted = await server.app.inject({
       method: "DELETE",
       url: `/api/collections/${collectionId}/items/${itemId}`,
@@ -339,9 +360,9 @@ test("ledger identity and history survive inventory edits and deletion", async (
     });
     assert.equal(ledger.statusCode, 200);
     assert.equal(ledger.json().transactions[0].itemId, null);
-    assert.equal(ledger.json().transactions[0].itemName, "Pikachu");
-    assert.equal(ledger.json().transactions[0].itemSetName, "Base Set");
-    assert.equal(ledger.json().transactions[0].itemCardNumber, "58");
+    assert.equal(ledger.json().transactions[0].itemName, "Raichu");
+    assert.equal(ledger.json().transactions[0].itemSetName, "Base Set 2");
+    assert.equal(ledger.json().transactions[0].itemCardNumber, "26");
   } finally {
     await closeTestServer(server);
   }
