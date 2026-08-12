@@ -56,6 +56,7 @@ import type {
   ValueOverrideHistoryEntry
 } from "@collection-tool/shared";
 import { api } from "./api";
+import { HistoryChart, type HistoryChartRange } from "./HistoryChart";
 
 declare const __APP_VERSION__: string;
 
@@ -2411,129 +2412,30 @@ function CollectionValueHistoryLineChart({
 }: {
   points: CollectionValueHistoryPoint[];
 }) {
-  const chartPoints = sampleCollectionValueHistoryPoints(points);
-  const minValue = Math.min(...points.map((point) => point.valueCents));
-  const maxValue = Math.max(...points.map((point) => point.valueCents));
-  const range = Math.max(1, maxValue - minValue);
-  const chartWidth = 320;
-  const chartHeight = 170;
-  const padding = { top: 12, right: 10, bottom: 26, left: 48 };
-  const plotWidth = chartWidth - padding.left - padding.right;
-  const plotHeight = chartHeight - padding.top - padding.bottom;
-  const coordinates = chartPoints.map((point, index) => {
-    const x =
-      chartPoints.length === 1
-        ? padding.left + plotWidth / 2
-        : padding.left + (index / (chartPoints.length - 1)) * plotWidth;
-    const y = padding.top + plotHeight - ((point.valueCents - minValue) / range) * plotHeight;
-
-    return { point, x, y };
-  });
-  const linePath = coordinates
-    .map((coordinate, index) => `${index === 0 ? "M" : "L"} ${coordinate.x} ${coordinate.y}`)
-    .join(" ");
-  const areaPath =
-    coordinates.length > 1
-      ? `${linePath} L ${coordinates[coordinates.length - 1].x} ${
-          chartHeight - padding.bottom
-        } L ${coordinates[0].x} ${chartHeight - padding.bottom} Z`
-      : "";
-  const firstPoint = points[0];
-  const latestPoint = points[points.length - 1];
-  const isFlat = minValue === maxValue;
-  const startCoordinate = coordinates[0];
-  const latestCoordinate = coordinates[coordinates.length - 1];
-  const middleValue = Math.round((minValue + maxValue) / 2);
+  const [range, setRange] = useState<HistoryChartRange>("all");
+  const chartPoints = useMemo(
+    () =>
+      points.map((point) => ({
+        id: point.id,
+        timestamp: point.capturedAt,
+        valueCents: point.valueCents,
+        deltaCents: point.deltaCents,
+        detail: `${point.refreshedItemCount} card${
+          point.refreshedItemCount === 1 ? "" : "s"
+        } refreshed`
+      })),
+    [points]
+  );
 
   return (
-    <div className="collection-value-chart" aria-label="Collection value history line chart">
-      <div className="collection-chart-range">
-        <span>{isFlat ? "No movement" : "Range"}</span>
-        <strong>
-          {isFlat ? formatCurrency(maxValue) : `${formatCurrency(minValue)} to ${formatCurrency(maxValue)}`}
-        </strong>
-      </div>
-      <svg aria-hidden="true" className={isFlat ? "flat" : ""} viewBox={`0 0 ${chartWidth} ${chartHeight}`}>
-        <line
-          className="chart-grid-line"
-          x1={padding.left}
-          x2={chartWidth - padding.right}
-          y1={padding.top}
-          y2={padding.top}
-        />
-        <line
-          className="chart-grid-line"
-          x1={padding.left}
-          x2={chartWidth - padding.right}
-          y1={padding.top + plotHeight / 2}
-          y2={padding.top + plotHeight / 2}
-        />
-        <line
-          className="chart-grid-line"
-          x1={padding.left}
-          x2={chartWidth - padding.right}
-          y1={chartHeight - padding.bottom}
-          y2={chartHeight - padding.bottom}
-        />
-        <text className="chart-axis-label" x="6" y={padding.top + 4}>
-          {formatCurrency(maxValue)}
-        </text>
-        <text className="chart-axis-label" x="6" y={padding.top + plotHeight / 2 + 4}>
-          {formatCurrency(middleValue)}
-        </text>
-        <text className="chart-axis-label" x="6" y={chartHeight - padding.bottom + 4}>
-          {formatCurrency(minValue)}
-        </text>
-        {areaPath ? <path className="collection-value-area" d={areaPath} /> : null}
-        {coordinates.length > 1 ? <path className="collection-value-line" d={linePath} /> : null}
-        {startCoordinate ? (
-          <circle
-            className="collection-value-point start"
-            cx={startCoordinate.x}
-            cy={startCoordinate.y}
-            r="3.4"
-          />
-        ) : null}
-        {latestCoordinate ? (
-          <circle
-            className="collection-value-point latest"
-            cx={latestCoordinate.x}
-            cy={latestCoordinate.y}
-            r="4"
-          />
-        ) : null}
-      </svg>
-      <div className="collection-chart-footer">
-        <span>{formatHistoryDate(firstPoint.capturedAt)}</span>
-        <span>
-          {points.length} refresh point{points.length === 1 ? "" : "s"}
-        </span>
-        <span>{formatHistoryDate(latestPoint.capturedAt)}</span>
-      </div>
-    </div>
+    <HistoryChart
+      ariaLabel="Collection value history chart"
+      formatValue={formatCurrency}
+      onRangeChange={setRange}
+      points={chartPoints}
+      range={range}
+    />
   );
-}
-
-function sampleCollectionValueHistoryPoints(
-  points: CollectionValueHistoryPoint[],
-  maxPoints = 120
-) {
-  if (points.length <= maxPoints) {
-    return points;
-  }
-
-  const sampled: CollectionValueHistoryPoint[] = [];
-
-  for (let index = 0; index < maxPoints; index += 1) {
-    const sourceIndex = Math.round((index / (maxPoints - 1)) * (points.length - 1));
-    const point = points[sourceIndex];
-
-    if (sampled[sampled.length - 1]?.id !== point.id) {
-      sampled.push(point);
-    }
-  }
-
-  return sampled;
 }
 
 function StorageInsights({
@@ -6083,11 +5985,6 @@ function SavedPriceHistoryPanel({
   snapshots: MarketPriceSnapshot[];
   status: "idle" | "loading" | "error";
 }) {
-  const minPrice =
-    snapshots.length > 0 ? Math.min(...snapshots.map((snapshot) => snapshot.priceCents)) : 0;
-  const maxPrice =
-    snapshots.length > 0 ? Math.max(...snapshots.map((snapshot) => snapshot.priceCents)) : 0;
-  const range = Math.max(1, maxPrice - minPrice);
   const hasSnapshots = snapshots.length > 0;
   const heading = status === "loading" ? "Loading" : `${snapshots.length} saved prices`;
   const emptyMessage =
@@ -6106,19 +6003,10 @@ function SavedPriceHistoryPanel({
       </div>
 
       {hasSnapshots ? (
-        <PriceHistoryLineChart maxPrice={maxPrice} minPrice={minPrice} points={snapshots} range={range} />
+        <PriceHistoryLineChart points={snapshots} />
       ) : (
         <p className="lookup-note">{emptyMessage}</p>
       )}
-
-      {hasSnapshots ? (
-        <div className="inventory-meta">
-          <span>{formatCurrency(snapshots[0].priceCents)} start</span>
-          <span>{formatCurrency(snapshots[snapshots.length - 1].priceCents)} latest</span>
-          <span>{formatCurrency(minPrice)} low</span>
-          <span>{formatCurrency(maxPrice)} high</span>
-        </div>
-      ) : null}
 
       {hasSnapshots ? (
         <div className="value-history-list">
@@ -6149,69 +6037,31 @@ function SavedPriceHistoryPanel({
 }
 
 function PriceHistoryLineChart({
-  maxPrice,
-  minPrice,
-  points,
-  range
+  points
 }: {
-  maxPrice: number;
-  minPrice: number;
   points: MarketPriceSnapshot[];
-  range: number;
 }) {
-  const chartWidth = 100;
-  const chartHeight = 100;
-  const coordinates = points.map((point, index) => {
-    const x = points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth;
-    const y = chartHeight - ((point.priceCents - minPrice) / range) * 82 - 9;
-
-    return { point, x, y };
-  });
-  const linePath = coordinates
-    .map((coordinate, index) => `${index === 0 ? "M" : "L"} ${coordinate.x} ${coordinate.y}`)
-    .join(" ");
-  const firstPoint = points[0];
-  const latestPoint = points[points.length - 1];
-  const isFlat = minPrice === maxPrice;
+  const [range, setRange] = useState<HistoryChartRange>("all");
+  const chartPoints = useMemo(
+    () =>
+      points.map((point) => ({
+        id: point.id,
+        timestamp: point.capturedAt,
+        valueCents: point.priceCents,
+        deltaCents: point.deltaCents,
+        detail: point.matchedName
+      })),
+    [points]
+  );
 
   return (
-    <div className="price-history-chart line-chart" aria-label="Saved price history line chart">
-      <div className="line-chart-topline">
-        <div>
-          <span>Start</span>
-          <strong>{formatCurrency(firstPoint.priceCents)}</strong>
-        </div>
-        <div>
-          <span>Latest</span>
-          <strong>{formatCurrency(latestPoint.priceCents)}</strong>
-        </div>
-        <div>
-          <span>Range</span>
-          <strong>
-            {isFlat ? "No movement" : `${formatCurrency(minPrice)} to ${formatCurrency(maxPrice)}`}
-          </strong>
-        </div>
-      </div>
-      <svg aria-hidden="true" className={isFlat ? "flat" : ""} preserveAspectRatio="none" viewBox="0 0 100 100">
-        <line className="chart-grid-line" x1="0" x2="100" y1="9" y2="9" />
-        <line className="chart-grid-line" x1="0" x2="100" y1="91" y2="91" />
-        {coordinates.length > 1 ? <path className="price-history-line" d={linePath} /> : null}
-        {coordinates.map(({ point, x, y }, index) => (
-          <circle
-            className={priceChangeClass(point.deltaCents)}
-            cx={x}
-            cy={y}
-            key={point.id}
-            r={index === 0 || index === coordinates.length - 1 ? "3.4" : "2.4"}
-          />
-        ))}
-      </svg>
-      <div className="line-chart-footer">
-        <span>{formatHistoryDate(firstPoint.capturedAt)}</span>
-        <span>{points.length} refresh{points.length === 1 ? "" : "es"}</span>
-        <span>{formatHistoryDate(latestPoint.capturedAt)}</span>
-      </div>
-    </div>
+    <HistoryChart
+      ariaLabel="Saved card price history chart"
+      formatValue={formatCurrency}
+      onRangeChange={setRange}
+      points={chartPoints}
+      range={range}
+    />
   );
 }
 

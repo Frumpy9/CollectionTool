@@ -205,6 +205,93 @@ test("inventory creation persists PokemonPriceTracker pricing source hints", asy
   }
 });
 
+test("collection summaries use the same value precedence as inventory totals", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 2,
+        purchasePriceCents: 1_000
+      }
+    });
+
+    assert.equal(createResponse.statusCode, 201);
+    const itemId = createResponse.json().item.id;
+
+    server.database.connection
+      .prepare(
+        `
+          INSERT INTO item_market_prices (
+            owned_item_id,
+            source,
+            source_card_id,
+            source_variant_id,
+            matched_name,
+            matched_set_name,
+            matched_card_number,
+            price_cents,
+            currency,
+            confidence,
+            looked_up_at,
+            raw_payload
+          )
+          VALUES (?, 'pokemonpricetracker', 'price-card', 'near-mint', ?, ?, ?, 2500, 'USD', 'exact', ?, '{}')
+        `
+      )
+      .run(itemId, "Pikachu", "Base Set", "58", new Date().toISOString());
+
+    const marketSummaryResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/collections",
+      headers: { cookie }
+    });
+
+    assert.equal(marketSummaryResponse.statusCode, 200);
+    assert.equal(marketSummaryResponse.json().collections[0].estimatedValueCents, 5_000);
+
+    const overrideResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 2,
+        purchasePriceCents: 1_000,
+        valueOverrideCents: 3_000
+      }
+    });
+
+    assert.equal(overrideResponse.statusCode, 200);
+
+    const overrideSummaryResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/collections",
+      headers: { cookie }
+    });
+
+    assert.equal(overrideSummaryResponse.statusCode, 200);
+    assert.equal(overrideSummaryResponse.json().collections[0].estimatedValueCents, 6_000);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("bulk storage location updates selected inventory rows", async () => {
   const server = await createTestServer();
   try {
