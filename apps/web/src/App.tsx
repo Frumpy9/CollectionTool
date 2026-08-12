@@ -49,6 +49,8 @@ import type {
   CollectionTransactionsResponse,
   CollectionValueHistoryPoint,
   CreateInventoryItemRequest,
+  CsvImportDuplicatePolicy,
+  CsvImportJobResponse,
   DatabaseIntegrityResponse,
   InventoryItem,
   InventoryItemType,
@@ -130,17 +132,6 @@ type BulkQueueRow = {
   selectedCandidateId: string;
   psaItem: CreateInventoryItemRequest | null;
   message: string;
-};
-
-type CsvImportRowStatus = "ready" | "error" | "adding" | "added" | "skipped";
-
-type CsvImportPreviewRow = {
-  id: string;
-  lineNumber: number;
-  raw: Record<string, string>;
-  payload: CreateInventoryItemRequest;
-  errors: string[];
-  status: CsvImportRowStatus;
 };
 
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
@@ -2069,9 +2060,7 @@ function WorkspaceShell({
         {activePanel === "import" && activeCollection ? (
           <InventoryCsvImportPanel
             collectionId={activeCollection.id}
-            existingItems={inventory.items}
-            onCreateItem={createOrMergeInventoryItem}
-            onItemUpdated={(item) => setInventory((current) => updateInventoryItem(current, item))}
+            onImported={(updatedInventory) => setInventory(updatedInventory)}
           />
         ) : null}
 
@@ -4734,25 +4723,51 @@ function BulkQueueCard({
 
 function InventoryCsvImportPanel({
   collectionId,
-  existingItems,
-  onCreateItem,
-  onItemUpdated
+  onImported
 }: {
   collectionId: string;
-  existingItems: InventoryItem[];
-  onCreateItem: (
-    collectionId: string,
-    payload: CreateInventoryItemRequest
-  ) => Promise<InventoryItem | null>;
-  onItemUpdated: (item: InventoryItem) => void;
+  onImported: (inventory: InventoryListResponse) => void;
 }) {
   const [csvText, setCsvText] = useState("");
-  const [rows, setRows] = useState<CsvImportPreviewRow[]>([]);
-  const [status, setStatus] = useState<"idle" | "adding">("idle");
+  const [duplicatePolicy, setDuplicatePolicy] = useState<CsvImportDuplicatePolicy>("skip");
+  const [job, setJob] = useState<CsvImportJobResponse | null>(null);
+  const [acknowledgeExclusions, setAcknowledgeExclusions] = useState(false);
   const [error, setError] = useState("");
+  const active = job && ["queued", "validating", "committing"].includes(job.status);
 
-  const counts = summarizeCsvImportRows(rows);
-  const readyRows = rows.filter((row) => row.status === "ready");
+  useEffect(() => {
+    if (!job || !["queued", "validating"].includes(job.status)) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(() => {
+      api
+        .getCsvImportJob(collectionId, job.id)
+        .then((updatedJob) => {
+          if (!cancelled) {
+            setJob(updatedJob);
+            if (updatedJob.error) setError(updatedJob.error);
+          }
+        })
+        .catch((pollError: unknown) => {
+          if (!cancelled) {
+            setError(pollError instanceof Error ? pollError.message : "Unable to check import progress.");
+          }
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [collectionId, job?.id, job?.status]);
+
+  async function discardReadyJob(currentJob = job) {
+    if (currentJob?.status === "ready") {
+      await api.cancelCsvImportJob(collectionId, currentJob.id).catch(() => undefined);
+    }
+  }
 
   async function handleFileUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -4761,112 +4776,67 @@ function InventoryCsvImportPanel({
       return;
     }
 
+    await discardReadyJob();
     setCsvText(await file.text());
-    setRows([]);
+    setJob(null);
+    setAcknowledgeExclusions(false);
     setError("");
   }
 
-  function handlePreview() {
+  async function handlePreview() {
+    setError("");
+    setAcknowledgeExclusions(false);
     try {
-      const parsedRows = parseInventoryCsvImport(csvText);
-      setRows(parsedRows);
-      setError(parsedRows.length === 0 ? "No importable rows found." : "");
+      await discardReadyJob();
+      setJob(null);
+      setJob(await api.createCsvImportJob(collectionId, { csvText, duplicatePolicy }));
     } catch (previewError) {
-      setRows([]);
-      setError(previewError instanceof Error ? previewError.message : "Unable to parse CSV.");
+      setError(previewError instanceof Error ? previewError.message : "Unable to preview CSV.");
     }
   }
 
-  async function handleImportReady() {
-    if (readyRows.length === 0) {
+  async function handleCommit() {
+    if (!job?.planHash) {
+      return;
+    }
+    setError("");
+    setJob({ ...job, status: "committing" });
+    try {
+      const completed = await api.commitCsvImportJob(collectionId, job.id, {
+        planHash: job.planHash,
+        acknowledgeExclusions
+      });
+      setJob(completed);
+    } catch (commitError) {
+      setError(commitError instanceof Error ? commitError.message : "Unable to commit CSV import.");
+      api.getCsvImportJob(collectionId, job.id).then(setJob).catch(() => setJob(job));
       return;
     }
 
-    setStatus("adding");
-    setError("");
-    const seenCertNumbers = new Set(
-      existingItems.map((item) => normalizedCertNumber(item.certNumber)).filter(Boolean)
-    );
-
-    for (const row of readyRows) {
-      setRows((current) =>
-        current.map((candidate) =>
-          candidate.id === row.id ? { ...candidate, status: "adding" } : candidate
-        )
-      );
-
-      try {
-        const certNumber = normalizedCertNumber(row.payload.certNumber);
-
-        if (certNumber && seenCertNumbers.has(certNumber)) {
-          setRows((current) =>
-            current.map((candidate) =>
-              candidate.id === row.id
-                ? {
-                    ...candidate,
-                    status: "skipped",
-                    errors: [`Cert ${row.payload.certNumber} is already in this collection.`]
-                  }
-                : candidate
-            )
-          );
-          continue;
-        }
-
-        const item = await onCreateItem(collectionId, row.payload);
-        const updatedItem = item?.card.imageUrl
-          ? item
-          : await applyBestImageCandidateToItem(collectionId, item);
-
-        if (updatedItem) {
-          onItemUpdated(updatedItem);
-          const importedCertNumber = normalizedCertNumber(updatedItem.certNumber);
-
-          if (importedCertNumber) {
-            seenCertNumbers.add(importedCertNumber);
-          }
-        }
-
-        setRows((current) =>
-          current.map((candidate) =>
-            candidate.id === row.id
-              ? {
-                  ...candidate,
-                  payload: updatedItem ? inventoryItemToPayload(updatedItem) : candidate.payload,
-                  status: updatedItem ? "added" : "skipped",
-                  errors: updatedItem ? [] : ["Import cancelled."]
-                }
-              : candidate
-          )
-        );
-      } catch (importError) {
-        setRows((current) =>
-          current.map((candidate) =>
-            candidate.id === row.id
-              ? {
-                  ...candidate,
-                  status: "error",
-                  errors: [
-                    importError instanceof Error ? importError.message : "Unable to import row."
-                  ]
-                }
-              : candidate
-          )
-        );
-      }
-
-      await delay(100);
+    try {
+      onImported(await api.listInventory(collectionId));
+    } catch {
+      setError("Import completed, but the inventory list could not be refreshed. Reload to see it.");
     }
-
-    setStatus("idle");
   }
 
-  function skipRow(rowId: string) {
-    setRows((current) =>
-      current.map((row) =>
-        row.id === rowId ? { ...row, status: "skipped", errors: ["Skipped."] } : row
-      )
-    );
+  async function handleCancel() {
+    if (!job) return;
+    try {
+      setJob(await api.cancelCsvImportJob(collectionId, job.id));
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel CSV import.");
+    }
+  }
+
+  async function handleDownloadErrors() {
+    if (!job) return;
+    try {
+      const { blob, fileName } = await api.downloadCsvImportErrors(collectionId, job.id);
+      downloadBlob(blob, fileName);
+    } catch (downloadError) {
+      setError(downloadError instanceof Error ? downloadError.message : "Unable to download errors.");
+    }
   }
 
   return (
@@ -4885,10 +4855,12 @@ function InventoryCsvImportPanel({
         <label>
           Paste CSV
           <textarea
-            disabled={status !== "idle"}
+            disabled={Boolean(active)}
             onChange={(event) => {
+              void discardReadyJob();
               setCsvText(event.target.value);
-              setRows([]);
+              setJob(null);
+              setAcknowledgeExclusions(false);
               setError("");
             }}
             placeholder={"name,set_code,card_number,language,item_type,quantity\nPikachu,base1,58/102,en,raw,1"}
@@ -4900,40 +4872,68 @@ function InventoryCsvImportPanel({
             Upload .csv
             <input
               accept=".csv,text/csv"
-              disabled={status !== "idle"}
+              disabled={Boolean(active)}
               onChange={handleFileUpload}
               type="file"
             />
           </label>
           <p>
-            {rows.length > 0
-              ? `${counts.ready} ready, ${counts.error} need edits`
+            {job
+              ? `${job.progress.processedRows} of ${job.progress.totalRows} rows checked`
               : "Preview before importing"}
           </p>
+          <label>
+            Exact duplicates
+            <select
+              disabled={Boolean(active)}
+              onChange={(event) => {
+                void discardReadyJob();
+                setDuplicatePolicy(event.target.value as CsvImportDuplicatePolicy);
+                setJob(null);
+                setAcknowledgeExclusions(false);
+              }}
+              value={duplicatePolicy}
+            >
+              <option value="skip">Skip duplicates</option>
+              <option value="merge">Merge quantities</option>
+              <option value="separate">Create separate rows</option>
+            </select>
+          </label>
         </div>
       </div>
 
       <div className="bulk-actions">
         <button
           className="primary-button"
-          disabled={status !== "idle" || csvText.trim().length === 0}
+          disabled={Boolean(active) || csvText.trim().length === 0}
           onClick={handlePreview}
           type="button"
         >
           Preview CSV
         </button>
         <button
-          disabled={status !== "idle" || readyRows.length === 0}
-          onClick={handleImportReady}
+          disabled={
+            job?.status !== "ready" ||
+            job.summary.commitRows === 0 ||
+            (job.requiresExclusionAcknowledgement && !acknowledgeExclusions)
+          }
+          onClick={handleCommit}
           type="button"
         >
-          {status === "adding" ? "Importing..." : `Import ready (${readyRows.length})`}
+          {job?.status === "committing"
+            ? "Committing..."
+            : `Commit ${job?.summary.commitRows ?? 0} row${job?.summary.commitRows === 1 ? "" : "s"} atomically`}
         </button>
+        {job && ["queued", "validating", "ready"].includes(job.status) ? (
+          <button onClick={handleCancel} type="button">Cancel import</button>
+        ) : null}
         <button
-          disabled={status !== "idle"}
+          disabled={Boolean(active)}
           onClick={() => {
+            void discardReadyJob();
             setCsvText("");
-            setRows([]);
+            setJob(null);
+            setAcknowledgeExclusions(false);
             setError("");
           }}
           type="button"
@@ -4942,66 +4942,67 @@ function InventoryCsvImportPanel({
         </button>
       </div>
 
-      {rows.length > 0 ? (
+      {job ? (
         <div className="bulk-progress">
-          <span>{counts.ready} ready</span>
-          <span>{counts.error} errors</span>
-          <span>{counts.added} added</span>
-          <span>{counts.skipped} skipped</span>
+          <span>{job.summary.commitRows} will commit</span>
+          <span>{job.summary.insertRows} new</span>
+          <span>{job.summary.mergeRows} merge</span>
+          <span>{job.summary.invalidRows} invalid</span>
+          <span>{job.summary.skippedRows} skipped</span>
+          <span>Status: {job.status}</span>
         </div>
       ) : null}
 
       {error ? <p className="form-error">{error}</p> : null}
 
-      {rows.length > 0 ? (
+      {job?.status === "ready" ? (
+        <div className="lookup-note">
+          <strong>{job.summary.commitRows} row(s) will be saved in one transaction.</strong>{" "}
+          {job.summary.excludedRows > 0
+            ? `${job.summary.excludedRows} invalid or skipped row(s) will not be imported.`
+            : "Every CSV row is included."}
+        </div>
+      ) : null}
+
+      {job?.status === "completed" ? (
+        <p className="form-success">
+          Imported {job.summary.commitRows} row(s) atomically. No partial import was possible.
+        </p>
+      ) : null}
+
+      {job?.requiresExclusionAcknowledgement && job.status === "ready" ? (
+        <label className="checkbox-field">
+          <input
+            checked={acknowledgeExclusions}
+            onChange={(event) => setAcknowledgeExclusions(event.target.checked)}
+            type="checkbox"
+          />
+          I understand that {job.summary.excludedRows} excluded row(s) will not be imported.
+        </label>
+      ) : null}
+
+      {job && (job.summary.excludedRows > 0 || job.error) ? (
+        <button onClick={handleDownloadErrors} type="button">
+          <Download size={16} /> Download error report
+        </button>
+      ) : null}
+
+      {job?.issues.length ? (
         <div className="bulk-results">
-          {rows.map((row) => (
-            <CsvImportRowCard key={row.id} row={row} onSkip={skipRow} />
+          {job.issues.map((issue, index) => (
+            <article className="bulk-row failed" key={`${issue.lineNumber}-${index}`}>
+              <div className="bulk-row-thumb" aria-hidden="true"><AlertTriangle size={28} /></div>
+              <div className="bulk-row-body">
+                <p className="eyebrow">Line {issue.lineNumber} · {issue.disposition}</p>
+                <h4>{issue.name || "Missing name"}</h4>
+                <p className="form-error">{issue.messages.join(" ")}</p>
+              </div>
+            </article>
           ))}
+          {job.issuesTruncated ? <p>More issues are included in the error report.</p> : null}
         </div>
       ) : null}
     </section>
-  );
-}
-
-function CsvImportRowCard({
-  row,
-  onSkip
-}: {
-  row: CsvImportPreviewRow;
-  onSkip: (rowId: string) => void;
-}) {
-  const rowClass = row.status === "ready" ? "selected" : row.status === "error" ? "failed" : row.status;
-
-  return (
-    <article className={`bulk-row ${rowClass}`}>
-      <div className="bulk-row-thumb" aria-hidden="true">
-        {row.payload.imageUrl ? <img alt="" src={row.payload.imageUrl} /> : <FileText size={28} />}
-      </div>
-      <div className="bulk-row-body">
-        <div className="bulk-row-header">
-          <div>
-            <p className="eyebrow">Line {row.lineNumber} · {row.status}</p>
-            <h4>{row.payload.name || "Missing name"}</h4>
-            <p>{[row.payload.setCode, row.payload.cardNumber, row.payload.setName].filter(Boolean).join(" · ")}</p>
-          </div>
-          {["ready", "error"].includes(row.status) ? (
-            <button onClick={() => onSkip(row.id)} type="button">
-              Skip
-            </button>
-          ) : null}
-        </div>
-
-        <div className="inventory-meta">
-          <span>{row.payload.language.toUpperCase()}</span>
-          <span>{row.payload.itemType}</span>
-          <span>Qty {row.payload.quantity}</span>
-          {row.payload.grader ? <span>{row.payload.grader} {row.payload.grade}</span> : null}
-        </div>
-
-        {row.errors.length > 0 ? <p className="form-error">{row.errors.join(" ")}</p> : null}
-      </div>
-    </article>
   );
 }
 
@@ -8246,624 +8247,6 @@ function summarizeBulkQueue(queue: BulkQueueRow[]) {
   );
 }
 
-function parseInventoryCsvImport(value: string): CsvImportPreviewRow[] {
-  const records = parseCsvRecords(value).filter((record) =>
-    record.cells.some((cell) => cell.trim().length > 0)
-  );
-
-  if (records.length === 0) {
-    return [];
-  }
-
-  const headers = records[0].cells.map(normalizeCsvHeader);
-  const seenHeaders = new Set<string>();
-
-  for (const header of headers) {
-    if (!header) {
-      continue;
-    }
-
-    if (seenHeaders.has(header)) {
-      throw new Error(`CSV has duplicate column "${header}".`);
-    }
-
-    seenHeaders.add(header);
-  }
-
-  return records.slice(1).map((record) => createCsvImportPreviewRow(headers, record));
-}
-
-function createCsvImportPreviewRow(
-  headers: string[],
-  record: { cells: string[]; lineNumber: number }
-): CsvImportPreviewRow {
-  const raw = headers.reduce<Record<string, string>>((row, header, index) => {
-    if (header) {
-      row[header] = record.cells[index]?.trim() ?? "";
-    }
-
-    return row;
-  }, {});
-
-  if (isPsaVaultCsvRow(raw)) {
-    return createPsaVaultCsvImportPreviewRow(raw, record);
-  }
-
-  const itemType = csvItemType(csvValue(raw, "item_type", "type"));
-  const language = csvLanguage(csvValue(raw, "language", "lang"));
-  const quantity = csvInteger(csvValue(raw, "quantity", "qty"), 1);
-  const conditionScore = csvOptionalNumber(csvValue(raw, "condition_score", "score"));
-  const purchasePriceCents = csvOptionalCents(
-    csvValue(raw, "purchase_price_cents"),
-    csvValue(raw, "purchase_price", "purchase")
-  );
-  const valueOverrideCents = csvOptionalCents(
-    csvValue(raw, "value_override_cents"),
-    csvValue(raw, "value_override", "value")
-  );
-  const certEstimateCents = csvOptionalCents(csvValue(raw, "cert_estimate_cents"));
-  const payload: CreateInventoryItemRequest = {
-    name: csvValue(raw, "name", "card_name"),
-    setName: csvValue(raw, "set_name"),
-    setCode: csvValue(raw, "set_code"),
-    cardNumber: csvValue(raw, "card_number", "number"),
-    language,
-    rarity: csvValue(raw, "rarity"),
-    imageUrl: csvValue(raw, "image_url"),
-    itemType,
-    quantity,
-    conditionLabel: csvValue(raw, "condition_label", "condition"),
-    conditionScore,
-    variantDetails: csvValue(raw, "variant_details", "variants"),
-    grader: itemType === "graded" ? csvValue(raw, "grader") : "",
-    grade: itemType === "graded" ? csvValue(raw, "grade") : "",
-    certNumber: itemType === "graded" ? csvValue(raw, "cert_number", "cert") : "",
-    certUrl: csvValue(raw, "cert_url"),
-    certSpecId: csvValue(raw, "cert_spec_id"),
-    certCategory: csvValue(raw, "cert_category"),
-    certPopulation: csvValue(raw, "cert_population"),
-    certPopulationHigher: csvValue(raw, "cert_population_higher"),
-    certEstimateCents,
-    certLookupAt: csvValue(raw, "cert_lookup_at"),
-    purchasePriceCents,
-    purchaseDate: csvValue(raw, "purchase_date"),
-    valueOverrideCents,
-    storageLocation: csvValue(raw, "storage_location", "storage"),
-    notes: csvValue(raw, "notes")
-  };
-  const errors = validateCsvImportPayload(payload, raw, record.cells.length > headers.length);
-
-  return {
-    id: createClientId(),
-    lineNumber: record.lineNumber,
-    raw,
-    payload,
-    errors,
-    status: errors.length > 0 ? "error" : "ready"
-  };
-}
-
-function createPsaVaultCsvImportPreviewRow(
-  raw: Record<string, string>,
-  record: { cells: string[]; lineNumber: number }
-): CsvImportPreviewRow {
-  const setName = csvPlaceholderValue(raw, "set");
-  const normalizedSetName = normalizePsaVaultSetName(setName);
-  const subject = csvPlaceholderValue(raw, "subject");
-  const variety = csvPlaceholderValue(raw, "variety");
-  const itemDescription = csvPlaceholderValue(raw, "item");
-  const parsedName = parsePsaVaultCardName(subject || nameFromPsaVaultItem(itemDescription));
-  const certNumber = csvPlaceholderValue(raw, "cert_number");
-  const grader = csvPlaceholderValue(raw, "grade_issuer") || "PSA";
-  const grade = csvPlaceholderValue(raw, "grade");
-  const vaultStatus = csvPlaceholderValue(raw, "vault_status");
-  const vaultedDate = csvPlaceholderValue(raw, "vaulted_date");
-  const source = csvPlaceholderValue(raw, "source");
-  const listingStatus = csvPlaceholderValue(raw, "listing_status");
-  const soldStatus = csvPlaceholderValue(raw, "sold_status");
-  const notes = [
-    csvPlaceholderValue(raw, "my_notes"),
-    vaultStatus ? `Vault status: ${vaultStatus}` : "",
-    vaultedDate ? `Vaulted date: ${vaultedDate}` : "",
-    source ? `Source: ${source}` : "",
-    listingStatus ? `Listing status: ${listingStatus}` : "",
-    soldStatus ? `Sold status: ${soldStatus}` : "",
-    itemDescription ? `PSA Vault item: ${itemDescription}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
-  const payload: CreateInventoryItemRequest = {
-    name: parsedName.name,
-    setName: normalizedSetName,
-    setCode: setCodeFromPsaVaultSet(setName),
-    cardNumber: csvPlaceholderValue(raw, "card_number"),
-    language: psaVaultLanguage(setName, itemDescription),
-    rarity: "",
-    releaseYear: csvPlaceholderValue(raw, "year"),
-    imageUrl: "",
-    itemType: "graded",
-    quantity: 1,
-    conditionLabel: "",
-    conditionScore: undefined,
-    variantDetails: psaVaultVariantDetails(variety, parsedName.variant, normalizedSetName),
-    grader,
-    grade,
-    certNumber,
-    certUrl: certNumber ? `https://www.psacard.com/cert/${certNumber}/psa` : "",
-    certSpecId: "",
-    certCategory: titleCaseSetName(csvPlaceholderValue(raw, "category")),
-    certPopulation: "",
-    certPopulationHigher: "",
-    certEstimateCents: csvOptionalCents("", csvPlaceholderValue(raw, "psa_estimate")),
-    certLookupAt: "",
-    purchasePriceCents: csvOptionalCents("", csvPlaceholderValue(raw, "my_cost")),
-    purchaseDate: normalizeCsvDate(csvPlaceholderValue(raw, "date_acquired")),
-    valueOverrideCents: csvOptionalCents("", csvPlaceholderValue(raw, "my_value")),
-    storageLocation: vaultStatus || "",
-    notes
-  };
-  const errors = validateCsvImportPayload(payload, raw, record.cells.length > Object.keys(raw).length);
-
-  return {
-    id: createClientId(),
-    lineNumber: record.lineNumber,
-    raw,
-    payload,
-    errors,
-    status: errors.length > 0 ? "error" : "ready"
-  };
-}
-
-function isPsaVaultCsvRow(raw: Record<string, string>) {
-  return Boolean(
-    raw.item_status !== undefined &&
-      raw.cert_number !== undefined &&
-      raw.grade_issuer !== undefined &&
-      raw.psa_estimate !== undefined &&
-      raw.vault_status !== undefined
-  );
-}
-
-function validateCsvImportPayload(
-  payload: CreateInventoryItemRequest,
-  raw: Record<string, string>,
-  hasExtraCells: boolean
-) {
-  const errors: string[] = [];
-  const rawLanguage = csvValue(raw, "language", "lang").toLowerCase();
-  const rawItemType = csvValue(raw, "item_type", "type").toLowerCase();
-  const rawQuantity = csvValue(raw, "quantity", "qty");
-
-  if (hasExtraCells) {
-    errors.push("Row has more values than the header row.");
-  }
-
-  if (!payload.name.trim() || payload.name.trim().length < 2) {
-    errors.push("Card name must be at least 2 characters.");
-  }
-
-  if (
-    rawLanguage &&
-    !["en", "english", "ja", "japanese", "other"].includes(rawLanguage)
-  ) {
-    errors.push("Language must be en, ja, or other.");
-  }
-
-  if (rawItemType && !["raw", "graded"].includes(rawItemType)) {
-    errors.push("Item type must be raw or graded.");
-  }
-
-  if (
-    (rawQuantity && !Number.isInteger(Number(rawQuantity))) ||
-    !Number.isInteger(payload.quantity) ||
-    payload.quantity < 1 ||
-    payload.quantity > 999
-  ) {
-    errors.push("Quantity must be between 1 and 999.");
-  }
-
-  if (
-    payload.conditionScore !== undefined &&
-    (!Number.isFinite(payload.conditionScore) ||
-      payload.conditionScore < 1 ||
-      payload.conditionScore > 10)
-  ) {
-    errors.push("Condition score must be between 1 and 10.");
-  }
-
-  if (payload.itemType === "graded" && !payload.grader?.trim()) {
-    errors.push("Graded rows need a grader.");
-  }
-
-  if (!isValidOptionalCents(payload.purchasePriceCents)) {
-    errors.push("Purchase price must be a positive amount.");
-  }
-
-  if (!isValidOptionalCents(payload.valueOverrideCents)) {
-    errors.push("Value override must be a positive amount.");
-  }
-
-  if (!isValidOptionalCents(payload.certEstimateCents)) {
-    errors.push("Cert estimate must be a positive amount.");
-  }
-
-  return errors;
-}
-
-function parseCsvRecords(value: string) {
-  const records: Array<{ cells: string[]; lineNumber: number }> = [];
-  let cells: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-  let lineNumber = 1;
-  let rowLineNumber = 1;
-
-  for (let index = 0; index < value.length; index += 1) {
-    const char = value[index];
-    const next = value[index + 1];
-
-    if (inQuotes) {
-      if (char === '"' && next === '"') {
-        cell += '"';
-        index += 1;
-      } else if (char === '"') {
-        inQuotes = false;
-      } else {
-        cell += char;
-
-        if (char === "\n") {
-          lineNumber += 1;
-        }
-      }
-
-      continue;
-    }
-
-    if (char === '"' && cell.length === 0) {
-      inQuotes = true;
-      continue;
-    }
-
-    if (char === ",") {
-      cells.push(cell);
-      cell = "";
-      continue;
-    }
-
-    if (char === "\n" || char === "\r") {
-      cells.push(cell);
-      records.push({ cells, lineNumber: rowLineNumber });
-      cells = [];
-      cell = "";
-
-      if (char === "\r" && next === "\n") {
-        index += 1;
-      }
-
-      lineNumber += 1;
-      rowLineNumber = lineNumber;
-      continue;
-    }
-
-    cell += char;
-  }
-
-  if (inQuotes) {
-    throw new Error("CSV has an unclosed quoted field.");
-  }
-
-  if (cell.length > 0 || cells.length > 0) {
-    cells.push(cell);
-    records.push({ cells, lineNumber: rowLineNumber });
-  }
-
-  return records;
-}
-
-function summarizeCsvImportRows(rows: CsvImportPreviewRow[]) {
-  return rows.reduce(
-    (summary, row) => {
-      summary[row.status] += 1;
-      return summary;
-    },
-    {
-      ready: 0,
-      error: 0,
-      adding: 0,
-      added: 0,
-      skipped: 0
-    }
-  );
-}
-
-function csvValue(raw: Record<string, string>, ...keys: string[]) {
-  for (const key of keys) {
-    const value = raw[normalizeCsvHeader(key)];
-
-    if (value) {
-      return value.trim();
-    }
-  }
-
-  return "";
-}
-
-function csvPlaceholderValue(raw: Record<string, string>, ...keys: string[]) {
-  const value = csvValue(raw, ...keys);
-  return value === "-" ? "" : value;
-}
-
-function normalizeCsvHeader(value: string) {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-function csvLanguage(value: string): CardLanguage {
-  const language = value.trim().toLowerCase();
-
-  if (language === "ja" || language === "japanese") {
-    return "ja";
-  }
-
-  if (language === "other") {
-    return "other";
-  }
-
-  return "en";
-}
-
-function csvItemType(value: string): InventoryItemType {
-  return value.trim().toLowerCase() === "graded" ? "graded" : "raw";
-}
-
-function csvInteger(value: string, fallback: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) ? parsed : fallback;
-}
-
-function csvOptionalNumber(value: string) {
-  if (!value.trim()) {
-    return undefined;
-  }
-
-  return Number(value);
-}
-
-function csvOptionalCents(centsValue: string, moneyValue = "") {
-  if (centsValue.trim()) {
-    return Number(centsValue);
-  }
-
-  if (!moneyValue.trim()) {
-    return undefined;
-  }
-
-  return Math.round(Number(moneyValue.replace(/[$,]/g, "")) * 100);
-}
-
-function isValidOptionalCents(value: number | undefined) {
-  return value === undefined || (Number.isInteger(value) && value >= 0);
-}
-
-function normalizeCsvDate(value: string) {
-  const trimmed = value.trim();
-
-  if (!trimmed) {
-    return "";
-  }
-
-  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(trimmed);
-
-  if (!match) {
-    return trimmed;
-  }
-
-  const [, month, day, year] = match;
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
-}
-
-function psaVaultLanguage(setName: string, itemDescription: string): CardLanguage {
-  const text = `${setName} ${itemDescription}`.toLowerCase();
-  return text.includes("japanese") ? "ja" : "en";
-}
-
-function normalizePsaVaultSetName(value: string) {
-  const rawName = value.replace(/\s+/g, " ").trim();
-  const normalized = normalizeText(rawName);
-  const explicitNames: Record<string, string> = {
-    "pokemon jtg en-journey together": "Journey Together",
-    "pokemon mew en-151": "151",
-    "pokemon pre en-prismatic evolutions": "Prismatic Evolutions",
-    "pokemon pop series 2": "POP Series 2",
-    "pokemon rocket": "Team Rocket",
-    "pokemon sun & moon forbidden light": "Forbidden Light",
-    "pokemon japanese m1l-mega brave": "Mega Brave (M1L)",
-    "pokemon japanese m2a-mega dream ex": "Mega Dream ex (M2a)",
-    "pokemon japanese sv-p promo": "SV-P Promotional Cards",
-    "pokemon japanese s promo": "S Promotional Cards",
-    "pokemon japanese promo": "Japanese Promo",
-    "pokemon japanese e-starter deck": "Japanese E-Starter Deck",
-    "pokemon japanese vending": "Japanese Vending",
-    "pokemon japanese neo 4": "Japanese Neo 4"
-  };
-
-  if (explicitNames[normalized]) {
-    return explicitNames[normalized];
-  }
-
-  const japaneseCodeMatch = /^pokemon japanese ([a-z0-9]+)-(.+)$/i.exec(rawName);
-
-  if (japaneseCodeMatch) {
-    return `${titleCaseSetName(japaneseCodeMatch[2])} (${japaneseCodeMatch[1].toUpperCase()})`;
-  }
-
-  const englishCodeMatch = /^pokemon [a-z0-9]+ en-(.+)$/i.exec(rawName);
-
-  if (englishCodeMatch) {
-    return titleCaseSetName(englishCodeMatch[1]);
-  }
-
-  return titleCaseSetName(rawName.replace(/^pokemon\s+/i, ""));
-}
-
-function setCodeFromPsaVaultSet(setName: string) {
-  const ignored = new Set(["POKEMON", "JAPANESE", "PROMO"]);
-  const match = setName
-    .toUpperCase()
-    .match(/\b[A-Z]{1,5}\d{0,3}[A-Z]?(?:-[A-Z0-9]+)?\b/g)
-    ?.find((token) => !ignored.has(token));
-
-  if (!match) {
-    return "";
-  }
-
-  const normalized = /^(SV\d+|M\d[A-Z])/i.exec(match)?.[0] ?? match;
-  return normalized;
-}
-
-function nameFromPsaVaultItem(itemDescription: string) {
-  const hashIndex = itemDescription.indexOf("#");
-
-  if (hashIndex === -1) {
-    return itemDescription;
-  }
-
-  return itemDescription
-    .slice(hashIndex)
-    .replace(/^#\S+\s+/, "")
-    .replace(/\s+[A-Z0-9-]+(?:'S)?(?:\s+[A-Z0-9-]+)*$/, "")
-    .trim();
-}
-
-function parsePsaVaultCardName(value: string) {
-  const rawName = value.replace(/\s+/g, " ").trim();
-  const slashParts = rawName.split(/\s*\/\s*/);
-  const variants: string[] = [];
-  let name = rawName;
-
-  if (slashParts.length >= 2 && isPsaVaultLeadingVariant(slashParts[0])) {
-    variants.push(slashParts[0]);
-    name = slashParts.slice(1).join("/");
-  }
-
-  const trailingVariant = psaVaultTrailingVariant(name);
-
-  if (trailingVariant) {
-    variants.push(trailingVariant.variant);
-    name = trailingVariant.name;
-  }
-
-  return {
-    name: titleCaseCardName(name),
-    variant: csvVariantDetails(...variants)
-  };
-}
-
-function isPsaVaultLeadingVariant(value: string) {
-  return [
-    "alternate art",
-    "full art",
-    "hyper rare",
-    "illustration rare",
-    "secret rare",
-    "special art",
-    "special illustration rare"
-  ].includes(normalizeText(value));
-}
-
-function psaVaultTrailingVariant(value: string) {
-  const match = /\s*[-–—]\s*(reverse holo|reverse foil|holo|foil)\s*$/i.exec(value);
-
-  if (!match || match.index === undefined) {
-    return null;
-  }
-
-  const name = value.slice(0, match.index).trim();
-  const variant = normalizeText(match[1]).includes("reverse") ? "Reverse Holo" : "Holo / Foil";
-
-  return name ? { name, variant } : null;
-}
-
-function csvVariantDetails(...values: string[]) {
-  return uniqueNonEmptyStrings(values.map(titleCaseVariant)).join(", ");
-}
-
-function psaVaultVariantDetails(variety: string, parsedVariant: string, setName: string) {
-  return csvVariantDetails(...psaVaultVarietyParts(variety, setName), parsedVariant);
-}
-
-function psaVaultVarietyParts(value: string, setName: string) {
-  const normalizedSet = normalizeText(setName);
-  const setTokens = normalizedSet
-    .replace(/\([^)]*\)/g, " ")
-    .split(" ")
-    .filter((token) => token.length > 1);
-
-  return value
-    .split(/\s*-\s*/)
-    .map((part) => normalizePsaVaultVarietyPart(part))
-    .filter((part) => {
-      const normalizedPart = normalizeText(part);
-
-      return (
-        normalizedPart &&
-        normalizedPart !== normalizedSet &&
-        !(setTokens.length > 0 && setTokens.every((token) => normalizedPart.includes(token)))
-      );
-    });
-}
-
-function normalizePsaVaultVarietyPart(value: string) {
-  const normalized = normalizeText(value);
-  const known: Record<string, string> = {
-    "f.a.": "Full Art",
-    "fa": "Full Art",
-    "full art": "Full Art",
-    "illustration rare": "Illustration Rare",
-    "special illustration rare": "Special Illustration Rare",
-    "special art rare": "Special Art Rare",
-    "mega attack rare": "Mega Attack Rare",
-    "art rare": "Art Rare",
-    "toys r us": "Toys R Us",
-    "mcdonald's": "McDonald's",
-    "hif elite trainer box": "Elite Trainer Box"
-  };
-
-  return known[normalized] ?? titleCaseVariant(value);
-}
-
-function titleCaseSetName(value: string) {
-  return titleCaseWords(value.replace(/\s+/g, " ").trim());
-}
-
-function titleCaseCardName(value: string) {
-  return titleCaseWords(
-    value
-      .replace(/\s+-\s+\S+\/\S+\s*$/i, "")
-      .replace(/\s*-\s*(ex|gx|v|vmax|vstar)\b/gi, " $1")
-      .replace(/\s*-\s*/g, "-")
-      .replace(/\s+/g, " ")
-      .trim()
-  );
-}
-
-function titleCaseVariant(value: string) {
-  return titleCaseWords(value.replace(/\s+/g, " ").trim());
-}
-
-function titleCaseWords(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/\b([a-z])/g, (letter) => letter.toUpperCase())
-    .replace(/\b(Gx|Ex|Vmax|Vstar|V|Lv|Pc|Xy|Sv|Dp|Mcdonald'S)\b/g, (word) =>
-      word === "Mcdonald'S" ? "McDonald's" : word.toUpperCase()
-    )
-    .replace(/'S\b/g, "'s")
-    .replace(/-([a-z])/g, (_, letter: string) => `-${letter.toUpperCase()}`);
-}
 
 function filtersFromInventoryTag(filter: InventoryTagFilter): InventoryFilterState {
   if (filter.type === "itemType") {

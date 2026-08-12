@@ -355,6 +355,16 @@ small {
   font-weight: 700;
 }
 
+.form-success {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(22, 163, 74, 0.3);
+  border-radius: 8px;
+  color: #166534;
+  background: #f0fdf4;
+  font-weight: 800;
+}
+
 .pulse {
   width: 10px;
   height: 10px;
@@ -2487,6 +2497,7 @@ small {
 
 .bulk-input-grid textarea,
 .bulk-input-grid input,
+.bulk-file-box select,
 .bulk-select select {
   width: 100%;
   min-height: 44px;
@@ -2495,6 +2506,19 @@ small {
   padding: 0 12px;
   color: var(--ink);
   background: var(--panel-strong);
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.checkbox-field input {
+  width: 18px;
+  height: 18px;
 }
 
 .bulk-input-grid textarea {

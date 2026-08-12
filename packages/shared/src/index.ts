@@ -437,6 +437,63 @@ export type UpdateInventoryItemImageRequest = {
   imageUrl: string;
 };
 
+export type CsvImportDuplicatePolicy = "skip" | "merge" | "separate";
+
+export type CsvImportJobStatus =
+  | "queued"
+  | "validating"
+  | "ready"
+  | "committing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type CsvImportJobIssue = {
+  lineNumber: number;
+  name: string;
+  disposition: "invalid" | "skipped";
+  messages: string[];
+};
+
+export type CsvImportJobResponse = {
+  id: string;
+  collectionId: string;
+  status: CsvImportJobStatus;
+  duplicatePolicy: CsvImportDuplicatePolicy;
+  progress: {
+    processedRows: number;
+    totalRows: number;
+  };
+  summary: {
+    totalRows: number;
+    commitRows: number;
+    insertRows: number;
+    mergeRows: number;
+    invalidRows: number;
+    skippedRows: number;
+    excludedRows: number;
+  };
+  issues: CsvImportJobIssue[];
+  issuesTruncated: boolean;
+  planHash: string | null;
+  requiresExclusionAcknowledgement: boolean;
+  cancellationRequested: boolean;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type CreateCsvImportJobRequest = {
+  csvText: string;
+  duplicatePolicy: CsvImportDuplicatePolicy;
+};
+
+export type CommitCsvImportJobRequest = {
+  planHash: string;
+  acknowledgeExclusions: boolean;
+};
+
 export type BulkVariantEditMode = "set" | "add" | "remove";
 
 export type BulkUpdateInventoryVariantsRequest = {

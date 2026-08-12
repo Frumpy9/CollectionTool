@@ -37,6 +37,7 @@
 - [x] Added collection inventory CSV export.
 - [x] Added admin SQLite backup-now action under `data/backups`.
 - [x] Added CSV import preview for manual inventory rows.
+- [x] Replaced row-by-row CSV writes with server-side dry-runs and all-or-nothing atomic imports.
 - [x] Documented SQLite backup restore steps.
 - [x] Added scheduled SQLite backups with retention.
 - [x] Added legacy JustTCG raw-card pricing refresh and market-value storage.
@@ -154,6 +155,7 @@
 
 - [x] Add CSV export for inventory.
 - [x] Add CSV import for manual inventory.
+- [x] Preserve Pokemon Vault and PSA Vault formats with multiline CSV parsing, explicit duplicate policies, cancellation, stale-plan protection, and downloadable error reports.
 - [x] Add scheduled SQLite backups under `/data/backups`.
 - [x] Add admin “backup now” button.
 - [x] Document restore steps.

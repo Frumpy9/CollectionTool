@@ -12,7 +12,7 @@ Milestone 1 is focused on the working app shell:
 - SQLite foreign-key enforcement, WAL journaling, and admin integrity diagnostics
 - Local card image uploads stored outside git
 - Free card lookup through PokemonTCG.io and TCGdex
-- Inventory CSV export/import preview
+- Atomic inventory CSV export/import with dry-run validation and error reports
 - SQLite backup-now and scheduled backup flow under `data/backups`
 - Interactive saved-price charts and immutable collection-value history with date ranges and point inspection
 - Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
@@ -84,6 +84,23 @@ Uploaded card images are stored in the same volume under `/data/uploads`. Do not
 Use the in-app backup button before large imports or cleanup sessions. Local backups are written under `data/backups`; Docker backups are written under `/data/backups`.
 
 Restore steps are documented in [docs/backup-restore.md](docs/backup-restore.md).
+
+## Atomic CSV Imports
+
+The Data workspace accepts Pokemon Vault inventory exports, compatible named columns, and PSA
+Vault collection exports. Previewing runs on the API and does not change inventory. The preview
+states exactly how many rows will commit and how many invalid or duplicate rows are excluded. You
+must acknowledge exclusions before committing, and exact duplicates require an explicit skip,
+merge-quantity, or separate-row policy. Cert numbers are always deduplicated.
+
+Accepted rows commit in one SQLite transaction, so an interruption or row failure cannot leave a
+partial import. Inventory changes after preview invalidate the plan and require a new preview. A
+successful import records one collection-value snapshot for the whole job; dry-runs, cancellations,
+and failed jobs record none. Validation progress can be cancelled, and failed/excluded rows can be
+downloaded as a spreadsheet-safe CSV error report. Imports are limited to 5 MB, 5,000 data rows,
+and 128 columns. Jobs are temporary, creator-only, and expire after one hour.
+They are held in API memory rather than the database, so an API restart discards unfinished previews;
+upload the CSV again to create a fresh plan after a restart.
 
 ## Database Reliability
 

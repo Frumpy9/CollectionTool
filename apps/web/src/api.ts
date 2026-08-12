@@ -28,6 +28,9 @@ import type {
   DatabaseIntegrityResponse,
   CreateInventoryItemRequest,
   CreateCollectionTransactionRequest,
+  CreateCsvImportJobRequest,
+  CsvImportJobResponse,
+  CommitCsvImportJobRequest,
   InventoryItem,
   InventoryListResponse,
   MarketPriceSnapshotsResponse,
@@ -274,6 +277,29 @@ export const api = {
     ),
   exportInventoryCsv: (collectionId: string) =>
     requestBlob(`/api/collections/${collectionId}/items/export.csv`),
+  createCsvImportJob: (collectionId: string, payload: CreateCsvImportJobRequest) =>
+    request<CsvImportJobResponse>(`/api/collections/${collectionId}/csv-imports`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  getCsvImportJob: (collectionId: string, jobId: string) =>
+    request<CsvImportJobResponse>(`/api/collections/${collectionId}/csv-imports/${jobId}`),
+  commitCsvImportJob: (
+    collectionId: string,
+    jobId: string,
+    payload: CommitCsvImportJobRequest
+  ) =>
+    request<CsvImportJobResponse>(
+      `/api/collections/${collectionId}/csv-imports/${jobId}/commit`,
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+  cancelCsvImportJob: (collectionId: string, jobId: string) =>
+    request<CsvImportJobResponse>(
+      `/api/collections/${collectionId}/csv-imports/${jobId}/cancel`,
+      { method: "POST", body: JSON.stringify({}) }
+    ),
+  downloadCsvImportErrors: (collectionId: string, jobId: string) =>
+    requestBlob(`/api/collections/${collectionId}/csv-imports/${jobId}/errors.csv`),
   createSqliteBackup: (collectionId: string) =>
     request<BackupSqliteResponse>(`/api/collections/${collectionId}/backups/sqlite`, {
       method: "POST",
