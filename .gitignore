@@ -30,3 +30,6 @@ cached-images/
 .DS_Store
 .idea/
 .vscode/
+
+# Local planning
+IDEAS.md
