@@ -4,6 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
+import type { PricingCandidate } from "@collection-tool/shared";
 import type { AppConfig } from "../config.js";
 import { createApp } from "../app.js";
 import {
@@ -12,6 +13,7 @@ import {
   runDatabaseIntegrityDiagnostics,
   type AppDatabase
 } from "../db.js";
+import { saveOpenPricingReview } from "../pricingReviews.js";
 
 type TestServer = {
   app: FastifyInstance;
@@ -386,6 +388,541 @@ test("inventory creation persists PokemonPriceTracker pricing source hints", asy
   }
 });
 
+test("pricing review shows disagreements and pins only the persisted server candidate", async () => {
+  const server = await createTestServer();
+  try {
+    const { user, collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        conditionLabel: "Near Mint",
+        variantDetails: "Unlimited",
+        purchasePriceCents: 1_000,
+        valueOverrideCents: 4_000
+      }
+    });
+    assert.equal(createResponse.statusCode, 201);
+    const itemId = createResponse.json().item.id;
+    const persisted = {
+      ...pricingCandidate(2_500).candidate,
+      matchedSetName: "Jungle",
+      matchedCardNumber: "60",
+      printing: "1st Edition",
+      language: "Japanese",
+      rawPayload: { secretProviderPayload: true }
+    };
+    saveOpenPricingReview(
+      server.database,
+      itemId,
+      [persisted as PricingCandidate],
+      "Choose the best pricing match."
+    );
+    const persistedJson = server.database.connection
+      .prepare(
+        "SELECT candidates_json FROM item_price_match_reviews WHERE owned_item_id = ?"
+      )
+      .get(itemId)!.candidates_json as string;
+    assert.equal(persistedJson.includes("rawPayload"), false);
+    assert.equal(persistedJson.includes("secretProviderPayload"), false);
+
+    const listResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/pricing/reviews`,
+      headers: { cookie }
+    });
+    assert.equal(listResponse.statusCode, 200);
+    const review = listResponse.json().reviews[0];
+    assert.equal(review.status, "needs-review");
+    assert.equal(review.candidates.length, 1);
+    assert.equal("rawPayload" in review.candidates[0], false);
+    assert.deepEqual(
+      review.candidates[0].comparisons.map(
+        (comparison: { field: string; status: string }) => [comparison.field, comparison.status]
+      ),
+      [
+        ["set", "disagreement"],
+        ["card-number", "disagreement"],
+        ["variant", "disagreement"],
+        ["language", "disagreement"],
+        ["condition", "match"]
+      ]
+    );
+
+    const selectResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+      headers: { cookie },
+      payload: {
+        sourceCardId: persisted.sourceCardId,
+        sourceVariantId: persisted.sourceVariantId,
+        candidate: { ...persisted, priceCents: 999_999 }
+      }
+    });
+    assert.equal(selectResponse.statusCode, 200);
+    assert.equal(selectResponse.json().item.marketPriceCents, 2_500);
+    assert.equal(
+      selectResponse.json().item.valueOverrideCents,
+      4_000,
+      "manual override still wins over the newly saved market price"
+    );
+    assert.equal(selectResponse.json().reviews.summary.pinned, 1);
+
+    const sourceMatch = server.database.connection
+      .prepare(
+        `
+          SELECT match_kind, is_pinned, confirmed_by_user_id, confirmed_at
+          FROM item_price_source_matches
+          WHERE owned_item_id = ? AND source = 'pokemonpricetracker'
+        `
+      )
+      .get(itemId) as {
+      match_kind: string;
+      is_pinned: number;
+      confirmed_by_user_id: string | null;
+      confirmed_at: string | null;
+    };
+    assert.equal(sourceMatch.match_kind, "manual");
+    assert.equal(sourceMatch.is_pinned, 1);
+    assert.equal(sourceMatch.confirmed_by_user_id, user.id);
+    assert.ok(sourceMatch.confirmed_at);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("migration 21 backfills existing manual source matches as durable pins", async () => {
+  const server = await createTestServer();
+  let reopened: AppDatabase | null = null;
+  let appClosed = false;
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Mewtwo",
+        setName: "Base Set",
+        cardNumber: "10",
+        language: "en",
+        itemType: "raw",
+        quantity: 1
+      }
+    });
+    const itemId = createResponse.json().item.id;
+    server.database.connection
+      .prepare(
+        `
+          INSERT INTO item_price_source_matches (
+            owned_item_id, source, source_card_id, source_variant_id,
+            match_kind, confidence, is_pinned, confirmed_at
+          ) VALUES (?, 'pokemonpricetracker', 'mewtwo-10', 'near-mint',
+            'manual', 'strong', 0, NULL)
+        `
+      )
+      .run(itemId);
+
+    server.database.connection.exec(`
+      DROP TABLE item_price_match_reviews;
+      ALTER TABLE item_price_source_matches DROP COLUMN confirmed_at;
+      ALTER TABLE item_price_source_matches DROP COLUMN confirmed_by_user_id;
+      ALTER TABLE item_price_source_matches DROP COLUMN is_pinned;
+      DELETE FROM schema_migrations WHERE id = 21;
+      UPDATE app_metadata SET value = '20' WHERE key = 'schema_version';
+    `);
+    await server.app.close();
+    appClosed = true;
+
+    reopened = openDatabase(server.database.path);
+    assert.equal(reopened.migrationsApplied, 1);
+    const migrated = reopened.connection
+      .prepare(
+        `
+          SELECT match_kind, is_pinned, confirmed_at
+          FROM item_price_source_matches WHERE owned_item_id = ?
+        `
+      )
+      .get(itemId) as { match_kind: string; is_pinned: number; confirmed_at: string | null };
+    assert.equal(migrated.match_kind, "manual");
+    assert.equal(migrated.is_pinned, 1);
+    assert.ok(migrated.confirmed_at);
+    assert.ok(
+      reopened.connection
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'item_price_match_reviews'"
+        )
+        .get()
+    );
+  } finally {
+    reopened?.connection.close();
+    if (!appClosed) await server.app.close();
+    rmSync(server.root, { recursive: true, force: true });
+  }
+});
+
+test("pricing reviews are viewer-readable but viewer mutations are forbidden", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie: adminCookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie: adminCookie },
+      payload: {
+        name: "Eevee",
+        setName: "Jungle",
+        cardNumber: "51",
+        language: "en",
+        itemType: "raw",
+        quantity: 1
+      }
+    });
+    const itemId = createResponse.json().item.id;
+    persistPricingReview(server.database, itemId, [
+      { ...pricingCandidate(900).candidate, matchedName: "Eevee", matchedSetName: "Jungle" }
+    ]);
+
+    const viewer = await createAdminUser(server.app, adminCookie, {
+      email: "pricing-viewer@example.test",
+      username: "pricing-viewer",
+      displayName: "Pricing Viewer",
+      password: "pricing-viewer-password",
+      systemRole: "user"
+    });
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "POST",
+          url: `/api/collections/${collectionId}/members`,
+          headers: { cookie: adminCookie },
+          payload: { userId: viewer.id, role: "viewer" }
+        })
+      ).statusCode,
+      200
+    );
+    const viewerLogin = await login(
+      server.app,
+      "pricing-viewer",
+      "pricing-viewer-password"
+    );
+
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "GET",
+          url: `/api/collections/${collectionId}/pricing/reviews`,
+          headers: { cookie: viewerLogin.cookie }
+        })
+      ).statusCode,
+      200
+    );
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "POST",
+          url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+          headers: { cookie: viewerLogin.cookie },
+          payload: { sourceCardId: "base-pikachu-58", sourceVariantId: "near-mint" }
+        })
+      ).statusCode,
+      403
+    );
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("pricing review rejects raw guide prices for graded inventory", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Charizard",
+        setName: "Base Set",
+        cardNumber: "4",
+        language: "en",
+        itemType: "graded",
+        quantity: 1,
+        grader: "PSA",
+        grade: "10"
+      }
+    });
+    const itemId = createResponse.json().item.id;
+    const rawCandidate = pricingCandidate(100_000).candidate;
+    persistPricingReview(server.database, itemId, [rawCandidate]);
+
+    const response = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+      headers: { cookie },
+      payload: {
+        sourceCardId: rawCandidate.sourceCardId,
+        sourceVariantId: rawCandidate.sourceVariantId
+      }
+    });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.json().error, /raw guide prices cannot be applied to graded cards/i);
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT COUNT(*) AS count FROM item_market_prices WHERE owned_item_id = ?")
+        .get(itemId)!.count,
+      0
+    );
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("pricing identity edits invalidate pins and reopen a stale review", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const basePayload = {
+      name: "Pikachu",
+      setName: "Base Set",
+      setCode: "BS",
+      cardNumber: "58",
+      language: "en",
+      itemType: "raw",
+      quantity: 1,
+      conditionLabel: "Near Mint",
+      conditionScore: 9,
+      variantDetails: "Unlimited"
+    };
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: basePayload
+    });
+    const itemId = createResponse.json().item.id;
+    const unpricedEditResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: { ...basePayload, conditionScore: 9.5 }
+    });
+    assert.equal(unpricedEditResponse.statusCode, 200);
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT COUNT(*) AS count FROM item_price_match_reviews WHERE owned_item_id = ?")
+        .get(itemId)!.count,
+      0,
+      "editing an unpriced card should not create review noise"
+    );
+    const candidate = pricingCandidate(2_500).candidate;
+    persistPricingReview(server.database, itemId, [candidate]);
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "POST",
+          url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+          headers: { cookie },
+          payload: {
+            sourceCardId: candidate.sourceCardId,
+            sourceVariantId: candidate.sourceVariantId
+          }
+        })
+      ).statusCode,
+      200
+    );
+
+    const updateResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: { ...basePayload, conditionScore: 8 }
+    });
+    assert.equal(updateResponse.statusCode, 200);
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT COUNT(*) AS count FROM item_price_source_matches WHERE owned_item_id = ?")
+        .get(itemId)!.count,
+      0
+    );
+    const review = server.database.connection
+      .prepare(
+        "SELECT status, message, candidates_json FROM item_price_match_reviews WHERE owned_item_id = ?"
+      )
+      .get(itemId) as { status: string; message: string; candidates_json: string };
+    assert.equal(review.status, "open");
+    assert.match(review.message, /card details changed/i);
+    assert.equal(review.candidates_json, "[]");
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("ordinary price refresh honors a pinned source and keeps it manually confirmed", async () => {
+  const server = await createTestServer({ pokemonPriceTrackerApiKey: "test-pricing-key" });
+  const originalFetch = globalThis.fetch;
+  try {
+    const { user, collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        conditionLabel: "Near Mint"
+      }
+    });
+    const itemId = createResponse.json().item.id;
+    const initial = pricingCandidate(2_500).candidate;
+    persistPricingReview(server.database, itemId, [initial]);
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "POST",
+          url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+          headers: { cookie },
+          payload: {
+            sourceCardId: initial.sourceCardId,
+            sourceVariantId: initial.sourceVariantId
+          }
+        })
+      ).statusCode,
+      200
+    );
+
+    let pinnedSourceAvailable = true;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      assert.match(url, /tcgPlayerId=base-pikachu-58|search=Pikachu/);
+      return new Response(
+        JSON.stringify(
+          pinnedSourceAvailable
+            ? {
+                data: [
+                  {
+                    id: initial.sourceCardId,
+                    name: "Pikachu",
+                    setName: "Base Set",
+                    setCode: "BS",
+                    cardNumber: "58",
+                    language: "english",
+                    prices: {
+                      "near-mint": {
+                        marketPrice: 30,
+                        printing: "Near Mint",
+                        salesCount: 7
+                      }
+                    }
+                  }
+                ]
+              }
+            : { data: [] }
+        ),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    const refreshResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/${itemId}/pricing/refresh`,
+      headers: { cookie },
+      payload: {}
+    });
+    assert.equal(refreshResponse.statusCode, 200);
+    assert.equal(refreshResponse.json().status, "saved");
+    assert.equal(refreshResponse.json().item.marketPriceCents, 3_000);
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT language FROM item_market_prices WHERE owned_item_id = ?")
+        .get(itemId)!.language,
+      "English"
+    );
+
+    const sourceMatch = server.database.connection
+      .prepare(
+        `
+          SELECT source_card_id, source_variant_id, match_kind, is_pinned, confirmed_by_user_id
+          FROM item_price_source_matches WHERE owned_item_id = ?
+        `
+      )
+      .get(itemId) as {
+      source_card_id: string;
+      source_variant_id: string;
+      match_kind: string;
+      is_pinned: number;
+      confirmed_by_user_id: string | null;
+    };
+    assert.deepEqual({ ...sourceMatch }, {
+      source_card_id: initial.sourceCardId,
+      source_variant_id: initial.sourceVariantId,
+      match_kind: "manual",
+      is_pinned: 1,
+      confirmed_by_user_id: user.id
+    });
+
+    pinnedSourceAvailable = false;
+    const unavailableResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/${itemId}/pricing/refresh`,
+      headers: { cookie },
+      payload: {}
+    });
+    assert.equal(unavailableResponse.statusCode, 200);
+    assert.equal(unavailableResponse.json().status, "needs-review");
+    assert.match(unavailableResponse.json().message, /pinned source match is unavailable/i);
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT price_cents FROM item_market_prices WHERE owned_item_id = ?")
+        .get(itemId)!.price_cents,
+      3_000,
+      "an unavailable pin must not replace the last saved price"
+    );
+    assert.equal(
+      server.database.connection
+        .prepare("SELECT is_pinned FROM item_price_source_matches WHERE owned_item_id = ?")
+        .get(itemId)!.is_pinned,
+      1
+    );
+    const unavailableReviews = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/pricing/reviews`,
+      headers: { cookie }
+    });
+    assert.deepEqual(unavailableReviews.json().summary, { needsReview: 1, pinned: 1 });
+
+    const unpinResponse = await server.app.inject({
+      method: "DELETE",
+      url: `/api/collections/${collectionId}/pricing/reviews/${itemId}/pin`,
+      headers: { cookie }
+    });
+    assert.equal(unpinResponse.statusCode, 200);
+    assert.equal(unpinResponse.json().reviews.summary.pinned, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await closeTestServer(server);
+  }
+});
+
 test("collection summaries use the same value precedence as inventory totals", async () => {
   const server = await createTestServer();
   try {
@@ -732,13 +1269,16 @@ test("market price saves and bulk valuation changes append history without dupli
 
     assert.equal(createResponse.statusCode, 201);
     const itemId = createResponse.json().item.id;
-    const selectPrice = (priceCents: number) =>
-      server.app.inject({
+    const selectPrice = (priceCents: number) => {
+      const payload = pricingCandidate(priceCents);
+      persistPricingReview(server.database, itemId, [payload.candidate]);
+      return server.app.inject({
         method: "POST",
         url: `/api/collections/${collectionId}/items/${itemId}/pricing/select`,
         headers: { cookie },
-        payload: pricingCandidate(priceCents)
+        payload
       });
+    };
 
     assert.equal((await selectPrice(2_500)).statusCode, 200);
     let history = await getCollectionValueHistory(server.app, collectionId, cookie);
@@ -875,11 +1415,11 @@ test("bulk storage location updates selected inventory rows", async () => {
   }
 });
 
-async function createTestServer(): Promise<TestServer> {
+async function createTestServer(configOverrides: Partial<AppConfig> = {}): Promise<TestServer> {
   const root = mkdtempSync(join(tmpdir(), "collection-tool-api-"));
   const databasePath = join(root, "collection.sqlite");
   const database = openDatabase(databasePath);
-  const app = await createApp(testConfig(root, databasePath), database);
+  const app = await createApp({ ...testConfig(root, databasePath), ...configOverrides }, database);
 
   return { app, database, root };
 }
@@ -953,6 +1493,31 @@ function pricingCandidate(priceCents: number) {
     source: candidate.source,
     candidate
   };
+}
+
+function persistPricingReview(
+  database: AppDatabase,
+  itemId: string,
+  candidates: unknown[],
+  message = "Choose the best pricing match."
+) {
+  database.connection
+    .prepare(
+      `
+        INSERT INTO item_price_match_reviews (
+          owned_item_id, source, status, message, candidates_json, created_at, updated_at
+        )
+        VALUES (?, 'pokemonpricetracker', 'open', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(owned_item_id, source) DO UPDATE SET
+          status = 'open',
+          message = excluded.message,
+          candidates_json = excluded.candidates_json,
+          updated_at = CURRENT_TIMESTAMP,
+          resolved_at = NULL,
+          resolved_by_user_id = NULL
+      `
+    )
+    .run(itemId, message, JSON.stringify(candidates));
 }
 
 async function closeTestServer(server: TestServer) {

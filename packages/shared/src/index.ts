@@ -523,14 +523,63 @@ export type RefreshPricingResponse = {
 export type SelectPokemonPriceTrackerPricingRequest = {
   sourceCardId: string;
   sourceVariantId: string;
-  candidate?: PokemonPriceTrackerPricingCandidate;
 };
 
 export type SelectPricingRequest = {
   sourceCardId: string;
   sourceVariantId: string;
   source?: InventoryMarketPriceSource;
-  candidate?: PricingCandidate;
+};
+
+export type PricingReviewComparisonField =
+  | "set"
+  | "card-number"
+  | "variant"
+  | "language"
+  | "condition";
+
+export type PricingReviewComparison = {
+  field: PricingReviewComparisonField;
+  inventoryValue: string | null;
+  candidateValue: string | null;
+  status: "match" | "disagreement" | "unknown";
+};
+
+export type PricingReviewCandidate = PricingCandidate & {
+  comparisons: PricingReviewComparison[];
+  isPinned: boolean;
+};
+
+export type PricingReviewEntry = {
+  item: InventoryItem;
+  source: "pokemonpricetracker";
+  status: "needs-review" | "pinned";
+  isPinned: boolean;
+  message: string;
+  candidates: PricingReviewCandidate[];
+  pinnedSourceCardId: string | null;
+  pinnedSourceVariantId: string | null;
+  updatedAt: string;
+};
+
+export type PricingReviewsResponse = {
+  reviews: PricingReviewEntry[];
+  summary: {
+    needsReview: number;
+    pinned: number;
+  };
+  message: string;
+};
+
+export type SelectPricingReviewRequest = {
+  sourceCardId: string;
+  sourceVariantId: string;
+};
+
+export type PricingReviewMutationResponse = {
+  item: InventoryItem;
+  reviews: PricingReviewsResponse;
+  message: string;
 };
 
 export type PricingHistoryPoint = {

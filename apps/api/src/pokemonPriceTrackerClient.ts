@@ -1447,7 +1447,7 @@ function rawCandidateFromCard(
       matchedCardNumber: normalizedDisplayCardNumber(card),
       condition: item.conditionLabel,
       printing: rawPrice.printing ?? printingLabel(card, item),
-      language: item.card.language,
+      language: pricingCandidateLanguage(card, item),
       priceCents: rawPrice.priceCents,
       currency: "USD",
       confidence: confidenceFromScore(score),
@@ -1506,7 +1506,7 @@ function gradedCandidateFromCard(
       matchedCardNumber: normalizedDisplayCardNumber(card),
       condition: `${grader} ${grade}`.trim() || gradeBucket.toUpperCase(),
       printing: printingLabel(card, item),
-      language: item.card.language,
+      language: pricingCandidateLanguage(card, item),
       priceCents,
       currency: "USD",
       confidence: confidenceFromScore(score),
@@ -2284,6 +2284,11 @@ function pokemonPriceTrackerLookupLanguage(
   return hasJapaneseText([card.name, card.setName, card.set].filter(Boolean).join(" "))
     ? "ja"
     : "en";
+}
+
+function pricingCandidateLanguage(card: PokemonPriceTrackerCard, item: InventoryItem) {
+  const language = pokemonPriceTrackerLookupLanguage(card, item.card.language);
+  return language === "ja" ? "Japanese" : language === "en" ? "English" : "Other";
 }
 
 function releaseYearFromPokemonPriceTrackerCard(card: PokemonPriceTrackerCard) {

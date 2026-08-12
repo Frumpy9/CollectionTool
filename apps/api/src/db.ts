@@ -696,6 +696,46 @@ const migrations: Migration[] = [
       SET value = '20', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 21,
+    name: "pricing_match_review_center",
+    sql: `
+      ALTER TABLE item_price_source_matches
+      ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));
+
+      ALTER TABLE item_price_source_matches
+      ADD COLUMN confirmed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+
+      ALTER TABLE item_price_source_matches
+      ADD COLUMN confirmed_at TEXT;
+
+      UPDATE item_price_source_matches
+      SET
+        is_pinned = 1,
+        confirmed_at = COALESCE(confirmed_at, updated_at)
+      WHERE match_kind = 'manual';
+
+      CREATE TABLE IF NOT EXISTS item_price_match_reviews (
+        owned_item_id TEXT NOT NULL REFERENCES owned_items(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('pokemonpricetracker')),
+        status TEXT NOT NULL CHECK (status IN ('open', 'resolved')) DEFAULT 'open',
+        message TEXT NOT NULL,
+        candidates_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TEXT,
+        resolved_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        PRIMARY KEY (owned_item_id, source)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_price_match_reviews_status
+      ON item_price_match_reviews(status, updated_at DESC);
+
+      UPDATE app_metadata
+      SET value = '21', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

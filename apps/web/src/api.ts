@@ -36,6 +36,8 @@ import type {
   PsaCertLookupRequest,
   PsaCertLookupResponse,
   PricingHistoryResponse,
+  PricingReviewMutationResponse,
+  PricingReviewsResponse,
   RefreshPokemonPriceTrackerPricingResponse,
   RefreshPricingResponse,
   SelectPokemonPriceTrackerPricingRequest,
@@ -202,6 +204,22 @@ export const api = {
     ),
   getBulkPriceQueue: (collectionId: string) =>
     request<BulkPriceQueueResponse>(`/api/collections/${collectionId}/pricing/bulk/queue`),
+  getPricingReviews: (collectionId: string) =>
+    request<PricingReviewsResponse>(`/api/collections/${collectionId}/pricing/reviews`),
+  selectPricingReview: (
+    collectionId: string,
+    itemId: string,
+    payload: { sourceCardId: string; sourceVariantId: string }
+  ) =>
+    request<PricingReviewMutationResponse>(
+      `/api/collections/${collectionId}/pricing/reviews/${itemId}/select`,
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+  unpinPricingReview: (collectionId: string, itemId: string) =>
+    request<PricingReviewMutationResponse>(
+      `/api/collections/${collectionId}/pricing/reviews/${itemId}/pin`,
+      { method: "DELETE", body: JSON.stringify({}) }
+    ),
   getCollectionValueHistory: (collectionId: string) =>
     request<CollectionValueHistoryResponse>(
       `/api/collections/${collectionId}/pricing/value-history`

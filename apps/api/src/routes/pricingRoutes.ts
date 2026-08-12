@@ -13,16 +13,26 @@ import type {
   MarketPriceSnapshotsResponse,
   PokemonPriceTrackerPricingCandidate,
   PricingCandidate,
+  PricingReviewMutationResponse,
+  PricingReviewsResponse,
   PricingHistoryPoint,
   PricingHistoryResponse,
-  SelectPokemonPriceTrackerPricingRequest,
-  SelectPricingRequest
+  SelectPricingRequest,
+  SelectPricingReviewRequest
 } from "@collection-tool/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
 import { recordCollectionValueSnapshotForItem } from "../collectionValueSnapshots.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import {
+  findPersistedReviewCandidate,
+  getPricingSourceMatch as getDurablePricingSourceMatch,
+  listPricingReviews,
+  resolvePricingReview,
+  saveOpenPricingReview,
+  unpinPricingSourceMatch
+} from "../pricingReviews.js";
 import {
   findPokemonPriceTrackerPricingCandidateByIds,
   lookupPokemonPriceTrackerImageCandidates,
@@ -36,12 +46,124 @@ import { listInventoryItems } from "./inventoryRoutes.js";
 
 const activeBulkPriceQueueCollections = new Set<string>();
 const bulkPriceQueueIntervalMs = 60 * 1000;
+type TrustedPricingCandidate = PokemonPriceTrackerPricingCandidate & { rawPayload: unknown };
 
 export async function registerPricingRoutes(
   app: FastifyInstance,
   config: AppConfig,
   database: AppDatabase
 ) {
+  app.get(
+    "/api/collections/:collectionId/pricing/reviews",
+    async (request, reply): Promise<PricingReviewsResponse | { error: string }> => {
+      const access = getCollectionPricingReadAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      return listPricingReviews(
+        database,
+        access.collectionId,
+        listInventoryItems(database, access.collectionId)
+      );
+    }
+  );
+
+  app.post(
+    "/api/collections/:collectionId/pricing/reviews/:itemId/select",
+    async (request, reply): Promise<PricingReviewMutationResponse | { error: string }> => {
+      const access = getPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const item = getInventoryItem(database, access.collectionId, access.itemId);
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      const input = request.body as SelectPricingReviewRequest;
+      const sourceCardId = input.sourceCardId?.trim();
+      const sourceVariantId = input.sourceVariantId?.trim();
+      if (!sourceCardId || !sourceVariantId) {
+        reply.code(400);
+        return { error: "Choose a persisted price candidate before saving." };
+      }
+
+      const publicCandidate = findPersistedReviewCandidate(
+        database,
+        item.id,
+        sourceCardId,
+        sourceVariantId
+      );
+      if (!publicCandidate) {
+        reply.code(404);
+        return { error: "That reviewed price candidate is no longer available." };
+      }
+      if (!pricingCandidateMatchesItemType(item, publicCandidate)) {
+        reply.code(400);
+        return { error: pricingCandidateTypeError(item) };
+      }
+
+      const candidate = trustedCandidateFromPersistedReview(publicCandidate);
+      saveMarketPrice(
+        database,
+        item.id,
+        "pokemonpricetracker",
+        candidate,
+        "manual",
+        access.userId
+      );
+      resolvePricingReview(database, item.id, access.userId);
+      const updatedItem = getInventoryItem(database, access.collectionId, item.id)!;
+
+      return {
+        item: updatedItem,
+        reviews: listPricingReviews(
+          database,
+          access.collectionId,
+          listInventoryItems(database, access.collectionId)
+        ),
+        message: "Pinned the confirmed pricing match. Future refreshes will honor it."
+      };
+    }
+  );
+
+  app.delete(
+    "/api/collections/:collectionId/pricing/reviews/:itemId/pin",
+    async (request, reply): Promise<PricingReviewMutationResponse | { error: string }> => {
+      const access = getPricingAccess(request, database);
+
+      if (!access.ok) {
+        reply.code(access.statusCode);
+        return { error: access.message };
+      }
+
+      const item = getInventoryItem(database, access.collectionId, access.itemId);
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      unpinPricingSourceMatch(database, item.id);
+      const updatedItem = getInventoryItem(database, access.collectionId, item.id)!;
+      return {
+        item: updatedItem,
+        reviews: listPricingReviews(
+          database,
+          access.collectionId,
+          listInventoryItems(database, access.collectionId)
+        ),
+        message: "Unpinned the pricing match. Future refreshes may match this card again."
+      };
+    }
+  );
+
   app.get(
     "/api/collections/:collectionId/pricing/value-history",
     async (request, reply): Promise<CollectionValueHistoryResponse | { error: string }> => {
@@ -148,7 +270,7 @@ export async function registerPricingRoutes(
       const input = request.body as SelectPricingRequest;
       const sourceCardId = input.sourceCardId?.trim();
       const sourceVariantId = input.sourceVariantId?.trim();
-      const source = input.source ?? input.candidate?.source ?? "pokemonpricetracker";
+      const source = input.source ?? "pokemonpricetracker";
 
       if (!sourceCardId || !sourceVariantId) {
         reply.code(400);
@@ -162,7 +284,7 @@ export async function registerPricingRoutes(
 
       const candidate = await selectedPricingCandidate({
         config,
-        input,
+        database,
         item,
         source,
         sourceCardId,
@@ -183,7 +305,13 @@ export async function registerPricingRoutes(
         return { error: "That price candidate is no longer available." };
       }
 
-      saveMarketPrice(database, access.itemId, source, candidate, "manual");
+      if (!pricingCandidateMatchesItemType(item, candidate)) {
+        reply.code(400);
+        return { error: pricingCandidateTypeError(item) };
+      }
+
+      saveMarketPrice(database, access.itemId, source, candidate, "manual", access.userId);
+      resolvePricingReview(database, item.id, access.userId);
       const updatedItem = getInventoryItem(database, access.collectionId, access.itemId);
 
       return {
@@ -385,9 +513,12 @@ export async function registerPricingRoutes(
         };
       }
 
+      const preferredMatch = getDurablePricingSourceMatch(database, item.id);
       const result = await lookupPokemonPriceTrackerPricing({
         apiKey: config.pokemonPriceTrackerApiKey,
-        item
+        item,
+        preferredSourceCardId: preferredMatch?.sourceCardId ?? null,
+        preferredSourceVariantId: preferredMatch?.sourceVariantId ?? null
       }).catch((error) => {
         if (statusCodeForPricingError(error) === 429) {
           enqueueBulkPriceJob({
@@ -430,7 +561,18 @@ export async function registerPricingRoutes(
       }
 
       if (result.status === "match") {
+        if (
+          preferredMatch?.isPinned &&
+          !isSamePricingSourceCandidate(preferredMatch, result.candidate)
+        ) {
+          const candidates = toPublicPokemonPriceTrackerCandidates(result.candidates);
+          const message =
+            "The pinned source match was not returned. Review alternatives before changing the pin.";
+          saveOpenPricingReview(database, item.id, candidates, message);
+          return { status: "needs-review", item, candidates, message };
+        }
         saveMarketPrice(database, access.itemId, "pokemonpricetracker", result.candidate);
+        resolvePricingReview(database, item.id, null);
         const updatedItem = saveItemCardImageIfMissing(
           database,
           access.collectionId,
@@ -453,11 +595,18 @@ export async function registerPricingRoutes(
         result.cardImageUrl ?? null
       );
 
+      const candidates = toPublicPokemonPriceTrackerCandidates(result.candidates);
+      const message =
+        preferredMatch?.isPinned
+          ? "The pinned source match is unavailable. Review alternatives or retry without changing the pin."
+          : result.message;
+      saveOpenPricingReview(database, item.id, candidates, message);
+
       return {
         status: "needs-review",
         item: updatedItem,
-        candidates: toPublicPokemonPriceTrackerCandidates(result.candidates),
-        message: result.message
+        candidates,
+        message
       };
     }
   );
@@ -486,7 +635,7 @@ export async function registerPricingRoutes(
         };
       }
 
-      const input = request.body as SelectPokemonPriceTrackerPricingRequest;
+      const input = request.body as SelectPricingReviewRequest;
       const sourceCardId = input.sourceCardId?.trim();
       const sourceVariantId = input.sourceVariantId?.trim();
 
@@ -495,14 +644,15 @@ export async function registerPricingRoutes(
         return { error: "Choose a PokemonPriceTracker card and grade before saving." };
       }
 
-      const selectedCandidate = pokemonPriceTrackerCandidateFromSelection(
-        input,
+      const persistedCandidate = findPersistedReviewCandidate(
+        database,
+        item.id,
         sourceCardId,
         sourceVariantId
       );
-      const candidate =
-        selectedCandidate ??
-        (await findPokemonPriceTrackerPricingCandidateByIds({
+      const candidate = persistedCandidate
+        ? trustedCandidateFromPersistedReview(persistedCandidate)
+        : await findPokemonPriceTrackerPricingCandidateByIds({
           apiKey: config.pokemonPriceTrackerApiKey,
           item,
           sourceCardId,
@@ -515,7 +665,7 @@ export async function registerPricingRoutes(
                 ? error.message
                 : "Unable to save PokemonPriceTracker pricing."
           };
-        }));
+        });
 
       if (candidate && "error" in candidate) {
         return candidate;
@@ -526,7 +676,20 @@ export async function registerPricingRoutes(
         return { error: "That PokemonPriceTracker price candidate is no longer available." };
       }
 
-      saveMarketPrice(database, access.itemId, "pokemonpricetracker", candidate, "manual");
+      if (!pricingCandidateMatchesItemType(item, candidate)) {
+        reply.code(400);
+        return { error: pricingCandidateTypeError(item) };
+      }
+
+      saveMarketPrice(
+        database,
+        access.itemId,
+        "pokemonpricetracker",
+        candidate,
+        "manual",
+        access.userId
+      );
+      resolvePricingReview(database, item.id, access.userId);
       const updatedItem = getInventoryItem(database, access.collectionId, access.itemId);
 
       return {
@@ -792,61 +955,32 @@ async function refreshPricingForItem({
   // Saved PokemonPriceTracker IDs are safe direct-lookup hints for refreshes. A future
   // set-level cache warmer could use fetchAllInSet, but scored item-by-item matching
   // still protects variants, grades, Japanese cards, and review states.
-  const preferredMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
+  const preferredMatch = getDurablePricingSourceMatch(database, item.id);
   const preferredSourceCardId =
-    preferredMatch?.source_card_id ?? pokemonPriceTrackerCardIdFromNotes(item.notes);
+    preferredMatch?.sourceCardId ?? pokemonPriceTrackerCardIdFromNotes(item.notes);
 
-  if (item.itemType === "graded") {
-    const result = await lookupPokemonPriceTrackerPricing({
-      apiKey: config.pokemonPriceTrackerApiKey,
-      item,
-      preferredSourceCardId,
-      preferredSourceVariantId: preferredMatch?.source_variant_id ?? null
-    });
-
-    if (result.status === "match") {
-      saveMarketPrice(database, item.id, "pokemonpricetracker", result.candidate, "automatic");
-      const updatedItem = saveItemCardImageIfMissing(
-        database,
-        collectionId,
-        item.id,
-        imageUrlFromPricingCandidate(result.candidate)
-      ) ?? getInventoryItem(database, collectionId, item.id);
-
-      return {
-        status: "saved" as const,
-        item: updatedItem,
-        candidates: toPublicPricingCandidates(result.candidates, "pokemonpricetracker"),
-        message: "Saved PokemonPriceTracker graded market price."
-      };
-    }
-
-    const updatedItem = saveItemCardImageIfMissing(
-      database,
-      collectionId,
-      item.id,
-      result.cardImageUrl ?? null
-    );
-
-    return {
-      status: "needs-review" as const,
-      item: updatedItem,
-      candidates: toPublicPricingCandidates(result.candidates, "pokemonpricetracker"),
-      message: result.message
-    };
-      }
-
-      clearItemPriceRefreshIgnored(database, item.id);
-
-      const result = await lookupPokemonPriceTrackerPricing({
-        apiKey: config.pokemonPriceTrackerApiKey,
-        item,
+  clearItemPriceRefreshIgnored(database, item.id);
+  const result = await lookupPokemonPriceTrackerPricing({
+    apiKey: config.pokemonPriceTrackerApiKey,
+    item,
     preferredSourceCardId,
-    preferredSourceVariantId: preferredMatch?.source_variant_id ?? null
+    preferredSourceVariantId: preferredMatch?.sourceVariantId ?? null
   });
 
   if (result.status === "match") {
+    if (
+      preferredMatch?.isPinned &&
+      !isSamePricingSourceCandidate(preferredMatch, result.candidate)
+    ) {
+      const candidates = toPublicPricingCandidates(result.candidates, "pokemonpricetracker");
+      const message =
+        "The pinned source match was not returned. Review alternatives before changing the pin.";
+      saveOpenPricingReview(database, item.id, candidates, message);
+      return { status: "needs-review" as const, item, candidates, message };
+    }
+
     saveMarketPrice(database, item.id, "pokemonpricetracker", result.candidate, "automatic");
+    resolvePricingReview(database, item.id, null);
     const updatedItem = saveItemCardImageIfMissing(
       database,
       collectionId,
@@ -858,10 +992,18 @@ async function refreshPricingForItem({
       status: "saved" as const,
       item: updatedItem,
       candidates: toPublicPricingCandidates(result.candidates, "pokemonpricetracker"),
-      message: "Saved PokemonPriceTracker raw market price."
+      message: `Saved PokemonPriceTracker ${item.itemType} market price${
+        preferredMatch?.isPinned ? " from the pinned match" : ""
+      }.`
     };
   }
 
+  const candidates = toPublicPricingCandidates(result.candidates, "pokemonpricetracker");
+  const message =
+    preferredMatch?.isPinned
+      ? "The pinned source match is unavailable. Review alternatives or retry without changing the pin."
+      : result.message;
+  saveOpenPricingReview(database, item.id, candidates, message);
   const updatedItem = saveItemCardImageIfMissing(
     database,
     collectionId,
@@ -872,21 +1014,21 @@ async function refreshPricingForItem({
   return {
     status: "needs-review" as const,
     item: updatedItem,
-    candidates: toPublicPricingCandidates(result.candidates, "pokemonpricetracker"),
-    message: result.message
+    candidates,
+    message
   };
 }
 
 async function selectedPricingCandidate({
   config,
-  input,
+  database,
   item,
   source,
   sourceCardId,
   sourceVariantId
 }: {
   config: AppConfig;
-  input: SelectPricingRequest;
+  database: AppDatabase;
   item: InventoryItem;
   source: InventoryMarketPriceSource;
   sourceCardId: string;
@@ -896,21 +1038,21 @@ async function selectedPricingCandidate({
     throw new Error("JustTCG pricing is disabled. Use PokemonPriceTracker pricing.");
   }
 
-  const selectedCandidate = pokemonPriceTrackerCandidateFromPricingSelection(
-    input,
+  const persistedCandidate = findPersistedReviewCandidate(
+    database,
+    item.id,
     sourceCardId,
     sourceVariantId
   );
 
-  return (
-    selectedCandidate ??
-    (await findPokemonPriceTrackerPricingCandidateByIds({
+  return persistedCandidate
+    ? trustedCandidateFromPersistedReview(persistedCandidate)
+    : await findPokemonPriceTrackerPricingCandidateByIds({
       apiKey: config.pokemonPriceTrackerApiKey,
       item,
       sourceCardId,
       sourceVariantId
-    }))
-  );
+    });
 }
 
 function getPricingAccess(request: FastifyRequest, database: AppDatabase) {
@@ -938,8 +1080,25 @@ function getPricingAccess(request: FastifyRequest, database: AppDatabase) {
   return {
     ok: true as const,
     collectionId,
-    itemId
+    itemId,
+    userId: auth.user.id
   };
+}
+
+function getCollectionPricingReadAccess(request: FastifyRequest, database: AppDatabase) {
+  const auth = getAuthContext(request, database);
+
+  if (!auth) {
+    return { ok: false as const, statusCode: 401, message: "Unauthorized" };
+  }
+
+  const { collectionId } = request.params as { collectionId: string };
+  const role = getCollectionRole(database, collectionId, auth.user.id);
+  if (!role) {
+    return { ok: false as const, statusCode: 403, message: "Collection access required." };
+  }
+
+  return { ok: true as const, collectionId };
 }
 
 function getCollectionPricingAccess(request: FastifyRequest, database: AppDatabase) {
@@ -1621,8 +1780,9 @@ function saveMarketPrice(
   database: AppDatabase,
   itemId: string,
   source: "pokemonpricetracker",
-  candidate: PokemonPriceTrackerPricingCandidateWithPayload,
-  matchKind: "automatic" | "manual" = "automatic"
+  candidate: TrustedPricingCandidate,
+  matchKind: "automatic" | "manual" = "automatic",
+  confirmedByUserId: string | null = null
 ) {
   const lookedUpAt = new Date().toISOString();
   const previousPriceCents = getCurrentMarketPriceCents(database, itemId);
@@ -1687,7 +1847,14 @@ function saveMarketPrice(
       );
 
     insertMarketPriceSnapshot(database, itemId, source, candidate, previousPriceCents, lookedUpAt);
-    savePricingSourceMatch(database, itemId, source, candidate, matchKind);
+    savePricingSourceMatch(
+      database,
+      itemId,
+      source,
+      candidate,
+      matchKind,
+      confirmedByUserId
+    );
     markBulkPriceJobsSolvedForItem(database, itemId, candidate);
     recordCollectionValueSnapshotForItem(
       database,
@@ -1722,7 +1889,7 @@ function insertMarketPriceSnapshot(
   database: AppDatabase,
   itemId: string,
   source: "pokemonpricetracker",
-  candidate: PokemonPriceTrackerPricingCandidateWithPayload,
+  candidate: TrustedPricingCandidate,
   previousPriceCents: number | null,
   capturedAt: string
 ) {
@@ -1772,7 +1939,7 @@ function insertMarketPriceSnapshot(
 function markBulkPriceJobsSolvedForItem(
   database: AppDatabase,
   itemId: string,
-  candidate: PokemonPriceTrackerPricingCandidateWithPayload
+  candidate: TrustedPricingCandidate
 ) {
   const now = new Date().toISOString();
   const kindLabel = candidate.priceKind === "graded" ? "graded" : "raw";
@@ -1856,8 +2023,9 @@ function savePricingSourceMatch(
   database: AppDatabase,
   itemId: string,
   source: InventoryMarketPriceSource,
-  candidate: PokemonPriceTrackerPricingCandidateWithPayload,
-  matchKind: "automatic" | "manual"
+  candidate: TrustedPricingCandidate,
+  matchKind: "automatic" | "manual",
+  confirmedByUserId: string | null
 ) {
   database.connection
     .prepare(
@@ -1869,15 +2037,45 @@ function savePricingSourceMatch(
           source_variant_id,
           match_kind,
           confidence,
+          is_pinned,
+          confirmed_by_user_id,
+          confirmed_at,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT(owned_item_id, source) DO UPDATE SET
           source_card_id = excluded.source_card_id,
           source_variant_id = excluded.source_variant_id,
-          match_kind = excluded.match_kind,
+          match_kind = CASE
+            WHEN item_price_source_matches.is_pinned = 1
+              AND item_price_source_matches.source_card_id = excluded.source_card_id
+              AND item_price_source_matches.source_variant_id = excluded.source_variant_id
+            THEN item_price_source_matches.match_kind
+            ELSE excluded.match_kind
+          END,
           confidence = excluded.confidence,
+          is_pinned = CASE
+            WHEN item_price_source_matches.is_pinned = 1
+              AND item_price_source_matches.source_card_id = excluded.source_card_id
+              AND item_price_source_matches.source_variant_id = excluded.source_variant_id
+            THEN 1
+            ELSE excluded.is_pinned
+          END,
+          confirmed_by_user_id = CASE
+            WHEN item_price_source_matches.is_pinned = 1
+              AND item_price_source_matches.source_card_id = excluded.source_card_id
+              AND item_price_source_matches.source_variant_id = excluded.source_variant_id
+            THEN item_price_source_matches.confirmed_by_user_id
+            ELSE excluded.confirmed_by_user_id
+          END,
+          confirmed_at = CASE
+            WHEN item_price_source_matches.is_pinned = 1
+              AND item_price_source_matches.source_card_id = excluded.source_card_id
+              AND item_price_source_matches.source_variant_id = excluded.source_variant_id
+            THEN item_price_source_matches.confirmed_at
+            ELSE excluded.confirmed_at
+          END,
           updated_at = CURRENT_TIMESTAMP
       `
     )
@@ -1887,7 +2085,10 @@ function savePricingSourceMatch(
       candidate.sourceCardId,
       candidate.sourceVariantId,
       matchKind,
-      candidate.confidence
+      candidate.confidence,
+      matchKind === "manual" ? 1 : 0,
+      matchKind === "manual" ? confirmedByUserId : null,
+      matchKind === "manual" ? new Date().toISOString() : null
     );
 }
 
@@ -2196,7 +2397,7 @@ function toPublicPokemonPriceTrackerCandidates(
 }
 
 function toPublicPokemonPriceTrackerCandidate(
-  candidate: PokemonPriceTrackerPricingCandidateWithPayload
+  candidate: TrustedPricingCandidate
 ): PokemonPriceTrackerPricingCandidate {
   return {
     sourceCardId: candidate.sourceCardId,
@@ -2226,48 +2427,38 @@ function toPublicPokemonPriceTrackerCandidate(
   };
 }
 
-function pokemonPriceTrackerCandidateFromSelection(
-  input: SelectPokemonPriceTrackerPricingRequest,
-  sourceCardId: string,
-  sourceVariantId: string
-): PokemonPriceTrackerPricingCandidateWithPayload | null {
-  if (
-    !input.candidate ||
-    input.candidate.sourceCardId !== sourceCardId ||
-    input.candidate.sourceVariantId !== sourceVariantId
-  ) {
-    return null;
+function trustedCandidateFromPersistedReview(
+  candidate: PricingCandidate
+): TrustedPricingCandidate {
+  if (candidate.source !== "pokemonpricetracker") {
+    throw new Error("Only PokemonPriceTracker review candidates can be saved.");
   }
 
   return {
-    ...input.candidate,
-    rawPayload: {
-      selectedCandidate: input.candidate
-    }
+    ...candidate,
+    source: "pokemonpricetracker",
+    rawPayload: { selectedCandidate: candidate }
   };
 }
 
-function pokemonPriceTrackerCandidateFromPricingSelection(
-  input: SelectPricingRequest,
-  sourceCardId: string,
-  sourceVariantId: string
-): PokemonPriceTrackerPricingCandidateWithPayload | null {
-  if (
-    !input.candidate ||
-    input.candidate.source !== "pokemonpricetracker" ||
-    input.candidate.sourceCardId !== sourceCardId ||
-    input.candidate.sourceVariantId !== sourceVariantId
-  ) {
-    return null;
-  }
+function pricingCandidateMatchesItemType(item: InventoryItem, candidate: PricingCandidate) {
+  return candidate.source === "pokemonpricetracker" && candidate.priceKind === item.itemType;
+}
 
-  return {
-    ...input.candidate,
-    source: "pokemonpricetracker",
-    rawPayload: {
-      selectedCandidate: input.candidate
-    }
-  };
+function pricingCandidateTypeError(item: InventoryItem) {
+  return item.itemType === "graded"
+    ? "Raw guide prices cannot be applied to graded cards."
+    : "Graded guide prices cannot be applied to raw cards.";
+}
+
+function isSamePricingSourceCandidate(
+  match: { sourceCardId: string; sourceVariantId: string },
+  candidate: PricingCandidate
+) {
+  return (
+    match.sourceCardId === candidate.sourceCardId &&
+    match.sourceVariantId === candidate.sourceVariantId
+  );
 }
 
 function getBulkQueueResponse(

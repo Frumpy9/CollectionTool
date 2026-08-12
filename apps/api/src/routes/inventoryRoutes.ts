@@ -19,6 +19,7 @@ import { getAuthContext, getCollectionRole } from "../auth.js";
 import { recordCollectionValueSnapshot } from "../collectionValueSnapshots.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import { invalidatePricingReviewForIdentityChange } from "../pricingReviews.js";
 import { lookupPsaCert } from "../psaClient.js";
 
 type InventoryRow = {
@@ -708,6 +709,7 @@ function updateInventoryItem(
           oi.card_id,
           oi.item_type,
           oi.condition_label,
+          oi.condition_score,
           oi.variant_details,
           oi.grader,
           oi.grade,
@@ -729,6 +731,7 @@ function updateInventoryItem(
         card_id: string;
         item_type: string;
         condition_label: string | null;
+        condition_score: number | null;
         variant_details: string | null;
         grader: string | null;
         grade: string | null;
@@ -1258,6 +1261,7 @@ function hasPricingIdentityChanged(
   current: {
     item_type: string;
     condition_label: string | null;
+    condition_score: number | null;
     variant_details: string | null;
     grader: string | null;
     grade: string | null;
@@ -1279,6 +1283,7 @@ function hasPricingIdentityChanged(
     current.item_type !== input.itemType ||
     normalizeIdentityValue(current.condition_label) !==
       normalizeIdentityValue(input.conditionLabel) ||
+    current.condition_score !== (input.conditionScore ?? null) ||
     normalizeIdentityValue(current.variant_details) !==
       normalizeIdentityValue(input.variantDetails) ||
     normalizeIdentityValue(current.grader) !== normalizeIdentityValue(input.grader) ||
@@ -1295,13 +1300,7 @@ function normalizeIdentityValue(value: string | null | undefined) {
 }
 
 function clearPricingSourceMatches(database: AppDatabase, itemId: string) {
-  database.connection
-    .prepare("DELETE FROM item_price_source_matches WHERE owned_item_id = ?")
-    .run(itemId);
-  database.connection.prepare("DELETE FROM item_price_history WHERE owned_item_id = ?").run(itemId);
-  database.connection
-    .prepare("DELETE FROM item_market_price_snapshots WHERE owned_item_id = ?")
-    .run(itemId);
+  invalidatePricingReviewForIdentityChange(database, itemId);
 }
 
 function uniqueItemIds(itemIds: string[] | undefined) {

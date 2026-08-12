@@ -111,6 +111,13 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - eBay solds: manual research link only; PokemonPriceTracker is the v1 pricing/comps source.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
 
+Questionable PokemonPriceTracker matches are saved in the **Price Review** workspace. It compares
+the inventory card with each provider alternative across set, card number, variant, language, and
+condition. Editors can confirm and pin a match; subsequent manual, queued, and scheduled refreshes
+stay on that source card and price variant. Changing pricing identity fields such as the card name,
+set, number, language, item type, condition, variant, grader, or grade invalidates the pin and opens
+a fresh review. Viewers can inspect reviews but cannot confirm or unpin them.
+
 Scheduled PokemonPriceTracker refreshes are opt-in. Set `ENABLE_SCHEDULED_PRICE_REFRESH=true` only when the API key has enough quota for unattended bulk pricing.
 
 Collection-value history is append-only from schema version 19 onward. A saved point keeps the

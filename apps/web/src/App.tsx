@@ -61,6 +61,7 @@ import type {
 } from "@collection-tool/shared";
 import { api } from "./api";
 import { HistoryChart, type HistoryChartRange } from "./HistoryChart";
+import { PricingReviewWorkspace } from "./PricingReviewWorkspace";
 
 declare const __APP_VERSION__: string;
 
@@ -148,6 +149,7 @@ type WorkspaceSection =
   | "graded"
   | "search"
   | "storage"
+  | "pricing"
   | "ledger"
   | "data"
   | "admin"
@@ -186,6 +188,7 @@ const workspaceNavItems = [
   { section: "collection", label: "Collection", icon: Grid2X2 },
   { section: "search", label: "Search", icon: Search },
   { section: "storage", label: "Storage", icon: Tags },
+  { section: "pricing", label: "Price Review", icon: AlertTriangle },
   { section: "ledger", label: "Transactions", icon: CircleDollarSign },
   { section: "data", label: "Data", icon: Database },
   { section: "admin", label: "Admin", icon: Users, adminOnly: true },
@@ -2254,6 +2257,21 @@ function WorkspaceShell({
             variantGroups={variantGroups}
             onSelectStorage={applyStorageFilter}
             onSelectVariant={applyVariantFilter}
+          />
+        ) : null}
+
+        {activeSection === "pricing" && activeCollection ? (
+          <PricingReviewWorkspace
+            canEdit={activeCollection.role !== "viewer"}
+            collectionId={activeCollection.id}
+            key={activeCollection.id}
+            onItemUpdated={(updatedItem) => {
+              setInventory((current) => updateInventoryItem(current, updatedItem));
+              if (selectedItem?.id === updatedItem.id) {
+                setSelectedItem(updatedItem);
+              }
+            }}
+            onOpenItem={setSelectedItem}
           />
         ) : null}
 
@@ -7028,8 +7046,7 @@ function InventoryItemDetail({
       const response = await api.selectPricing(collectionId, item.id, {
         sourceCardId: candidate.sourceCardId,
         sourceVariantId: candidate.sourceVariantId,
-        source: candidate.source,
-        candidate
+        source: candidate.source
       });
 
       if (response.item) {
@@ -7100,8 +7117,7 @@ function InventoryItemDetail({
       const response = await api.selectPricing(collectionId, item.id, {
         sourceCardId: candidate.sourceCardId,
         sourceVariantId: candidate.sourceVariantId,
-        source: candidate.source,
-        candidate
+        source: candidate.source
       });
 
       if (response.item) {

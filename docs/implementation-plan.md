@@ -137,6 +137,7 @@
 - [x] Refresh saved prices every 12 hours by default when scheduled refresh is enabled.
 - [x] Add local saved-price history snapshots because PokemonPriceTracker history is unreliable.
 - [x] Add red/green market price movement indicators in list and detail views.
+- [x] Add a pricing match review workspace with persisted alternatives, visible field disagreements, and durable user-confirmed source pins.
 - [ ] Add pricing settings/status panel showing schedule, last run, next due time, queue state, and ignored cards.
 - [x] Add admin maintenance status showing backup settings, scheduled pricing state, queue counts, and ignored price-refresh cards.
 - [x] Added PokemonPriceTracker `fetchAllInSet` set browsing in Deep Search for selected card imports.
@@ -192,8 +193,9 @@ npm run seed:dev-admin --workspace @collection-tool/api
 
 - Current working branch: `main`.
 - Local admin tooling adds migration id `18` for disabled users because migration id `17` is already used by local market price snapshots.
+- Pricing match review uses migration id `21` for persisted candidate reviews and durable user-confirmed source pins.
 - Admin v1 is local-first: system admins create users directly; email delivery, invite acceptance, user deletion, and collection ownership transfer are intentionally out of scope.
-- Current dev database has migrations through local market price snapshots applied; admin account disabling is applied by migration id `18`.
+- Current schema has migrations through pricing match review at id `21`, including immutable collection value history (19) and the transaction ledger (20).
 - Backend coverage now verifies admin lockout protections, disabled user login/session blocking, collection member permissions, and inventory pricing-source hint persistence.
 - PSA estimate remains hidden because the public PSA lookup response has not reliably returned estimate values.
 - Next best feature: add Japanese set import/refresh maintenance tooling or formal Playwright coverage for admin/auth flows.
