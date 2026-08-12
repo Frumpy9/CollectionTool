@@ -50,6 +50,7 @@
 - [x] Upgraded card-price and collection-value history with responsive time-scaled charts, range controls, and point inspection.
 - [x] Made scheduled price refresh opt-in and kept the cadence at 12 hours when enabled.
 - [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
+- [x] Added enforced SQLite foreign keys, WAL/busy-timeout connection safeguards, and system-admin integrity diagnostics.
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
 

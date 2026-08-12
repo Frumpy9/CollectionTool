@@ -6,13 +6,194 @@ import assert from "node:assert/strict";
 import type { FastifyInstance, LightMyRequestResponse } from "fastify";
 import type { AppConfig } from "../config.js";
 import { createApp } from "../app.js";
-import { openDatabase, type AppDatabase } from "../db.js";
+import {
+  DatabaseIntegrityDiagnosticError,
+  openDatabase,
+  runDatabaseIntegrityDiagnostics,
+  type AppDatabase
+} from "../db.js";
 
 type TestServer = {
   app: FastifyInstance;
   database: AppDatabase;
   root: string;
 };
+
+test("SQLite connections enforce foreign keys and use local concurrency safeguards", async () => {
+  const server = await createTestServer();
+  try {
+    const foreignKeys = server.database.connection.prepare("PRAGMA foreign_keys").get() as {
+      foreign_keys: number;
+    };
+    const busyTimeout = server.database.connection.prepare("PRAGMA busy_timeout").get() as {
+      timeout: number;
+    };
+    const journalMode = server.database.connection.prepare("PRAGMA journal_mode").get() as {
+      journal_mode: string;
+    };
+
+    assert.equal(foreignKeys.foreign_keys, 1);
+    assert.equal(busyTimeout.timeout, 5_000);
+    assert.equal(journalMode.journal_mode, "wal");
+    assert.throws(
+      () =>
+        server.database.connection
+          .prepare(
+            `
+              INSERT INTO collection_members (collection_id, user_id, role)
+              VALUES ('missing-collection', 'missing-user', 'viewer')
+            `
+          )
+          .run(),
+      /FOREIGN KEY constraint failed/i
+    );
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("in-memory SQLite keeps its compatible journal mode", () => {
+  const database = openDatabase(":memory:");
+  try {
+    const diagnostic = runDatabaseIntegrityDiagnostics(database);
+
+    assert.equal(diagnostic.connection.journalMode, "memory");
+    assert.equal(diagnostic.connection.foreignKeysEnabled, true);
+    assert.equal(diagnostic.connection.busyTimeoutMs, 5_000);
+  } finally {
+    database.connection.close();
+  }
+});
+
+test("system admins can run healthy database integrity diagnostics", async () => {
+  const server = await createTestServer();
+  try {
+    const { cookie } = await bootstrapAdmin(server.app);
+    const response = await server.app.inject({
+      method: "POST",
+      url: "/api/admin/database/integrity-check",
+      headers: { cookie },
+      payload: {}
+    });
+
+    assert.equal(response.statusCode, 200);
+    const diagnostic = response.json();
+    assert.equal(diagnostic.status, "healthy");
+    assert.equal(diagnostic.connection.foreignKeysEnabled, true);
+    assert.equal(diagnostic.connection.busyTimeoutMs, 5_000);
+    assert.equal(diagnostic.connection.journalMode, "wal");
+    assert.deepEqual(diagnostic.integrityCheck, {
+      ok: true,
+      messageCount: 1,
+      messages: ["ok"],
+      truncated: false
+    });
+    assert.deepEqual(diagnostic.foreignKeyCheck, {
+      ok: true,
+      violationCount: 0,
+      violations: [],
+      truncated: false
+    });
+    assert.ok(Number.isFinite(Date.parse(diagnostic.checkedAt)));
+    assert.equal("path" in diagnostic.connection, false);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("database diagnostics report foreign-key violations without row contents", async () => {
+  const server = await createTestServer();
+  try {
+    server.database.connection.exec("PRAGMA foreign_keys = OFF");
+    server.database.connection
+      .prepare(
+        `
+          INSERT INTO collection_members (collection_id, user_id, role)
+          VALUES ('missing-collection', 'missing-user', 'viewer')
+        `
+      )
+      .run();
+    server.database.connection.exec("PRAGMA foreign_keys = ON");
+
+    const diagnostic = runDatabaseIntegrityDiagnostics(server.database);
+
+    assert.equal(diagnostic.status, "issues");
+    assert.equal(diagnostic.integrityCheck.ok, true);
+    assert.equal(diagnostic.foreignKeyCheck.ok, false);
+    assert.equal(diagnostic.foreignKeyCheck.violationCount, 2);
+    assert.ok(
+      diagnostic.foreignKeyCheck.violations.every(
+        (violation) => violation.table === "collection_members" && violation.rowId !== null
+      )
+    );
+    assert.deepEqual(
+      new Set(diagnostic.foreignKeyCheck.violations.map((violation) => violation.parentTable)),
+      new Set(["collections", "users"])
+    );
+    assert.equal(
+      JSON.stringify(diagnostic.foreignKeyCheck.violations).includes("missing-user"),
+      false
+    );
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("collection admins cannot run system database diagnostics", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie: adminCookie } = await bootstrapAdmin(server.app);
+    const manager = await createAdminUser(server.app, adminCookie, {
+      email: "collection-admin@example.test",
+      username: "collection-admin",
+      displayName: "Collection Admin",
+      password: "collection-admin-password",
+      systemRole: "user"
+    });
+    const addMemberResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collections[0].id}/members`,
+      headers: { cookie: adminCookie },
+      payload: { userId: manager.id, role: "admin" }
+    });
+    assert.equal(addMemberResponse.statusCode, 200);
+
+    const managerLogin = await login(server.app, "collection-admin", "collection-admin-password");
+    const response = await server.app.inject({
+      method: "POST",
+      url: "/api/admin/database/integrity-check",
+      headers: { cookie: managerLogin.cookie },
+      payload: {}
+    });
+
+    assert.equal(response.statusCode, 403);
+    assert.deepEqual(response.json(), { error: "Unauthorized" });
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("database diagnostic failures use a stable message without leaking the cause", () => {
+  const database = {
+    path: "/private/example/collection.sqlite",
+    migrationsApplied: 0,
+    connection: {
+      prepare() {
+        throw new Error("sensitive sqlite detail at /private/example/collection.sqlite");
+      }
+    }
+  } as unknown as AppDatabase;
+
+  assert.throws(
+    () => runDatabaseIntegrityDiagnostics(database),
+    (error: unknown) => {
+      assert.ok(error instanceof DatabaseIntegrityDiagnosticError);
+      assert.equal(error.message, "Database integrity diagnostics could not be completed.");
+      assert.doesNotMatch(error.message, /private|collection\.sqlite/i);
+      return true;
+    }
+  );
+});
 
 test("admin protections block disabling or demoting the last enabled admin", async () => {
   const server = await createTestServer();

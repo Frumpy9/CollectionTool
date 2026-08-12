@@ -9,6 +9,7 @@ Milestone 1 is focused on the working app shell:
 - React/Vite web app
 - Fastify API with `/health`
 - SQLite migration runner
+- SQLite foreign-key enforcement, WAL journaling, and admin integrity diagnostics
 - Local card image uploads stored outside git
 - Free card lookup through PokemonTCG.io and TCGdex
 - Inventory CSV export/import preview
@@ -82,6 +83,18 @@ Uploaded card images are stored in the same volume under `/data/uploads`. Do not
 Use the in-app backup button before large imports or cleanup sessions. Local backups are written under `data/backups`; Docker backups are written under `/data/backups`.
 
 Restore steps are documented in [docs/backup-restore.md](docs/backup-restore.md).
+
+## Database Reliability
+
+Every API database connection enables SQLite foreign-key enforcement and waits up to five seconds
+for a busy database before failing an operation. File-backed local databases use WAL journal mode for
+safer reader/writer concurrency; in-memory test databases keep SQLite's compatible in-memory journal.
+Startup stops with a clear error if the required foreign-key or WAL setting cannot be activated.
+
+System administrators can open **Admin → Maintenance** and run an on-demand database check. It runs
+SQLite's `integrity_check` and `foreign_key_check`, reports connection safety settings, and returns a
+bounded diagnostic summary without exposing the database path or stored card data. A check detects
+problems but does not modify or repair the database.
 
 ## Secrets
 

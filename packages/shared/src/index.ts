@@ -229,6 +229,35 @@ export type AdminCollectionStatusResponse = {
   };
 };
 
+export type DatabaseIntegrityViolation = {
+  table: string;
+  rowId: number | null;
+  parentTable: string;
+  foreignKeyIndex: number;
+};
+
+export type DatabaseIntegrityResponse = {
+  status: "healthy" | "issues";
+  checkedAt: string;
+  connection: {
+    foreignKeysEnabled: boolean;
+    busyTimeoutMs: number;
+    journalMode: string;
+  };
+  integrityCheck: {
+    ok: boolean;
+    messageCount: number;
+    messages: string[];
+    truncated: boolean;
+  };
+  foreignKeyCheck: {
+    ok: boolean;
+    violationCount: number;
+    violations: DatabaseIntegrityViolation[];
+    truncated: boolean;
+  };
+};
+
 export type ValueOverrideHistoryEntry = {
   id: string;
   itemId: string;

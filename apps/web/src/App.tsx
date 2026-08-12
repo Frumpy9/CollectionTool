@@ -46,6 +46,7 @@ import type {
   CollectionSummary,
   CollectionValueHistoryPoint,
   CreateInventoryItemRequest,
+  DatabaseIntegrityResponse,
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
@@ -490,6 +491,10 @@ function WorkspaceShell({
   const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>([]);
   const [memberCandidates, setMemberCandidates] = useState<CollectionMemberCandidate[]>([]);
   const [adminStatus, setAdminStatus] = useState<AdminCollectionStatusResponse | null>(null);
+  const [databaseIntegrity, setDatabaseIntegrity] = useState<DatabaseIntegrityResponse | null>(null);
+  const [databaseIntegrityStatus, setDatabaseIntegrityStatus] = useState<
+    "idle" | "loading" | "issues" | "error"
+  >("idle");
   const [adminLoadStatus, setAdminLoadStatus] = useState<"idle" | "loading" | "error">("idle");
   const [adminActionStatus, setAdminActionStatus] = useState<"idle" | "loading" | "error">("idle");
   const [adminMessage, setAdminMessage] = useState("");
@@ -567,6 +572,8 @@ function WorkspaceShell({
     setDataActionMessage("");
     setAdminMessage("");
     setAdminStatus(null);
+    setDatabaseIntegrity(null);
+    setDatabaseIntegrityStatus("idle");
     setCollectionMembers([]);
     setMemberCandidates([]);
     setCollectionValueHistoryOpen(false);
@@ -1192,6 +1199,27 @@ function WorkspaceShell({
       const message = error instanceof Error ? error.message : "Unable to create backup.";
       setDataActionMessage(message);
       setAdminMessage(message);
+    }
+  }
+
+  async function handleRunDatabaseIntegrityCheck() {
+    setDatabaseIntegrityStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const response = await api.runDatabaseIntegrityCheck();
+      setDatabaseIntegrity(response);
+      setDatabaseIntegrityStatus(response.status === "healthy" ? "idle" : "issues");
+      setAdminMessage(
+        response.status === "healthy"
+          ? "Database integrity check passed."
+          : "Database integrity check found issues that need attention."
+      );
+    } catch (error) {
+      setDatabaseIntegrityStatus("error");
+      setAdminMessage(
+        error instanceof Error ? error.message : "Unable to check database integrity."
+      );
     }
   }
 
@@ -2247,6 +2275,8 @@ function WorkspaceShell({
             members={collectionMembers}
             memberCandidates={memberCandidates}
             message={adminMessage}
+            databaseIntegrity={databaseIntegrity}
+            databaseIntegrityStatus={databaseIntegrityStatus}
             priceQueue={bulkPriceQueue}
             status={adminStatus}
             users={adminUsers}
@@ -2258,6 +2288,7 @@ function WorkspaceShell({
             onIgnorePriceRefresh={handleIgnorePriceRefresh}
             onOpenItem={setSelectedItem}
             onRefresh={refreshAdminData}
+            onRunDatabaseIntegrityCheck={handleRunDatabaseIntegrityCheck}
             onRemoveMember={handleRemoveCollectionMember}
             onResetPassword={handleResetAdminUserPassword}
             onRetryFailedQueue={handleRetryFailedBulkPriceQueue}
@@ -2719,6 +2750,8 @@ function AdminWorkspacePanel({
   backupStatus,
   canUseAdmin,
   collectionName,
+  databaseIntegrity,
+  databaseIntegrityStatus,
   loadStatus,
   members,
   memberCandidates,
@@ -2734,6 +2767,7 @@ function AdminWorkspacePanel({
   onIgnorePriceRefresh,
   onOpenItem,
   onRefresh,
+  onRunDatabaseIntegrityCheck,
   onRemoveMember,
   onResetPassword,
   onRetryFailedQueue,
@@ -2749,6 +2783,8 @@ function AdminWorkspacePanel({
   backupStatus: "idle" | "loading" | "error";
   canUseAdmin: boolean;
   collectionName: string;
+  databaseIntegrity: DatabaseIntegrityResponse | null;
+  databaseIntegrityStatus: "idle" | "loading" | "issues" | "error";
   loadStatus: "idle" | "loading" | "error";
   members: CollectionMember[];
   memberCandidates: CollectionMemberCandidate[];
@@ -2764,6 +2800,7 @@ function AdminWorkspacePanel({
   onIgnorePriceRefresh: (item: InventoryItem) => void;
   onOpenItem: (item: InventoryItem) => void;
   onRefresh: () => void;
+  onRunDatabaseIntegrityCheck: () => void;
   onRemoveMember: (member: CollectionMember) => void;
   onResetPassword: (user: AdminUser, password: string) => void;
   onRetryFailedQueue: () => void;
@@ -2825,7 +2862,16 @@ function AdminWorkspacePanel({
       </div>
 
       {message ? (
-        <p className={`admin-message ${actionStatus === "error" || loadStatus === "error" ? "error" : "ok"}`}>
+        <p
+          className={`admin-message ${
+            actionStatus === "error" ||
+            loadStatus === "error" ||
+            databaseIntegrityStatus === "error" ||
+            databaseIntegrityStatus === "issues"
+              ? "error"
+              : "ok"
+          }`}
+        >
           {message}
         </p>
       ) : null}
@@ -2857,7 +2903,10 @@ function AdminWorkspacePanel({
       {currentTab === "maintenance" ? (
         <AdminMaintenancePanel
           backupStatus={backupStatus}
+          databaseIntegrity={databaseIntegrity}
+          databaseIntegrityStatus={databaseIntegrityStatus}
           isWorking={isWorking}
+          isSystemAdmin={authUser.systemRole === "admin"}
           priceQueue={priceQueue}
           status={status}
           onBackup={onBackup}
@@ -2866,6 +2915,7 @@ function AdminWorkspacePanel({
           onIgnorePriceRefresh={onIgnorePriceRefresh}
           onOpenItem={onOpenItem}
           onRetryFailedQueue={onRetryFailedQueue}
+          onRunDatabaseIntegrityCheck={onRunDatabaseIntegrityCheck}
           onResumeQueue={onResumeQueue}
         />
       ) : null}
@@ -3142,7 +3192,10 @@ function AdminMembersPanel({
 
 function AdminMaintenancePanel({
   backupStatus,
+  databaseIntegrity,
+  databaseIntegrityStatus,
   isWorking,
+  isSystemAdmin,
   priceQueue,
   status,
   onBackup,
@@ -3151,10 +3204,14 @@ function AdminMaintenancePanel({
   onIgnorePriceRefresh,
   onOpenItem,
   onRetryFailedQueue,
+  onRunDatabaseIntegrityCheck,
   onResumeQueue
 }: {
   backupStatus: "idle" | "loading" | "error";
+  databaseIntegrity: DatabaseIntegrityResponse | null;
+  databaseIntegrityStatus: "idle" | "loading" | "issues" | "error";
   isWorking: boolean;
+  isSystemAdmin: boolean;
   priceQueue: BulkPriceQueueResponse | null;
   status: AdminCollectionStatusResponse | null;
   onBackup: () => void;
@@ -3163,6 +3220,7 @@ function AdminMaintenancePanel({
   onIgnorePriceRefresh: (item: InventoryItem) => void;
   onOpenItem: (item: InventoryItem) => void;
   onRetryFailedQueue: () => void;
+  onRunDatabaseIntegrityCheck: () => void;
   onResumeQueue: () => void;
 }) {
   const pricing = status?.pricing;
@@ -3232,6 +3290,82 @@ function AdminMaintenancePanel({
             </div>
           </div>
         </section>
+
+        {isSystemAdmin ? (
+          <section className="admin-status-panel">
+            <div className="admin-panel-header">
+              <div>
+                <p className="eyebrow">Database</p>
+                <h3>Integrity and connection safety</h3>
+              </div>
+              <button
+                disabled={databaseIntegrityStatus === "loading" || isWorking}
+                onClick={onRunDatabaseIntegrityCheck}
+                type="button"
+              >
+                <Database size={16} aria-hidden="true" />
+                {databaseIntegrityStatus === "loading" ? "Checking..." : "Run check"}
+              </button>
+            </div>
+            {databaseIntegrity ? (
+              <>
+                <div className="admin-fact-grid">
+                  <AdminFact
+                    label="Status"
+                    value={databaseIntegrity.status === "healthy" ? "Healthy" : "Issues found"}
+                  />
+                  <AdminFact
+                    label="SQLite"
+                    value={databaseIntegrity.integrityCheck.ok ? "OK" : "Check failed"}
+                  />
+                  <AdminFact
+                    label="Foreign keys"
+                    value={databaseIntegrity.connection.foreignKeysEnabled ? "Enforced" : "Disabled"}
+                  />
+                  <AdminFact
+                    label="FK violations"
+                    value={String(databaseIntegrity.foreignKeyCheck.violationCount)}
+                  />
+                  <AdminFact
+                    label="Journal"
+                    value={databaseIntegrity.connection.journalMode.toUpperCase()}
+                  />
+                  <AdminFact
+                    label="Busy timeout"
+                    value={`${databaseIntegrity.connection.busyTimeoutMs} ms`}
+                  />
+                </div>
+                <div className="admin-compact-list">
+                  <div>
+                    <strong>Checked</strong>
+                    <span>{formatHistoryDate(databaseIntegrity.checkedAt)}</span>
+                  </div>
+                  {databaseIntegrity.foreignKeyCheck.violations.slice(0, 10).map((violation) => (
+                    <div
+                      key={`${violation.table}-${violation.rowId ?? "unknown"}-${violation.foreignKeyIndex}`}
+                    >
+                      <strong>{violation.table}</strong>
+                      <span>
+                        Row {violation.rowId ?? "unknown"} references {violation.parentTable}
+                      </span>
+                    </div>
+                  ))}
+                  {databaseIntegrity.foreignKeyCheck.violationCount > 10 ? (
+                    <p>
+                      Showing 10 of {databaseIntegrity.foreignKeyCheck.violationCount} foreign-key
+                      violations.
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <p className="admin-panel-note">
+                Runs SQLite integrity and foreign-key checks on demand. No database path or card data
+                is included in the result.
+              </p>
+            )}
+          </section>
+        ) : null}
       </div>
 
       <section className="admin-status-panel">
