@@ -22,8 +22,11 @@ import type {
   CollectionValueHistoryResponse,
   CollectionMember,
   CollectionMembersResponse,
+  CollectionTransaction,
+  CollectionTransactionsResponse,
   CreateAdminUserRequest,
   CreateInventoryItemRequest,
+  CreateCollectionTransactionRequest,
   InventoryItem,
   InventoryListResponse,
   MarketPriceSnapshotsResponse,
@@ -41,6 +44,7 @@ import type {
   UpdateCollectionMemberRequest,
   UpdateInventoryItemRequest,
   UpdateInventoryItemImageRequest,
+  UpdateCollectionTransactionRequest,
   ValueOverrideHistoryResponse
 } from "@collection-tool/shared";
 
@@ -165,6 +169,31 @@ export const api = {
     request<AdminCollectionStatusResponse>(`/api/collections/${collectionId}/admin/status`),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
+  listTransactions: (collectionId: string, itemId?: string) =>
+    request<CollectionTransactionsResponse>(
+      `/api/collections/${collectionId}/transactions${
+        itemId ? `?itemId=${encodeURIComponent(itemId)}` : ""
+      }`
+    ),
+  createTransaction: (collectionId: string, payload: CreateCollectionTransactionRequest) =>
+    request<{ transaction: CollectionTransaction }>(
+      `/api/collections/${collectionId}/transactions`,
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+  updateTransaction: (
+    collectionId: string,
+    transactionId: string,
+    payload: UpdateCollectionTransactionRequest
+  ) =>
+    request<{ transaction: CollectionTransaction }>(
+      `/api/collections/${collectionId}/transactions/${transactionId}`,
+      { method: "PATCH", body: JSON.stringify(payload) }
+    ),
+  deleteTransaction: (collectionId: string, transactionId: string) =>
+    request<{ ok: true }>(
+      `/api/collections/${collectionId}/transactions/${transactionId}`,
+      { method: "DELETE" }
+    ),
   getBulkPriceQueue: (collectionId: string) =>
     request<BulkPriceQueueResponse>(`/api/collections/${collectionId}/pricing/bulk/queue`),
   getCollectionValueHistory: (collectionId: string) =>

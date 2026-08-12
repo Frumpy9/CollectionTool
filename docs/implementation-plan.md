@@ -52,6 +52,7 @@
 - [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
+- [x] Added a permission-aware purchase, sale, trade, gift, disposal, and fee transaction ledger with cash-flow and explicit-cost-basis summaries.
 
 ## Branch Roadmap
 

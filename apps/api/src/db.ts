@@ -502,6 +502,55 @@ const migrations: Migration[] = [
       SET value = '18', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 20,
+    name: "collection_transaction_ledger",
+    sql: `
+      CREATE TABLE IF NOT EXISTS collection_transactions (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        owned_item_id TEXT REFERENCES owned_items(id) ON DELETE SET NULL,
+        transaction_type TEXT NOT NULL CHECK (
+          transaction_type IN (
+            'purchase',
+            'sale',
+            'trade_received',
+            'trade_given',
+            'fee',
+            'gift_received',
+            'gift_given',
+            'disposal'
+          )
+        ),
+        quantity INTEGER CHECK (quantity IS NULL OR quantity > 0),
+        amount_cents INTEGER NOT NULL DEFAULT 0 CHECK (amount_cents >= 0),
+        fees_cents INTEGER NOT NULL DEFAULT 0 CHECK (fees_cents >= 0),
+        allocated_cost_cents INTEGER CHECK (
+          allocated_cost_cents IS NULL OR allocated_cost_cents >= 0
+        ),
+        currency TEXT NOT NULL DEFAULT 'USD',
+        item_name TEXT NOT NULL,
+        item_set_name TEXT,
+        item_card_number TEXT,
+        counterparty TEXT,
+        notes TEXT,
+        transacted_at TEXT NOT NULL,
+        created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_collection_transactions_collection_date
+      ON collection_transactions(collection_id, transacted_at DESC, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_collection_transactions_item_date
+      ON collection_transactions(owned_item_id, transacted_at DESC, created_at DESC);
+
+      UPDATE app_metadata
+      SET value = '20', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

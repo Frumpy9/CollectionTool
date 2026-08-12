@@ -111,6 +111,80 @@ export type InventoryListResponse = {
   };
 };
 
+export type CollectionTransactionType =
+  | "purchase"
+  | "sale"
+  | "trade_received"
+  | "trade_given"
+  | "fee"
+  | "gift_received"
+  | "gift_given"
+  | "disposal";
+
+export type CollectionTransaction = {
+  id: string;
+  collectionId: string;
+  itemId: string | null;
+  type: CollectionTransactionType;
+  quantity: number | null;
+  amountCents: number;
+  feesCents: number;
+  allocatedCostCents: number | null;
+  currency: string;
+  itemName: string;
+  itemSetName: string | null;
+  itemCardNumber: string | null;
+  counterparty: string | null;
+  notes: string | null;
+  transactedAt: string;
+  createdByUserId: string | null;
+  createdByDisplayName: string | null;
+  createdByUsername: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CollectionTransactionSummary = {
+  transactionCount: number;
+  purchaseCostCents: number;
+  grossSaleProceedsCents: number;
+  totalFeesCents: number;
+  cashInCents: number;
+  cashOutCents: number;
+  netCashFlowCents: number;
+  realizedSaleCount: number;
+  salesMissingCostBasisCount: number;
+  realizedTradeCount: number;
+  tradesMissingCostBasisCount: number;
+  realizedProceedsCents: number;
+  realizedCostBasisCents: number;
+  realizedProfitCents: number;
+  realizedTradeAssignedValueCents: number;
+  realizedTradeCostBasisCents: number;
+  realizedTradeProfitCents: number;
+};
+
+export type CollectionTransactionsResponse = {
+  transactions: CollectionTransaction[];
+  summary: CollectionTransactionSummary;
+};
+
+export type CreateCollectionTransactionRequest = {
+  itemId?: string;
+  type: CollectionTransactionType;
+  quantity?: number;
+  /** Total for this transaction, never a per-unit amount. */
+  amountCents?: number;
+  feesCents?: number;
+  allocatedCostCents?: number;
+  itemName?: string;
+  counterparty?: string;
+  notes?: string;
+  transactedAt: string;
+};
+
+export type UpdateCollectionTransactionRequest = Partial<CreateCollectionTransactionRequest>;
+
 export type BackupSqliteResponse = {
   ok: true;
   fileName: string;

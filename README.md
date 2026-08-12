@@ -14,6 +14,7 @@ Milestone 1 is focused on the working app shell:
 - Inventory CSV export/import preview
 - SQLite backup-now and scheduled backup flow under `data/backups`
 - Interactive saved-price and collection-value charts with date ranges and point inspection
+- Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
@@ -98,3 +99,9 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
 
 Scheduled PokemonPriceTracker refreshes are opt-in. Set `ENABLE_SCHEDULED_PRICE_REFRESH=true` only when the API key has enough quota for unattended bulk pricing.
+
+## Transaction Ledger
+
+Use the Transactions workspace to record collection activity without changing inventory counts. Amounts are totals for the whole transaction, never per-card amounts. Purchase and sale totals plus fees feed the cash-flow summary; assigned trade values stay outside cash flow. Cash-sale realized P&L is shown only when a sale has an explicit allocated cost. Trade-given assigned-value P&L is reported separately for the same reason.
+
+Ledger rows retain a snapshot of the card name, set, and number if their inventory item is later deleted. Viewers can read the ledger, while editors, admins, and owners can add, edit, or delete rows. Adjust inventory quantity separately from the linked row's **Edit inventory** action.
