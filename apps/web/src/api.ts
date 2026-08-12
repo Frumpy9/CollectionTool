@@ -25,6 +25,7 @@ import type {
   CollectionTransaction,
   CollectionTransactionsResponse,
   CreateAdminUserRequest,
+  DatabaseIntegrityResponse,
   CreateInventoryItemRequest,
   CreateCollectionTransactionRequest,
   InventoryItem,
@@ -167,6 +168,11 @@ export const api = {
     }),
   getAdminStatus: (collectionId: string) =>
     request<AdminCollectionStatusResponse>(`/api/collections/${collectionId}/admin/status`),
+  runDatabaseIntegrityCheck: () =>
+    request<DatabaseIntegrityResponse>("/api/admin/database/integrity-check", {
+      method: "POST",
+      body: JSON.stringify({})
+    }),
   listInventory: (collectionId: string) =>
     request<InventoryListResponse>(`/api/collections/${collectionId}/items`),
   listTransactions: (collectionId: string, itemId?: string) =>

@@ -51,6 +51,7 @@
 - [x] Made collection-value history immutable across later quantity, override, purchase-price, and deletion changes (migration 19); pre-feature price history is labeled as an approximate legacy reconstruction.
 - [x] Made scheduled price refresh opt-in and kept the cadence at 12 hours when enabled.
 - [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
+- [x] Added enforced SQLite foreign keys, WAL/busy-timeout connection safeguards, and system-admin integrity diagnostics.
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
 - [x] Added a permission-aware purchase, sale, trade, gift, disposal, and fee transaction ledger with cash-flow and explicit-cost-basis summaries.

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
   AddCollectionMemberRequest,
   AdminCollectionStatusResponse,
+  DatabaseIntegrityResponse,
   AdminIgnoredPriceRefreshItem,
   AdminUser,
   AdminUsersResponse,
@@ -26,7 +27,11 @@ import {
 } from "../auth.js";
 import { listSqliteBackups } from "../backups.js";
 import type { AppConfig } from "../config.js";
-import type { AppDatabase } from "../db.js";
+import {
+  DatabaseIntegrityDiagnosticError,
+  runDatabaseIntegrityDiagnostics,
+  type AppDatabase
+} from "../db.js";
 
 const collectionRoles = ["admin", "editor", "viewer"] as const;
 
@@ -72,6 +77,30 @@ export async function registerAdminRoutes(
 
     return { users: listAdminUsers(database) };
   });
+
+  app.post(
+    "/api/admin/database/integrity-check",
+    async (request, reply): Promise<DatabaseIntegrityResponse | { error: string }> => {
+      const auth = requireSystemAdmin(request, reply, database);
+
+      if (!auth) {
+        return { error: "Unauthorized" };
+      }
+
+      try {
+        return runDatabaseIntegrityDiagnostics(database);
+      } catch (error) {
+        request.log.error({ err: error }, "Database integrity diagnostics failed");
+        reply.code(500);
+        return {
+          error:
+            error instanceof DatabaseIntegrityDiagnosticError
+              ? error.message
+              : "Database integrity diagnostics could not be completed."
+        };
+      }
+    }
+  );
 
   app.post("/api/admin/users", async (request, reply): Promise<{ user: AdminUser } | { error: string }> => {
     const auth = requireSystemAdmin(request, reply, database);

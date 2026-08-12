@@ -1,6 +1,12 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { DatabaseIntegrityResponse } from "@collection-tool/shared";
+
+const SQLITE_BUSY_TIMEOUT_MS = 5_000;
+const MAX_INTEGRITY_MESSAGES = 20;
+const MAX_FOREIGN_KEY_VIOLATIONS = 100;
+const MAX_DIAGNOSTIC_TEXT_LENGTH = 500;
 
 type Migration = {
   id: number;
@@ -703,6 +709,7 @@ export function openDatabase(databasePath: string): AppDatabase {
   mkdirSync(dirname(databasePath), { recursive: true });
 
   const connection = new DatabaseSync(databasePath);
+  configureDatabaseConnection(connection, databasePath);
   connection.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       id INTEGER PRIMARY KEY,
@@ -744,6 +751,123 @@ export function openDatabase(databasePath: string): AppDatabase {
     connection,
     migrationsApplied
   };
+}
+
+function configureDatabaseConnection(connection: DatabaseSync, databasePath: string) {
+  connection.exec(`
+    PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS};
+  `);
+
+  // WAL gives the file-backed, local database better reader/writer concurrency.
+  // SQLite in-memory databases do not support WAL and keep their native journal mode.
+  if (databasePath !== ":memory:") {
+    const journalMode = connection.prepare("PRAGMA journal_mode = WAL").get() as
+      | { journal_mode: unknown }
+      | undefined;
+
+    if (String(journalMode?.journal_mode ?? "").toLowerCase() !== "wal") {
+      connection.close();
+      throw new Error("SQLite WAL journal mode could not be enabled.");
+    }
+  }
+
+  const foreignKeysEnabled = readPragmaNumber(connection, "foreign_keys") === 1;
+
+  if (!foreignKeysEnabled) {
+    connection.close();
+    throw new Error("SQLite foreign-key enforcement could not be enabled.");
+  }
+}
+
+export class DatabaseIntegrityDiagnosticError extends Error {
+  constructor(cause: unknown) {
+    super("Database integrity diagnostics could not be completed.", { cause });
+    this.name = "DatabaseIntegrityDiagnosticError";
+  }
+}
+
+export function runDatabaseIntegrityDiagnostics(
+  database: AppDatabase
+): DatabaseIntegrityResponse {
+  try {
+    const allIntegrityMessages = database.connection
+      .prepare("PRAGMA integrity_check")
+      .all()
+      .map((row) => sanitizeDiagnosticText((row as { integrity_check: unknown }).integrity_check));
+    const foreignKeyViolationCountRow = database.connection
+      .prepare("SELECT COUNT(*) AS count FROM pragma_foreign_key_check")
+      .get() as { count: number };
+    const foreignKeyViolationCount = Number(foreignKeyViolationCountRow.count);
+    const foreignKeyViolations = database.connection
+      .prepare(
+        `
+          SELECT "table", rowid, parent, fkid
+          FROM pragma_foreign_key_check
+          LIMIT ?
+        `
+      )
+      .all(MAX_FOREIGN_KEY_VIOLATIONS)
+      .map((row) => {
+        const violation = row as {
+          table: unknown;
+          rowid: unknown;
+          parent: unknown;
+          fkid: unknown;
+        };
+
+        return {
+          table: sanitizeDiagnosticText(violation.table),
+          rowId: violation.rowid === null ? null : Number(violation.rowid),
+          parentTable: sanitizeDiagnosticText(violation.parent),
+          foreignKeyIndex: Number(violation.fkid)
+        };
+      });
+    const integrityOk =
+      allIntegrityMessages.length === 1 && allIntegrityMessages[0].trim().toLowerCase() === "ok";
+    const foreignKeysEnabled = readPragmaNumber(database.connection, "foreign_keys") === 1;
+    const busyTimeoutMs = readPragmaNumber(database.connection, "busy_timeout");
+    const journalMode = readPragmaString(database.connection, "journal_mode");
+    const healthy = integrityOk && foreignKeyViolationCount === 0 && foreignKeysEnabled;
+
+    return {
+      status: healthy ? "healthy" : "issues",
+      checkedAt: new Date().toISOString(),
+      connection: {
+        foreignKeysEnabled,
+        busyTimeoutMs,
+        journalMode
+      },
+      integrityCheck: {
+        ok: integrityOk,
+        messageCount: allIntegrityMessages.length,
+        messages: allIntegrityMessages.slice(0, MAX_INTEGRITY_MESSAGES),
+        truncated: allIntegrityMessages.length > MAX_INTEGRITY_MESSAGES
+      },
+      foreignKeyCheck: {
+        ok: foreignKeyViolationCount === 0,
+        violationCount: foreignKeyViolationCount,
+        violations: foreignKeyViolations,
+        truncated: foreignKeyViolationCount > foreignKeyViolations.length
+      }
+    };
+  } catch (cause) {
+    throw new DatabaseIntegrityDiagnosticError(cause);
+  }
+}
+
+function sanitizeDiagnosticText(value: unknown) {
+  return String(value ?? "unknown").slice(0, MAX_DIAGNOSTIC_TEXT_LENGTH);
+}
+
+function readPragmaNumber(connection: DatabaseSync, pragma: "foreign_keys" | "busy_timeout") {
+  const row = connection.prepare(`PRAGMA ${pragma}`).get() as Record<string, unknown> | undefined;
+  return Number(row ? Object.values(row)[0] : 0);
+}
+
+function readPragmaString(connection: DatabaseSync, pragma: "journal_mode") {
+  const row = connection.prepare(`PRAGMA ${pragma}`).get() as Record<string, unknown> | undefined;
+  return String(row ? Object.values(row)[0] : "unknown").toLowerCase();
 }
 
 function ensureCardReleaseYearColumn(connection: DatabaseSync) {
