@@ -16,6 +16,7 @@ import type {
 } from "@collection-tool/shared";
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
+import { recordCollectionValueSnapshot } from "../collectionValueSnapshots.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
 import { lookupPsaCert } from "../psaClient.js";
@@ -298,21 +299,7 @@ export async function registerInventoryRoutes(
       return { error: "Select at least one card before deleting." };
     }
 
-    const deletedItemIds: string[] = [];
-    const notFoundItemIds: string[] = [];
-
-    for (const itemId of itemIds) {
-      if (deleteInventoryItem(database, collectionId, itemId)) {
-        deletedItemIds.push(itemId);
-      } else {
-        notFoundItemIds.push(itemId);
-      }
-    }
-
-    return {
-      deletedItemIds,
-      notFoundItemIds
-    };
+    return bulkDeleteInventoryItems(database, collectionId, itemIds);
   });
 
   app.post("/api/collections/:collectionId/items/bulk/variants", async (request, reply) => {
@@ -655,6 +642,7 @@ function createInventoryItem(
       );
 
     saveInitialPricingSourceMatch(database, itemId, input);
+    recordCollectionValueSnapshot(database, collectionId, "inventory_add");
 
     database.connection.exec("COMMIT");
   } catch (error) {
@@ -860,6 +848,8 @@ function updateInventoryItem(
       clearPricingSourceMatches(database, itemId);
     }
 
+    recordCollectionValueSnapshot(database, collectionId, "inventory_update");
+
     database.connection.exec("COMMIT");
   } catch (error) {
     database.connection.exec("ROLLBACK");
@@ -986,7 +976,11 @@ function listValueOverrideHistory(
   }));
 }
 
-function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId: string) {
+function deleteInventoryItem(
+  database: AppDatabase,
+  collectionId: string,
+  itemId: string
+) {
   const row = database.connection
     .prepare(
       `
@@ -1007,6 +1001,9 @@ function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId
       .prepare("DELETE FROM owned_items WHERE id = ? AND collection_id = ?")
       .run(itemId, collectionId);
     database.connection.prepare("DELETE FROM cards WHERE id = ?").run(row.card_id);
+
+    recordCollectionValueSnapshot(database, collectionId, "inventory_delete");
+
     database.connection.exec("COMMIT");
   } catch (error) {
     database.connection.exec("ROLLBACK");
@@ -1014,6 +1011,51 @@ function deleteInventoryItem(database: AppDatabase, collectionId: string, itemId
   }
 
   return true;
+}
+
+function bulkDeleteInventoryItems(
+  database: AppDatabase,
+  collectionId: string,
+  itemIds: string[]
+) {
+  const deletedItemIds: string[] = [];
+  const notFoundItemIds: string[] = [];
+  const findItemStatement = database.connection.prepare(
+    "SELECT card_id FROM owned_items WHERE id = ? AND collection_id = ?"
+  );
+  const deleteItemStatement = database.connection.prepare(
+    "DELETE FROM owned_items WHERE id = ? AND collection_id = ?"
+  );
+  const deleteCardStatement = database.connection.prepare("DELETE FROM cards WHERE id = ?");
+
+  database.connection.exec("BEGIN");
+  try {
+    for (const itemId of itemIds) {
+      const row = findItemStatement.get(itemId, collectionId) as
+        | { card_id: string }
+        | undefined;
+
+      if (!row) {
+        notFoundItemIds.push(itemId);
+        continue;
+      }
+
+      deleteItemStatement.run(itemId, collectionId);
+      deleteCardStatement.run(row.card_id);
+      deletedItemIds.push(itemId);
+    }
+
+    if (deletedItemIds.length > 0) {
+      recordCollectionValueSnapshot(database, collectionId, "inventory_delete");
+    }
+
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
+
+  return { deletedItemIds, notFoundItemIds };
 }
 
 function bulkUpdateInventoryVariants(
@@ -1086,6 +1128,8 @@ function bulkUpdateInventoryVariants(
 
       clearPricingSourceMatches(database, itemId);
     }
+
+    recordCollectionValueSnapshot(database, collectionId, "inventory_update");
 
     database.connection.exec("COMMIT");
   } catch (error) {

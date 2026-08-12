@@ -2334,7 +2334,8 @@ function CollectionValueHistoryDialog({
   const emptyMessage =
     status === "loading"
       ? "Loading saved collection value history..."
-      : "Collection value points will appear after market prices are refreshed.";
+      : "Value points will appear when cards, quantities, overrides, or market prices change.";
+  const hasLegacyPoints = points.some((point) => point.reason === "legacy_price_refresh");
 
   return (
     <div className="detail-backdrop" role="presentation" onClick={onClose}>
@@ -2389,8 +2390,7 @@ function CollectionValueHistoryDialog({
                     <strong>{formatCurrency(point.valueCents)}</strong>
                     <span>
                       {point.deltaCents !== null ? priceChangeLabel(point) : "baseline"} ·{" "}
-                      {point.refreshedItemCount} refresh
-                      {point.refreshedItemCount === 1 ? "" : "es"}
+                      {collectionValueHistoryDetail(point)}
                     </span>
                   </div>
                   <time dateTime={point.capturedAt}>{formatHistoryDate(point.capturedAt)}</time>
@@ -2401,6 +2401,13 @@ function CollectionValueHistoryDialog({
 
         {message ? (
           <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p>
+        ) : null}
+        {hasLegacyPoints ? (
+          <p className="lookup-note">
+            Legacy estimates were reconstructed when immutable history was introduced. Newer
+            points are saved at the time of each value change and will not be rewritten by later
+            edits or deletions.
+          </p>
         ) : null}
       </section>
     </div>
@@ -2420,9 +2427,7 @@ function CollectionValueHistoryLineChart({
         timestamp: point.capturedAt,
         valueCents: point.valueCents,
         deltaCents: point.deltaCents,
-        detail: `${point.refreshedItemCount} card${
-          point.refreshedItemCount === 1 ? "" : "s"
-        } refreshed`
+        detail: collectionValueHistoryDetail(point)
       })),
     [points]
   );
@@ -2436,6 +2441,36 @@ function CollectionValueHistoryLineChart({
       range={range}
     />
   );
+}
+
+function collectionValueHistoryDetail(point: CollectionValueHistoryPoint) {
+  const ownedLabel = `${point.itemQuantity} card${point.itemQuantity === 1 ? "" : "s"} owned`;
+
+  if (point.reason === "market_price_update") {
+    return `${point.refreshedItemCount} price${
+      point.refreshedItemCount === 1 ? "" : "s"
+    } refreshed · ${ownedLabel}`;
+  }
+
+  if (point.reason === "inventory_add") {
+    return `card added · ${ownedLabel}`;
+  }
+
+  if (point.reason === "inventory_delete") {
+    return `card removed · ${ownedLabel}`;
+  }
+
+  if (point.reason === "inventory_update") {
+    return `inventory value changed · ${ownedLabel}`;
+  }
+
+  if (point.reason === "legacy_price_refresh") {
+    return `legacy estimate · ${point.refreshedItemCount} refresh${
+      point.refreshedItemCount === 1 ? "" : "es"
+    }`;
+  }
+
+  return `migration baseline · ${ownedLabel}`;
 }
 
 function StorageInsights({

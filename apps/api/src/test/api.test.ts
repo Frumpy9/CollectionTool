@@ -292,6 +292,330 @@ test("collection summaries use the same value precedence as inventory totals", a
   }
 });
 
+test("collection value history stays immutable after valuation edits and deletion", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const basePayload = {
+      name: "Shaymin-EX",
+      setName: "Roaring Skies",
+      setCode: "ROS",
+      cardNumber: "77",
+      language: "en",
+      itemType: "raw",
+      quantity: 1,
+      purchasePriceCents: 1_000
+    };
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: basePayload
+    });
+
+    assert.equal(createResponse.statusCode, 201);
+    const itemId = createResponse.json().item.id;
+    const firstHistory = await getCollectionValueHistory(server.app, collectionId, cookie);
+    assert.equal(firstHistory.length, 1);
+    assert.equal(firstHistory[0].valueCents, 1_000);
+    assert.equal(firstHistory[0].itemQuantity, 1);
+    assert.equal(firstHistory[0].reason, "inventory_add");
+    const immutablePoint = JSON.stringify(firstHistory[0]);
+
+    const quantityResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: { ...basePayload, quantity: 2 }
+    });
+
+    assert.equal(quantityResponse.statusCode, 200);
+    await assertHistoryPointUnchanged(
+      server.app,
+      collectionId,
+      cookie,
+      firstHistory[0].id,
+      immutablePoint
+    );
+
+    const purchasePriceResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: { ...basePayload, quantity: 2, purchasePriceCents: 1_500 }
+    });
+
+    assert.equal(purchasePriceResponse.statusCode, 200);
+    await assertHistoryPointUnchanged(
+      server.app,
+      collectionId,
+      cookie,
+      firstHistory[0].id,
+      immutablePoint
+    );
+
+    const overrideResponse = await server.app.inject({
+      method: "PATCH",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie },
+      payload: {
+        ...basePayload,
+        quantity: 2,
+        purchasePriceCents: 1_500,
+        valueOverrideCents: 2_000
+      }
+    });
+
+    assert.equal(overrideResponse.statusCode, 200);
+    await assertHistoryPointUnchanged(
+      server.app,
+      collectionId,
+      cookie,
+      firstHistory[0].id,
+      immutablePoint
+    );
+
+    const deleteResponse = await server.app.inject({
+      method: "DELETE",
+      url: `/api/collections/${collectionId}/items/${itemId}`,
+      headers: { cookie }
+    });
+
+    assert.equal(deleteResponse.statusCode, 200);
+    const finalHistory = await getCollectionValueHistory(server.app, collectionId, cookie);
+    const originalAfterDelete = finalHistory.find(
+      (point: { id: string }) => point.id === firstHistory[0].id
+    );
+    assert.equal(JSON.stringify(originalAfterDelete), immutablePoint);
+    assert.deepEqual(
+      finalHistory.map(
+        (point: { valueCents: number; itemQuantity: number; reason: string }) => ({
+          valueCents: point.valueCents,
+          itemQuantity: point.itemQuantity,
+          reason: point.reason
+        })
+      ),
+      [
+        { valueCents: 1_000, itemQuantity: 1, reason: "inventory_add" },
+        { valueCents: 2_000, itemQuantity: 2, reason: "inventory_update" },
+        { valueCents: 3_000, itemQuantity: 2, reason: "inventory_update" },
+        { valueCents: 4_000, itemQuantity: 2, reason: "inventory_update" },
+        { valueCents: 0, itemQuantity: 0, reason: "inventory_delete" }
+      ]
+    );
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("migration 19 preserves legacy price dates as clearly labeled approximate points", async () => {
+  const server = await createTestServer();
+  let migratedDatabase: AppDatabase | null = null;
+  let appClosed = false;
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        purchasePriceCents: 1_000
+      }
+    });
+
+    assert.equal(createResponse.statusCode, 201);
+    const itemId = createResponse.json().item.id;
+    server.database.connection
+      .prepare("UPDATE owned_items SET created_at = '2023-01-01 00:00:00' WHERE id = ?")
+      .run(itemId);
+    server.database.connection
+      .prepare(
+        `
+          INSERT INTO item_market_prices (
+            owned_item_id, source, source_card_id, source_variant_id, matched_name,
+            price_cents, currency, confidence, looked_up_at, raw_payload
+          )
+          VALUES (?, 'pokemonpricetracker', 'legacy-card', 'near-mint', 'Pikachu',
+            1400, 'USD', 'exact', '2024-02-01T00:00:00.000Z', '{}')
+        `
+      )
+      .run(itemId);
+    const insertLegacyPrice = server.database.connection.prepare(
+      `
+        INSERT INTO item_market_price_snapshots (
+          id, owned_item_id, source, price_kind, source_card_id, source_variant_id,
+          matched_name, price_cents, previous_price_cents, delta_cents, confidence, captured_at
+        )
+        VALUES (?, ?, 'pokemonpricetracker', 'raw', 'legacy-card', 'near-mint',
+          'Pikachu', ?, ?, ?, 'exact', ?)
+      `
+    );
+    insertLegacyPrice.run(
+      "legacy-snapshot-1",
+      itemId,
+      1_200,
+      null,
+      null,
+      "2024-01-01T00:00:00.000Z"
+    );
+    insertLegacyPrice.run(
+      "legacy-snapshot-2",
+      itemId,
+      1_400,
+      1_200,
+      200,
+      "2024-02-01T00:00:00.000Z"
+    );
+
+    server.database.connection.exec(`
+      DROP TABLE collection_value_snapshots;
+      DELETE FROM schema_migrations WHERE id = 19;
+      UPDATE app_metadata SET value = '18' WHERE key = 'schema_version';
+    `);
+    await server.app.close();
+    appClosed = true;
+
+    migratedDatabase = openDatabase(server.database.path);
+    assert.equal(migratedDatabase.migrationsApplied, 1);
+    const legacyPoints = migratedDatabase.connection
+      .prepare(
+        `
+          SELECT value_cents, item_quantity, reason, refreshed_item_count, captured_at
+          FROM collection_value_snapshots
+          WHERE collection_id = ?
+          ORDER BY julianday(captured_at), created_at, rowid
+        `
+      )
+      .all(collectionId);
+
+    assert.deepEqual(
+      legacyPoints.map((point) => ({ ...point })),
+      [
+        {
+          value_cents: 1_200,
+          item_quantity: 1,
+          reason: "legacy_price_refresh",
+          refreshed_item_count: 1,
+          captured_at: "2024-01-01T00:00:00.000Z"
+        },
+        {
+          value_cents: 1_400,
+          item_quantity: 1,
+          reason: "legacy_price_refresh",
+          refreshed_item_count: 1,
+          captured_at: "2024-02-01T00:00:00.000Z"
+        }
+      ]
+    );
+  } finally {
+    migratedDatabase?.connection.close();
+
+    if (!appClosed) {
+      await server.app.close();
+      server.database.connection.close();
+    }
+
+    rmSync(server.root, { recursive: true, force: true });
+  }
+});
+
+test("market price saves and bulk valuation changes append history without duplicate noise", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58",
+        language: "en",
+        itemType: "raw",
+        quantity: 1,
+        purchasePriceCents: 1_000
+      }
+    });
+
+    assert.equal(createResponse.statusCode, 201);
+    const itemId = createResponse.json().item.id;
+    const selectPrice = (priceCents: number) =>
+      server.app.inject({
+        method: "POST",
+        url: `/api/collections/${collectionId}/items/${itemId}/pricing/select`,
+        headers: { cookie },
+        payload: pricingCandidate(priceCents)
+      });
+
+    assert.equal((await selectPrice(2_500)).statusCode, 200);
+    let history = await getCollectionValueHistory(server.app, collectionId, cookie);
+    assert.deepEqual(
+      history.map((point) => [point.valueCents, point.reason]),
+      [
+        [1_000, "inventory_add"],
+        [2_500, "market_price_update"]
+      ]
+    );
+
+    assert.equal((await selectPrice(2_500)).statusCode, 200);
+    history = await getCollectionValueHistory(server.app, collectionId, cookie);
+    assert.equal(history.length, 2, "an unchanged price refresh should not add a value point");
+
+    const variantResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/bulk/variants`,
+      headers: { cookie },
+      payload: {
+        itemIds: [itemId],
+        mode: "set",
+        variants: ["Holo"],
+        clearMarketPrices: true
+      }
+    });
+
+    assert.equal(variantResponse.statusCode, 200);
+    history = await getCollectionValueHistory(server.app, collectionId, cookie);
+    assert.deepEqual(
+      history.map((point) => [point.valueCents, point.reason]),
+      [
+        [1_000, "inventory_add"],
+        [2_500, "market_price_update"],
+        [1_000, "inventory_update"]
+      ]
+    );
+
+    const bulkDeleteResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/bulk/delete`,
+      headers: { cookie },
+      payload: { itemIds: [itemId] }
+    });
+
+    assert.equal(bulkDeleteResponse.statusCode, 200);
+    history = await getCollectionValueHistory(server.app, collectionId, cookie);
+    assert.deepEqual(history.at(-1), {
+      ...history.at(-1),
+      valueCents: 0,
+      itemQuantity: 0,
+      reason: "inventory_delete"
+    });
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("bulk storage location updates selected inventory rows", async () => {
   const server = await createTestServer();
   try {
@@ -377,6 +701,77 @@ async function createTestServer(): Promise<TestServer> {
   const app = await createApp(testConfig(root, databasePath), database);
 
   return { app, database, root };
+}
+
+async function getCollectionValueHistory(
+  app: FastifyInstance,
+  collectionId: string,
+  cookie: string
+) {
+  const response = await app.inject({
+    method: "GET",
+    url: `/api/collections/${collectionId}/pricing/value-history`,
+    headers: { cookie }
+  });
+
+  assert.equal(response.statusCode, 200);
+  return response.json().points as Array<{
+    id: string;
+    capturedAt: string;
+    valueCents: number;
+    deltaCents: number | null;
+    refreshedItemCount: number;
+    itemQuantity: number;
+    reason: string;
+  }>;
+}
+
+async function assertHistoryPointUnchanged(
+  app: FastifyInstance,
+  collectionId: string,
+  cookie: string,
+  pointId: string,
+  expectedJson: string
+) {
+  const points = await getCollectionValueHistory(app, collectionId, cookie);
+  const point = points.find((candidate) => candidate.id === pointId);
+  assert.equal(JSON.stringify(point), expectedJson);
+}
+
+function pricingCandidate(priceCents: number) {
+  const candidate = {
+    sourceCardId: "base-pikachu-58",
+    sourceVariantId: "near-mint",
+    matchedName: "Pikachu",
+    matchedSetName: "Base Set",
+    matchedCardNumber: "58",
+    condition: "Near Mint",
+    printing: "Normal",
+    language: "English",
+    priceCents,
+    currency: "USD",
+    confidence: "exact",
+    score: 100,
+    source: "pokemonpricetracker",
+    priceKind: "raw",
+    grader: null,
+    grade: null,
+    gradeBucket: null,
+    saleCount: 5,
+    averagePriceCents: priceCents,
+    medianPriceCents: priceCents,
+    minPriceCents: priceCents,
+    maxPriceCents: priceCents,
+    marketTrend: "stable",
+    historyAvailable: true
+  };
+
+  return {
+    sourceCardId: candidate.sourceCardId,
+    sourceVariantId: candidate.sourceVariantId,
+    source: candidate.source,
+    candidate
+  };
 }
 
 async function closeTestServer(server: TestServer) {
