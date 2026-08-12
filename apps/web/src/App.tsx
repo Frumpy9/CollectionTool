@@ -44,6 +44,9 @@ import type {
   CollectionMemberCandidate,
   CollectionMembersResponse,
   CollectionSummary,
+  CollectionTransaction,
+  CollectionTransactionType,
+  CollectionTransactionsResponse,
   CollectionValueHistoryPoint,
   CreateInventoryItemRequest,
   InventoryItem,
@@ -139,7 +142,15 @@ type CsvImportPreviewRow = {
 };
 
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
-type WorkspaceSection = "collection" | "graded" | "search" | "storage" | "data" | "admin" | "credits";
+type WorkspaceSection =
+  | "collection"
+  | "graded"
+  | "search"
+  | "storage"
+  | "ledger"
+  | "data"
+  | "admin"
+  | "credits";
 type AdminTab = "accounts" | "members" | "maintenance";
 type DeepSearchStatus = "idle" | "loading" | "error";
 
@@ -174,6 +185,7 @@ const workspaceNavItems = [
   { section: "collection", label: "Collection", icon: Grid2X2 },
   { section: "search", label: "Search", icon: Search },
   { section: "storage", label: "Storage", icon: Tags },
+  { section: "ledger", label: "Transactions", icon: CircleDollarSign },
   { section: "data", label: "Data", icon: Database },
   { section: "admin", label: "Admin", icon: Users, adminOnly: true },
   { section: "credits", label: "Credits", icon: ExternalLink }
@@ -393,6 +405,14 @@ function workspaceSectionMeta(
       eyebrow: "Maintenance",
       title: "Data tools",
       description: "Export inventory and import CSV rows for this local collection."
+    };
+  }
+
+  if (section === "ledger") {
+    return {
+      eyebrow: "Cash and activity",
+      title: "Transaction ledger",
+      description: "Record purchases, sales, trades, gifts, disposals, and fees without rewriting inventory."
     };
   }
 
@@ -2209,6 +2229,16 @@ function WorkspaceShell({
           />
         ) : null}
 
+        {activeSection === "ledger" && activeCollection ? (
+          <TransactionLedgerWorkspace
+            canEdit={activeCollection.role !== "viewer"}
+            collectionId={activeCollection.id}
+            items={inventory.items}
+            key={activeCollection.id}
+            onOpenItem={setSelectedItem}
+          />
+        ) : null}
+
         {activeSection === "data" ? (
           <>
             <DataWorkspacePanel
@@ -2661,6 +2691,273 @@ function StorageInsights({
       ) : null}
     </section>
   );
+}
+
+const transactionTypeOptions: Array<{ value: CollectionTransactionType; label: string }> = [
+  { value: "purchase", label: "Purchase" },
+  { value: "sale", label: "Sale" },
+  { value: "trade_received", label: "Trade received" },
+  { value: "trade_given", label: "Trade given" },
+  { value: "fee", label: "Standalone fee" },
+  { value: "gift_received", label: "Gift received" },
+  { value: "gift_given", label: "Gift given" },
+  { value: "disposal", label: "Disposal" }
+];
+
+function TransactionLedgerWorkspace({
+  canEdit,
+  collectionId,
+  items,
+  onOpenItem
+}: {
+  canEdit: boolean;
+  collectionId: string;
+  items: InventoryItem[];
+  onOpenItem: (item: InventoryItem) => void;
+}) {
+  const [ledger, setLedger] = useState<CollectionTransactionsResponse | null>(null);
+  const [status, setStatus] = useState<"loading" | "idle" | "saving" | "error">("loading");
+  const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState<CollectionTransaction | null>(null);
+  const [type, setType] = useState<CollectionTransactionType>("purchase");
+  const [itemFilter, setItemFilter] = useState("");
+
+  async function loadLedger(preserveMessage = false) {
+    setStatus("loading");
+    if (!preserveMessage) setMessage("");
+    try {
+      setLedger(await api.listTransactions(collectionId, itemFilter || undefined));
+      setStatus("idle");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Unable to load transactions.");
+    }
+  }
+
+  useEffect(() => {
+    void loadLedger();
+  }, [collectionId, itemFilter]);
+
+  function beginEdit(transaction: CollectionTransaction) {
+    setEditing(transaction);
+    setType(transaction.type);
+    setMessage("");
+  }
+
+  function clearEdit() {
+    setEditing(null);
+    setType("purchase");
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const payload = {
+      itemId: String(data.get("itemId") ?? "").trim() || undefined,
+      itemName: String(data.get("itemName") ?? "").trim() || undefined,
+      type,
+      quantity: optionalNumber(data.get("quantity")),
+      amountCents: moneyToCents(data.get("amount")) ?? 0,
+      feesCents: type === "fee" ? 0 : moneyToCents(data.get("fees")) ?? 0,
+      allocatedCostCents:
+        type === "sale" || type === "trade_given"
+          ? moneyToCents(data.get("allocatedCost"))
+          : undefined,
+      counterparty: String(data.get("counterparty") ?? "").trim() || undefined,
+      notes: String(data.get("notes") ?? "").trim() || undefined,
+      transactedAt: String(data.get("transactedAt") ?? "")
+    };
+
+    setStatus("saving");
+    setMessage("");
+    try {
+      if (editing) {
+        await api.updateTransaction(collectionId, editing.id, payload);
+      } else {
+        await api.createTransaction(collectionId, payload);
+      }
+      clearEdit();
+      form.reset();
+      await loadLedger(true);
+      setMessage(editing ? "Transaction updated." : "Transaction recorded. Inventory quantity was not changed.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Unable to save transaction.");
+    }
+  }
+
+  async function handleDelete(transaction: CollectionTransaction) {
+    if (!window.confirm(`Delete the ${transactionTypeLabel(transaction.type).toLowerCase()} entry for ${transaction.itemName}?`)) return;
+    setStatus("saving");
+    setMessage("");
+    try {
+      await api.deleteTransaction(collectionId, transaction.id);
+      if (editing?.id === transaction.id) clearEdit();
+      await loadLedger(true);
+      setMessage("Transaction deleted. Inventory quantity was not changed.");
+    } catch (error) {
+      setStatus("error");
+      setMessage(error instanceof Error ? error.message : "Unable to delete transaction.");
+    }
+  }
+
+  const summary = ledger?.summary;
+  const linkedItem = (transaction: CollectionTransaction) =>
+    transaction.itemId ? items.find((item) => item.id === transaction.itemId) : undefined;
+  const needsCostBasis = summary
+    ? summary.salesMissingCostBasisCount + summary.tradesMissingCostBasisCount > 0
+    : false;
+
+  return (
+    <section className="ledger-workspace">
+      <div className="ledger-summary-grid" aria-label="Transaction summary">
+        <article><span>Cash in</span><strong>{formatCurrency(summary?.cashInCents ?? 0)}</strong></article>
+        <article><span>Cash out</span><strong>{formatCurrency(summary?.cashOutCents ?? 0)}</strong></article>
+        <article><span>Net cash flow</span><strong>{formatCurrency(summary?.netCashFlowCents ?? 0)}</strong></article>
+        <article>
+          <span>Realized cash-sale P&amp;L</span>
+          <strong>{formatCurrency(summary?.realizedProfitCents ?? 0)}</strong>
+          <small>Only sales with explicit allocated cost</small>
+        </article>
+      </div>
+
+      {summary && summary.realizedTradeCostBasisCents > 0 ? (
+        <p className="ledger-warning">
+          Trade-given assigned-value P&amp;L: <strong>{formatCurrency(summary.realizedTradeProfitCents)}</strong>.
+          This compares assigned trade value after fees with explicit allocated cost; it is not cash flow.
+        </p>
+      ) : null}
+
+      <p className="ledger-warning">
+        Ledger quantities are documentary. Adding, editing, or deleting a transaction never changes inventory quantity.
+        Use <strong>Edit inventory</strong> on a linked row to adjust holdings separately.
+      </p>
+      {needsCostBasis ? (
+        <p className="ledger-basis-note">
+          {summary?.salesMissingCostBasisCount} sale{summary?.salesMissingCostBasisCount === 1 ? "" : "s"} and {summary?.tradesMissingCostBasisCount} trade{summary?.tradesMissingCostBasisCount === 1 ? "" : "s"} are excluded from their respective P&amp;L totals because allocated cost is missing.
+        </p>
+      ) : null}
+
+      <div className="ledger-toolbar">
+        <label>
+          Show
+          <select value={itemFilter} onChange={(event) => setItemFilter(event.target.value)}>
+            <option value="">All transactions</option>
+            {items.map((item) => <option key={item.id} value={item.id}>{item.card.name} · {item.card.cardNumber ?? "no #"}</option>)}
+          </select>
+        </label>
+        <span>{ledger?.transactions.length ?? 0} entr{ledger?.transactions.length === 1 ? "y" : "ies"}</span>
+      </div>
+
+      {canEdit ? (
+        <form className="ledger-form" key={editing?.id ?? "new"} onSubmit={handleSubmit}>
+          <div className="ledger-form-heading">
+            <div><p className="eyebrow">{editing ? "Edit entry" : "New entry"}</p><h3>{editing ? editing.itemName : "Record activity"}</h3></div>
+            {editing ? <button type="button" onClick={clearEdit}>Cancel edit</button> : null}
+          </div>
+          <label>
+            Type
+            <select name="type" value={type} onChange={(event) => setType(event.target.value as CollectionTransactionType)}>
+              {transactionTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Linked inventory item
+            <select defaultValue={editing?.itemId ?? ""} name="itemId">
+              <option value="">None / historical item</option>
+              {items.map((item) => <option key={item.id} value={item.id}>{item.card.name} · {item.card.setName ?? "Unknown set"} · {item.card.cardNumber ?? "no #"}</option>)}
+            </select>
+          </label>
+          <label>
+            Item label (for unlinked entries)
+            <input defaultValue={editing?.itemName ?? ""} maxLength={180} name="itemName" placeholder={type === "fee" ? "Marketplace fee" : "Card or lot name"} />
+          </label>
+          <label>
+            Date
+            <input defaultValue={editing?.transactedAt ?? new Date().toISOString().slice(0, 10)} name="transactedAt" required type="date" />
+          </label>
+          {type !== "fee" ? (
+            <label>
+              Quantity
+              <input defaultValue={editing?.quantity ?? ""} min="1" name="quantity" required type="number" />
+            </label>
+          ) : null}
+          <label>
+            {type === "trade_received" || type === "trade_given" ? "Assigned fair value $" : "Total amount $"}
+            <input defaultValue={centsToMoneyInput(editing?.amountCents ?? null)} inputMode="decimal" name="amount" placeholder={type === "trade_received" || type === "trade_given" ? "Non-cash assigned value" : "Total, not per unit"} />
+          </label>
+          {type !== "fee" ? (
+            <label>
+              Fees $
+              <input defaultValue={centsToMoneyInput(editing?.feesCents ?? null)} inputMode="decimal" name="fees" />
+            </label>
+          ) : null}
+          {type === "sale" || type === "trade_given" ? (
+            <label>
+              Allocated cost $
+              <input defaultValue={centsToMoneyInput(editing?.allocatedCostCents ?? null)} inputMode="decimal" name="allocatedCost" placeholder="Required for realized P&L" />
+            </label>
+          ) : null}
+          <label>
+            Counterparty
+            <input defaultValue={editing?.counterparty ?? ""} maxLength={180} name="counterparty" />
+          </label>
+          <label className="ledger-notes-field">
+            Notes
+            <textarea defaultValue={editing?.notes ?? ""} maxLength={2000} name="notes" />
+          </label>
+          <div className="ledger-form-actions">
+            <button className="primary-button" disabled={status === "saving"} type="submit">{status === "saving" ? "Saving..." : editing ? "Save entry" : "Add transaction"}</button>
+          </div>
+        </form>
+      ) : <p className="lookup-note">Viewer access is read-only. An editor, admin, or owner can change the ledger.</p>}
+
+      {message ? <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p> : null}
+      {status === "loading" ? <p className="lookup-note">Loading transactions...</p> : null}
+
+      <div className="ledger-list">
+        {ledger?.transactions.map((transaction) => {
+          const item = linkedItem(transaction);
+          const realizedProfit =
+            (transaction.type === "sale" || transaction.type === "trade_given") &&
+            transaction.allocatedCostCents !== null
+              ? transaction.amountCents - transaction.feesCents - transaction.allocatedCostCents
+              : null;
+          return (
+            <article className="ledger-row" key={transaction.id}>
+              <div>
+                <span className={`ledger-type ledger-type-${transaction.type}`}>{transactionTypeLabel(transaction.type)}</span>
+                <strong>{transaction.itemName}</strong>
+                <small>{[transaction.itemSetName, transaction.itemCardNumber, transaction.quantity ? `Qty ${transaction.quantity}` : null].filter(Boolean).join(" · ") || "Unlinked entry"}</small>
+              </div>
+              <div className="ledger-row-money">
+                <small>{transaction.type === "trade_received" || transaction.type === "trade_given" ? "Assigned value" : transaction.type === "fee" ? "Fee total" : "Transaction total"}</small>
+                <strong>{formatCurrency(transaction.amountCents)}</strong>
+                <small>{transaction.feesCents ? `${formatCurrency(transaction.feesCents)} fees` : "No fees"}</small>
+                {realizedProfit !== null ? <small>{transaction.type === "sale" ? "Realized P&L" : "Assigned-value P&L"} {formatCurrency(realizedProfit)}</small> : null}
+              </div>
+              <div>
+                <strong>{new Date(`${transaction.transactedAt}T00:00:00`).toLocaleDateString()}</strong>
+                <small>{transaction.counterparty ?? transaction.createdByDisplayName ?? transaction.createdByUsername ?? "Recorded locally"}</small>
+              </div>
+              <div className="ledger-row-actions">
+                {item ? <button type="button" onClick={() => onOpenItem(item)}>Edit inventory</button> : <small>Inventory link removed</small>}
+                {canEdit ? <button type="button" onClick={() => beginEdit(transaction)}>Edit</button> : null}
+                {canEdit ? <button className="danger-button" type="button" onClick={() => void handleDelete(transaction)}>Delete</button> : null}
+              </div>
+              {transaction.notes ? <p>{transaction.notes}</p> : null}
+            </article>
+          );
+        })}
+        {ledger && ledger.transactions.length === 0 ? <p className="lookup-note">No transactions in this view yet.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function transactionTypeLabel(type: CollectionTransactionType) {
+  return transactionTypeOptions.find((option) => option.value === type)?.label ?? type;
 }
 
 function DataWorkspacePanel({

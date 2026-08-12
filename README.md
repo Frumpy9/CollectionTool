@@ -14,6 +14,7 @@ Milestone 1 is focused on the working app shell:
 - Inventory CSV export/import preview
 - SQLite backup-now and scheduled backup flow under `data/backups`
 - Interactive saved-price charts and immutable collection-value history with date ranges and point inspection
+- Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
@@ -103,3 +104,9 @@ Collection-value history is append-only from schema version 19 onward. A saved p
 value and owned quantity that were true when an inventory or pricing change occurred, so later
 quantity edits, overrides, and deletions do not rewrite earlier points. Older market-price history
 is reconstructed once during migration and is labeled as an approximate legacy estimate in the UI.
+
+## Transaction Ledger
+
+Use the Transactions workspace to record collection activity without changing inventory counts. Amounts are totals for the whole transaction, never per-card amounts. Purchase and sale totals plus fees feed the cash-flow summary; assigned trade values stay outside cash flow. Cash-sale realized P&L is shown only when a sale has an explicit allocated cost. Trade-given assigned-value P&L is reported separately for the same reason.
+
+Ledger rows retain a snapshot of the card name, set, and number if their inventory item is later deleted. Viewers can read the ledger, while editors, admins, and owners can add, edit, or delete rows. Adjust inventory quantity separately from the linked row's **Edit inventory** action.

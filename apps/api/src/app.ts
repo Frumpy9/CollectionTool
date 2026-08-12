@@ -14,6 +14,7 @@ import { registerInventoryRoutes } from "./routes/inventoryRoutes.js";
 import { registerPricingRoutes, startBulkPriceQueueRunner } from "./routes/pricingRoutes.js";
 import { registerPsaRoutes } from "./routes/psaRoutes.js";
 import { registerUploadRoutes } from "./routes/uploadRoutes.js";
+import { registerTransactionRoutes } from "./routes/transactionRoutes.js";
 
 export async function createApp(config: AppConfig, database: AppDatabase) {
   const app = Fastify({
@@ -49,6 +50,7 @@ export async function createApp(config: AppConfig, database: AppDatabase) {
   await registerInventoryRoutes(app, config, database);
   await registerPricingRoutes(app, config, database);
   await registerPsaRoutes(app, config, database);
+  await registerTransactionRoutes(app, database);
   await registerUploadRoutes(app, config, database);
   startScheduledSqliteBackups(app, database, config);
   startBulkPriceQueueRunner(app, config, database);
