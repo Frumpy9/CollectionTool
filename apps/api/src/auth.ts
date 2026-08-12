@@ -84,10 +84,21 @@ export function listCollectionsForUser(
       `
         SELECT c.id, c.name, cm.role
           , COALESCE(SUM(oi.quantity), 0) AS card_count
-          , COALESCE(SUM(COALESCE(oi.value_override_cents, oi.purchase_price_cents, 0) * oi.quantity), 0) AS estimated_value_cents
+          , COALESCE(
+              SUM(
+                COALESCE(
+                  oi.value_override_cents,
+                  imp.price_cents,
+                  oi.purchase_price_cents,
+                  0
+                ) * oi.quantity
+              ),
+              0
+            ) AS estimated_value_cents
         FROM collections c
         INNER JOIN collection_members cm ON cm.collection_id = c.id
         LEFT JOIN owned_items oi ON oi.collection_id = c.id
+        LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
         WHERE cm.user_id = ?
         GROUP BY c.id, c.name, cm.role, c.created_at
         ORDER BY c.created_at ASC

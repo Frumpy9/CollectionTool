@@ -13,6 +13,7 @@ Milestone 1 is focused on the working app shell:
 - Free card lookup through PokemonTCG.io and TCGdex
 - Inventory CSV export/import preview
 - SQLite backup-now and scheduled backup flow under `data/backups`
+- Interactive saved-price and collection-value charts with date ranges and point inspection
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
