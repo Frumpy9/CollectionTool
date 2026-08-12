@@ -502,6 +502,145 @@ const migrations: Migration[] = [
       SET value = '18', updated_at = CURRENT_TIMESTAMP
       WHERE key = 'schema_version';
     `
+  },
+  {
+    id: 19,
+    name: "immutable_collection_value_snapshots",
+    sql: `
+      CREATE TABLE IF NOT EXISTS collection_value_snapshots (
+        id TEXT PRIMARY KEY,
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        value_cents INTEGER NOT NULL CHECK (value_cents >= 0),
+        item_quantity INTEGER NOT NULL CHECK (item_quantity >= 0),
+        reason TEXT NOT NULL CHECK (
+          reason IN (
+            'inventory_add',
+            'inventory_update',
+            'inventory_delete',
+            'market_price_update',
+            'legacy_price_refresh',
+            'migration_baseline'
+          )
+        ),
+        refreshed_item_count INTEGER NOT NULL DEFAULT 0 CHECK (refreshed_item_count >= 0),
+        captured_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_collection_value_snapshots_collection_captured
+      ON collection_value_snapshots(collection_id, captured_at, created_at);
+
+      WITH snapshot_times AS (
+        SELECT DISTINCT
+          oi.collection_id,
+          snapshots.captured_at
+        FROM item_market_price_snapshots snapshots
+        INNER JOIN owned_items oi ON oi.id = snapshots.owned_item_id
+      )
+      INSERT INTO collection_value_snapshots (
+        id,
+        collection_id,
+        value_cents,
+        item_quantity,
+        reason,
+        refreshed_item_count,
+        captured_at
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        times.collection_id,
+        COALESCE(SUM(
+          CASE
+            WHEN julianday(oi.created_at) <= julianday(times.captured_at) THEN
+              COALESCE(
+                oi.value_override_cents,
+                (
+                  SELECT historical.price_cents
+                  FROM item_market_price_snapshots historical
+                  WHERE historical.owned_item_id = oi.id
+                    AND julianday(historical.captured_at) <= julianday(times.captured_at)
+                  ORDER BY julianday(historical.captured_at) DESC, historical.created_at DESC
+                  LIMIT 1
+                ),
+                oi.purchase_price_cents,
+                0
+              ) * oi.quantity
+            ELSE 0
+          END
+        ), 0),
+        COALESCE(SUM(
+          CASE
+            WHEN julianday(oi.created_at) <= julianday(times.captured_at) THEN oi.quantity
+            ELSE 0
+          END
+        ), 0),
+        'legacy_price_refresh',
+        (
+          SELECT COUNT(DISTINCT refreshed.owned_item_id)
+          FROM item_market_price_snapshots refreshed
+          INNER JOIN owned_items refreshed_item ON refreshed_item.id = refreshed.owned_item_id
+          WHERE refreshed_item.collection_id = times.collection_id
+            AND refreshed.captured_at = times.captured_at
+        ),
+        times.captured_at
+      FROM snapshot_times times
+      LEFT JOIN owned_items oi ON oi.collection_id = times.collection_id
+      GROUP BY times.collection_id, times.captured_at;
+
+      WITH current_values AS (
+        SELECT
+          collections.id AS collection_id,
+          COALESCE(SUM(
+            COALESCE(
+              owned_items.value_override_cents,
+              item_market_prices.price_cents,
+              owned_items.purchase_price_cents,
+              0
+            ) * owned_items.quantity
+          ), 0) AS value_cents,
+          COALESCE(SUM(owned_items.quantity), 0) AS item_quantity
+        FROM collections
+        LEFT JOIN owned_items ON owned_items.collection_id = collections.id
+        LEFT JOIN item_market_prices ON item_market_prices.owned_item_id = owned_items.id
+        GROUP BY collections.id
+      )
+      INSERT INTO collection_value_snapshots (
+        id,
+        collection_id,
+        value_cents,
+        item_quantity,
+        reason,
+        refreshed_item_count,
+        captured_at
+      )
+      SELECT
+        lower(hex(randomblob(16))),
+        current_values.collection_id,
+        current_values.value_cents,
+        current_values.item_quantity,
+        'migration_baseline',
+        0,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM current_values
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM collection_value_snapshots latest
+        WHERE latest.collection_id = current_values.collection_id
+          AND latest.id = (
+            SELECT candidate.id
+            FROM collection_value_snapshots candidate
+            WHERE candidate.collection_id = current_values.collection_id
+            ORDER BY julianday(candidate.captured_at) DESC, candidate.created_at DESC, candidate.rowid DESC
+            LIMIT 1
+          )
+          AND latest.value_cents = current_values.value_cents
+          AND latest.item_quantity = current_values.item_quantity
+      );
+
+      UPDATE app_metadata
+      SET value = '19', updated_at = CURRENT_TIMESTAMP
+      WHERE key = 'schema_version';
+    `
   }
 ];
 

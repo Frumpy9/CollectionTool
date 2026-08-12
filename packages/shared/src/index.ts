@@ -267,12 +267,22 @@ export type MarketPriceSnapshotsResponse = {
   snapshots: MarketPriceSnapshot[];
 };
 
+export type CollectionValueHistoryReason =
+  | "inventory_add"
+  | "inventory_update"
+  | "inventory_delete"
+  | "market_price_update"
+  | "legacy_price_refresh"
+  | "migration_baseline";
+
 export type CollectionValueHistoryPoint = {
   id: string;
   capturedAt: string;
   valueCents: number;
   deltaCents: number | null;
   refreshedItemCount: number;
+  itemQuantity: number;
+  reason: CollectionValueHistoryReason;
 };
 
 export type CollectionValueHistoryResponse = {

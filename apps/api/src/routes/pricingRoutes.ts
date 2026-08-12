@@ -20,6 +20,7 @@ import type {
 } from "@collection-tool/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
+import { recordCollectionValueSnapshotForItem } from "../collectionValueSnapshots.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
 import {
@@ -58,8 +59,8 @@ export async function registerPricingRoutes(
         points,
         message:
           points.length > 0
-            ? "Loaded saved collection value history."
-            : "No collection value history has been saved yet."
+            ? "Loaded immutable collection value history."
+            : "No collection value changes have been saved yet."
       };
     }
   );
@@ -1626,66 +1627,81 @@ function saveMarketPrice(
   const lookedUpAt = new Date().toISOString();
   const previousPriceCents = getCurrentMarketPriceCents(database, itemId);
 
-  database.connection
-    .prepare(
-      `
-        INSERT INTO item_market_prices (
-          owned_item_id,
-          source,
-          source_card_id,
-          source_variant_id,
-          matched_name,
-          matched_set_name,
-          matched_card_number,
-          condition_label,
-          printing,
-          language,
-          price_cents,
-          currency,
-          confidence,
-          looked_up_at,
-          raw_payload,
-          updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(owned_item_id) DO UPDATE SET
-          source = excluded.source,
-          source_card_id = excluded.source_card_id,
-          source_variant_id = excluded.source_variant_id,
-          matched_name = excluded.matched_name,
-          matched_set_name = excluded.matched_set_name,
-          matched_card_number = excluded.matched_card_number,
-          condition_label = excluded.condition_label,
-          printing = excluded.printing,
-          language = excluded.language,
-          price_cents = excluded.price_cents,
-          currency = excluded.currency,
-          confidence = excluded.confidence,
-          looked_up_at = excluded.looked_up_at,
-          raw_payload = excluded.raw_payload,
-          updated_at = CURRENT_TIMESTAMP
-      `
-    )
-    .run(
+  database.connection.exec("BEGIN");
+  try {
+    database.connection
+      .prepare(
+        `
+          INSERT INTO item_market_prices (
+            owned_item_id,
+            source,
+            source_card_id,
+            source_variant_id,
+            matched_name,
+            matched_set_name,
+            matched_card_number,
+            condition_label,
+            printing,
+            language,
+            price_cents,
+            currency,
+            confidence,
+            looked_up_at,
+            raw_payload,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(owned_item_id) DO UPDATE SET
+            source = excluded.source,
+            source_card_id = excluded.source_card_id,
+            source_variant_id = excluded.source_variant_id,
+            matched_name = excluded.matched_name,
+            matched_set_name = excluded.matched_set_name,
+            matched_card_number = excluded.matched_card_number,
+            condition_label = excluded.condition_label,
+            printing = excluded.printing,
+            language = excluded.language,
+            price_cents = excluded.price_cents,
+            currency = excluded.currency,
+            confidence = excluded.confidence,
+            looked_up_at = excluded.looked_up_at,
+            raw_payload = excluded.raw_payload,
+            updated_at = CURRENT_TIMESTAMP
+        `
+      )
+      .run(
+        itemId,
+        source,
+        candidate.sourceCardId,
+        candidate.sourceVariantId,
+        candidate.matchedName,
+        candidate.matchedSetName,
+        candidate.matchedCardNumber,
+        candidate.condition,
+        candidate.printing,
+        candidate.language,
+        candidate.priceCents,
+        candidate.confidence,
+        lookedUpAt,
+        JSON.stringify(candidate.rawPayload)
+      );
+
+    insertMarketPriceSnapshot(database, itemId, source, candidate, previousPriceCents, lookedUpAt);
+    savePricingSourceMatch(database, itemId, source, candidate, matchKind);
+    markBulkPriceJobsSolvedForItem(database, itemId, candidate);
+    recordCollectionValueSnapshotForItem(
+      database,
       itemId,
-      source,
-      candidate.sourceCardId,
-      candidate.sourceVariantId,
-      candidate.matchedName,
-      candidate.matchedSetName,
-      candidate.matchedCardNumber,
-      candidate.condition,
-      candidate.printing,
-      candidate.language,
-      candidate.priceCents,
-      candidate.confidence,
-      lookedUpAt,
-      JSON.stringify(candidate.rawPayload)
+      "market_price_update",
+      1,
+      lookedUpAt
     );
 
-  insertMarketPriceSnapshot(database, itemId, source, candidate, previousPriceCents, lookedUpAt);
-  savePricingSourceMatch(database, itemId, source, candidate, matchKind);
-  markBulkPriceJobsSolvedForItem(database, itemId, candidate);
+    database.connection.exec("COMMIT");
+  } catch (error) {
+    database.connection.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function getCurrentMarketPriceCents(database: AppDatabase, itemId: string) {
@@ -2120,92 +2136,39 @@ function listCollectionValueHistory(
   database: AppDatabase,
   collectionId: string
 ): CollectionValueHistoryResponse["points"] {
-  const items = listInventoryItems(database, collectionId);
-
-  if (items.length === 0) {
-    return [];
-  }
-
-  const itemsById = new Map(items.map((item) => [item.id, item]));
-  const marketPricesByItemId = new Map<string, number>();
   const rows = database.connection
     .prepare(
       `
         SELECT
-          snapshots.owned_item_id,
-          snapshots.price_cents,
-          snapshots.captured_at
-        FROM item_market_price_snapshots snapshots
-        INNER JOIN owned_items oi ON oi.id = snapshots.owned_item_id
-        WHERE oi.collection_id = ?
-        ORDER BY snapshots.captured_at ASC, snapshots.created_at ASC
+          id,
+          value_cents,
+          item_quantity,
+          reason,
+          refreshed_item_count,
+          captured_at
+        FROM collection_value_snapshots
+        WHERE collection_id = ?
+        ORDER BY julianday(captured_at) ASC, created_at ASC, rowid ASC
       `
     )
     .all(collectionId) as {
-    owned_item_id: string;
-    price_cents: number;
+    id: string;
+    value_cents: number;
+    item_quantity: number;
+    reason: CollectionValueHistoryResponse["points"][number]["reason"];
+    refreshed_item_count: number;
     captured_at: string;
   }[];
 
-  const points: CollectionValueHistoryResponse["points"] = [];
-  let index = 0;
-
-  while (index < rows.length) {
-    const capturedAt = rows[index].captured_at;
-    let refreshedItemCount = 0;
-
-    while (index < rows.length && rows[index].captured_at === capturedAt) {
-      const row = rows[index];
-
-      if (itemsById.has(row.owned_item_id)) {
-        marketPricesByItemId.set(row.owned_item_id, row.price_cents);
-        refreshedItemCount += 1;
-      }
-
-      index += 1;
-    }
-
-    const previousValueCents = points[points.length - 1]?.valueCents ?? null;
-    const valueCents = collectionValueCentsAt(items, marketPricesByItemId, capturedAt);
-
-    points.push({
-      id: `${capturedAt}-${points.length}`,
-      capturedAt,
-      valueCents,
-      deltaCents: previousValueCents === null ? null : valueCents - previousValueCents,
-      refreshedItemCount
-    });
-  }
-
-  return points;
-}
-
-function collectionValueCentsAt(
-  items: InventoryItem[],
-  marketPricesByItemId: Map<string, number>,
-  capturedAt: string
-) {
-  const capturedAtMs = Date.parse(capturedAt);
-
-  return items.reduce((total, item) => {
-    const createdAtMs = Date.parse(item.createdAt);
-
-    if (
-      Number.isFinite(capturedAtMs) &&
-      Number.isFinite(createdAtMs) &&
-      createdAtMs > capturedAtMs
-    ) {
-      return total;
-    }
-
-    const valueCents =
-      item.valueOverrideCents ??
-      marketPricesByItemId.get(item.id) ??
-      item.purchasePriceCents ??
-      0;
-
-    return total + valueCents * item.quantity;
-  }, 0);
+  return rows.map((row, index) => ({
+    id: row.id,
+    capturedAt: row.captured_at,
+    valueCents: row.value_cents,
+    deltaCents: index === 0 ? null : row.value_cents - rows[index - 1].value_cents,
+    refreshedItemCount: row.refreshed_item_count,
+    itemQuantity: row.item_quantity,
+    reason: row.reason
+  }));
 }
 
 function toPublicPricingCandidates(

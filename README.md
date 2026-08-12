@@ -13,7 +13,7 @@ Milestone 1 is focused on the working app shell:
 - Free card lookup through PokemonTCG.io and TCGdex
 - Inventory CSV export/import preview
 - SQLite backup-now and scheduled backup flow under `data/backups`
-- Interactive saved-price and collection-value charts with date ranges and point inspection
+- Interactive saved-price charts and immutable collection-value history with date ranges and point inspection
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 
@@ -98,3 +98,8 @@ Do not commit `.env`, database files, cached images, backups, sessions, or logs.
 - CGC cert lookup: best-effort public lookup parsing with manual confirmation fallback.
 
 Scheduled PokemonPriceTracker refreshes are opt-in. Set `ENABLE_SCHEDULED_PRICE_REFRESH=true` only when the API key has enough quota for unattended bulk pricing.
+
+Collection-value history is append-only from schema version 19 onward. A saved point keeps the
+value and owned quantity that were true when an inventory or pricing change occurred, so later
+quantity edits, overrides, and deletions do not rewrite earlier points. Older market-price history
+is reconstructed once during migration and is labeled as an approximate legacy estimate in the UI.
