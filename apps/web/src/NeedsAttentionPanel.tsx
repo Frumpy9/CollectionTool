@@ -100,7 +100,10 @@ export function NeedsAttentionPanel({
       <div className="attention-toolbar">
         <div>
           <p className="eyebrow">Live collection checks</p>
-          <h3>{response.summary.attentionItemCount} item{response.summary.attentionItemCount === 1 ? "" : "s"} need attention</h3>
+          <h3>
+            {response.summary.attentionItemCount} item
+            {response.summary.attentionItemCount === 1 ? " needs" : "s need"} attention
+          </h3>
           <p>{response.summary.totalGroupCount} actionable issue group{response.summary.totalGroupCount === 1 ? "" : "s"} from saved inventory and pricing work.</p>
         </div>
         <button disabled={status === "loading"} onClick={() => void load()} type="button">
