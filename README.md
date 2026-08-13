@@ -115,14 +115,19 @@ for a busy database before failing an operation. File-backed local databases use
 safer reader/writer concurrency; in-memory test databases keep SQLite's compatible in-memory journal.
 Startup stops with a clear error if the required foreign-key or WAL setting cannot be activated.
 
-System administrators can open **Admin → Maintenance** and run an on-demand database check. It runs
+System administrators can open **System Admin → Maintenance** and run an on-demand database check. It runs
 SQLite's `integrity_check` and `foreign_key_check`, reports connection safety settings, and returns a
 bounded diagnostic summary without exposing the database path or stored card data. A check detects
 problems but does not modify or repair the database.
 
+Collection membership and scheduled-pricing visibility live under **Collection Settings**, which is
+available only to explicit collection owners and collection admins. Local user accounts, whole-database
+backups, integrity checks, and credential-safe provider diagnostics live under **System Admin**.
+
 For local debugging, system administrators also see every collection in the collection switcher.
 Collections where the administrator is not an explicit member are exposed with viewer access: cards
-and collection diagnostics are visible, but inventory mutations still require a real editor role.
+and read-only pricing diagnostics are visible, but inventory and membership mutations still require
+an explicit role on that collection.
 
 ## Secrets
 

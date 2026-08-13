@@ -99,10 +99,16 @@ in one tested server module. The inventory image picker shows ranked confidence 
 reasons. Rows created by any intake path use this same fetch action after they enter inventory; CSV
 commits remain atomic and never wait on external image providers.
 
-### [ ] 8. Clear collection versus system administration
+### [x] 8. Clear collection versus system administration
 
 Separate collection settings—members, roles, collection preferences, and pricing behavior—from
 system administration—local accounts, database integrity, backups, and provider diagnostics.
+
+Collection Settings now contains only collection-scoped membership, roles, and scheduled-pricing
+visibility, and is shown only to explicit collection owners and admins. System Admin is reserved for
+system administrators and contains local accounts, whole-database backups and integrity checks, plus
+credential-safe provider diagnostics. A system administrator can still inspect every collection as a
+viewer for debugging, but cannot use that viewer access to mutate foreign membership or inventory.
 
 ### [ ] 9. Shared background-job center
 

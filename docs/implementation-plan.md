@@ -54,7 +54,7 @@
 - [x] Upgraded card-price and collection-value history with responsive time-scaled charts, range controls, and point inspection.
 - [x] Made collection-value history immutable across later quantity, override, purchase-price, and deletion changes (migration 19); pre-feature price history is labeled as an approximate legacy reconstruction.
 - [x] Made scheduled price refresh opt-in and kept the cadence at 12 hours when enabled.
-- [x] Added Admin workspace for local account creation, user enable/disable, password resets, collection membership roles, backups, and maintenance status.
+- [x] Split collection membership and scheduled-pricing settings from system-only account, backup, database-integrity, and provider-diagnostic administration.
 - [x] Added enforced SQLite foreign keys, WAL/busy-timeout connection safeguards, and system-admin integrity diagnostics.
 - [x] Added Credits workspace listing API/data-source credits and links.
 - [x] Added Deep Search workspace for PokemonPriceTracker IDs, set search, full-set thumbnail browsing, and selected imports.
@@ -164,13 +164,13 @@
 - [x] Add CSV import for manual inventory.
 - [x] Preserve Pokemon Vault and PSA Vault formats with multiline CSV parsing, explicit duplicate policies, cancellation, stale-plan protection, and downloadable error reports.
 - [x] Add scheduled SQLite backups under `/data/backups`.
-- [x] Add admin “backup now” button.
+- [x] Add system-admin “backup now” button.
 - [x] Document restore steps.
 
 ### 8. Polish And Public Repo Readiness
 
 - [x] Replace inactive sidebar links, dead scan affordance, and stale roadmap chips with working workspace sections.
-- [x] Add practical Admin workspace for account management, collection membership, backups, and maintenance visibility.
+- [x] Add separate Collection Settings and System Admin workspaces with explicit role boundaries.
 - [x] Add in-app API credits page with source roles and external links.
 - [ ] Add Playwright tests for auth and manual inventory.
 - [x] Add backend tests for auth, permissions, and inventory routes.
