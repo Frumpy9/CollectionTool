@@ -64,8 +64,12 @@ import type {
 } from "@collection-tool/shared";
 import { api } from "./api";
 import { HistoryChart, type HistoryChartRange } from "./HistoryChart";
-import { PricingReviewWorkspace } from "./PricingReviewWorkspace";
 import { NeedsAttentionPanel } from "./NeedsAttentionPanel";
+import {
+  IntakeWorkspace,
+  type IntakeMethod
+} from "./features/intake/IntakeWorkspace";
+import { PricingWorkspace } from "./features/pricing/PricingWorkspace";
 
 declare const __APP_VERSION__: string;
 
@@ -181,9 +185,9 @@ const variantOptions = [
 const workspaceNavItems = [
   { section: "collection", label: "Collection", icon: Grid2X2 },
   { section: "attention", label: "Needs attention", icon: Inbox },
-  { section: "search", label: "Search", icon: Search },
+  { section: "search", label: "Add cards", icon: Plus },
   { section: "storage", label: "Storage", icon: Tags },
-  { section: "pricing", label: "Price Review", icon: AlertTriangle },
+  { section: "pricing", label: "Pricing", icon: AlertTriangle },
   { section: "ledger", label: "Transactions", icon: CircleDollarSign },
   { section: "data", label: "Data", icon: Database },
   { section: "admin", label: "Admin", icon: Users, adminOnly: true },
@@ -401,9 +405,9 @@ function workspaceSectionMeta(
 
   if (section === "search") {
     return {
-      eyebrow: "Import",
-      title: "Deep search",
-      description: "Search cards, PokemonPriceTracker IDs, PSA certs, and full sets with thumbnails."
+      eyebrow: "Card intake",
+      title: "Add cards",
+      description: "Search, enter, validate, and import cards through one review-oriented workspace."
     };
   }
 
@@ -420,6 +424,14 @@ function workspaceSectionMeta(
       eyebrow: "Cash and activity",
       title: "Transaction ledger",
       description: "Record purchases, sales, trades, gifts, disposals, and fees without rewriting inventory."
+    };
+  }
+
+  if (section === "pricing") {
+    return {
+      eyebrow: "Valuation",
+      title: "Pricing",
+      description: "Monitor market-price coverage, resolve uncertain matches, and manage refresh work."
     };
   }
 
@@ -486,18 +498,11 @@ function WorkspaceShell({
   });
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
-  const [activePanel, setActivePanel] = useState<
-    "lookup" | "manual" | "cert" | "bulk" | "import" | null
-  >(null);
+  const [intakeMethod, setIntakeMethod] = useState<IntakeMethod>("search");
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
     useState<InventoryFilterState>(defaultInventoryFilters);
-  const [lookupQuery, setLookupQuery] = useState("");
-  const [lookupLanguage, setLookupLanguage] = useState<CardLanguage | "all">("all");
-  const [lookupResult, setLookupResult] = useState<CardLookupResponse | null>(null);
-  const [lookupStatus, setLookupStatus] = useState<"idle" | "loading">("idle");
-  const [lookupError, setLookupError] = useState("");
   const [deepSearchQuery, setDeepSearchQuery] = useState("");
   const [deepSearchLanguage, setDeepSearchLanguage] = useState<CardLanguage | "all">("all");
   const [deepSearchStatus, setDeepSearchStatus] = useState<DeepSearchStatus>("idle");
@@ -577,15 +582,12 @@ function WorkspaceShell({
   }, [activeCollectionId, collections]);
 
   useEffect(() => {
-    setActivePanel(null);
     setSelectedItem(null);
     setShowFilters(false);
     setShowCollectionMenu(false);
     setShowCollectionTypeMenu(false);
     setInventoryFilters(defaultInventoryFilters);
-    setLookupQuery("");
-    setLookupResult(null);
-    setLookupError("");
+    setIntakeMethod("search");
     setSelectionMode(false);
     setSelectedItemIds([]);
     setBulkVariantEditorOpen(false);
@@ -965,9 +967,6 @@ function WorkspaceShell({
       setCollectionResultScope("raw");
     }
     setShowCollectionTypeMenu(false);
-    setActivePanel(null);
-    setLookupResult(null);
-    setLookupError("");
     setDeepSearchMessage("");
     setDeepSearchLookupResult(null);
     setDeepSearchSets([]);
@@ -991,15 +990,9 @@ function WorkspaceShell({
     changeSection("collection");
   }
 
-  function openPanel(panel: "manual" | "cert" | "bulk" | "import") {
-    if (panel === "import") {
-      changeSection("data");
-    } else {
-      setActiveSection("collection");
-      setCollectionResultScope("raw");
-    }
-
-    setActivePanel((current) => (current === panel ? null : panel));
+  function openIntake(method: IntakeMethod) {
+    changeSection("search");
+    setIntakeMethod(method);
   }
 
   function applyStorageFilter(storageLocation: string) {
@@ -1033,7 +1026,6 @@ function WorkspaceShell({
       setActiveSection("collection");
       setCollectionResultScope("all");
     }
-    setActivePanel(null);
     setSelectedItem(null);
     setSelectionMode(false);
     setSelectedItemIds([]);
@@ -1042,30 +1034,6 @@ function WorkspaceShell({
     setBulkStorageEntryMode("existing");
     setBulkStorageLocation("");
     setShowFilters(true);
-  }
-
-  async function handleLookup(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setLookupError("");
-    setLookupResult(null);
-    setLookupStatus("loading");
-    setActivePanel("lookup");
-
-    try {
-      const response = await api.lookupCards({
-        query: lookupQuery,
-        language: lookupLanguage
-      });
-      setLookupResult(response);
-
-      if (response.candidates.length === 0) {
-        setLookupError("No matching cards found. Try a set code plus card number, or a card name.");
-      }
-    } catch (error) {
-      setLookupError(error instanceof Error ? error.message : "Unable to look up cards.");
-    } finally {
-      setLookupStatus("idle");
-    }
   }
 
   async function handleDeepSearch(event: React.FormEvent<HTMLFormElement>) {
@@ -1951,7 +1919,7 @@ function WorkspaceShell({
               </button>
             ) : null}
             {activeSection === "collection" ? (
-              <button className="primary-button" type="button" onClick={() => openPanel("manual")}>
+              <button className="primary-button" type="button" onClick={() => openIntake("manual")}>
                 <Plus size={18} aria-hidden="true" />
                 Add card
               </button>
@@ -1959,59 +1927,57 @@ function WorkspaceShell({
           </div>
         </header>
 
-        {activeSection === "collection" ? (
-          <form className="command-panel" aria-label="Add cards" onSubmit={handleLookup}>
-            <div className="search-control">
-              <Search size={20} aria-hidden="true" />
-              <input
-                aria-label="Search or add card"
-                onChange={(event) => setLookupQuery(event.target.value)}
-                placeholder="Search by name, PSA cert, or set/card like s10a 073/071"
-                value={lookupQuery}
-              />
-            </div>
-            <div className="mode-actions">
-              <select
-                aria-label="Lookup language"
-                onChange={(event) => setLookupLanguage(event.target.value as CardLanguage | "all")}
-                value={lookupLanguage}
-              >
-                <option value="all">All</option>
-                <option value="en">English</option>
-                <option value="ja">Japanese</option>
-              </select>
-              <button disabled={lookupStatus === "loading"} type="submit">
-                <Search size={18} aria-hidden="true" />
-                {lookupStatus === "loading" ? "Looking..." : "Lookup"}
-              </button>
-              <button type="button" onClick={() => openPanel("cert")}>
-                <ShieldCheck size={18} aria-hidden="true" />
-                Cert
-              </button>
-              <button type="button" onClick={() => openPanel("bulk")}>
-                <FileText size={18} aria-hidden="true" />
-                Bulk
-              </button>
-            </div>
-          </form>
-        ) : null}
-
         {activeSection === "search" && activeCollection ? (
-          <DeepSearchWorkspacePanel
-            collectionId={activeCollection.id}
-            language={deepSearchLanguage}
-            lookupResult={deepSearchLookupResult}
-            message={deepSearchMessage}
-            query={deepSearchQuery}
-            selectedSet={deepSearchSelectedSet}
-            setCards={deepSearchSetCards}
-            sets={deepSearchSets}
-            status={deepSearchStatus}
-            onCreateItem={createOrMergeInventoryItem}
-            onLanguageChange={setDeepSearchLanguage}
-            onLoadSet={loadDeepSearchSet}
-            onQueryChange={setDeepSearchQuery}
-            onSearch={handleDeepSearch}
+          <IntakeWorkspace
+            activeMethod={intakeMethod}
+            canEdit={activeCollection.role !== "viewer"}
+            onMethodSelect={setIntakeMethod}
+            workflows={{
+              search: (
+                <DeepSearchWorkspacePanel
+                  collectionId={activeCollection.id}
+                  language={deepSearchLanguage}
+                  lookupResult={deepSearchLookupResult}
+                  message={deepSearchMessage}
+                  query={deepSearchQuery}
+                  selectedSet={deepSearchSelectedSet}
+                  setCards={deepSearchSetCards}
+                  sets={deepSearchSets}
+                  status={deepSearchStatus}
+                  onCreateItem={createOrMergeInventoryItem}
+                  onLanguageChange={setDeepSearchLanguage}
+                  onLoadSet={loadDeepSearchSet}
+                  onQueryChange={setDeepSearchQuery}
+                  onSearch={handleDeepSearch}
+                />
+              ),
+              manual: (
+                <ManualAddPanel
+                  collectionId={activeCollection.id}
+                  onCreateItem={createOrMergeInventoryItem}
+                  onAdded={() => undefined}
+                />
+              ),
+              psa: (
+                <PsaCertPanel
+                  collectionId={activeCollection.id}
+                  onCreateItem={createOrMergeInventoryItem}
+                  onAdded={() => undefined}
+                />
+              ),
+              bulk: (
+                <BulkLookupPanel
+                  collectionId={activeCollection.id}
+                  onCreateItem={createOrMergeInventoryItem}
+                />
+              ),
+              csv: (
+                <InventoryCsvImportPanel
+                  collectionId={activeCollection.id}
+                  onImported={(updatedInventory) => setInventory(updatedInventory)}
+                />
+              )
+            }}
           />
         ) : null}
 
@@ -2037,55 +2003,6 @@ function WorkspaceShell({
             totalCount={sectionItems.length}
             onChange={setInventoryFilters}
             onClearAll={() => setInventoryFilters(defaultInventoryFilters)}
-          />
-        ) : null}
-
-        {activePanel === "lookup" && activeCollection ? (
-          <CardLookupPanel
-            collectionId={activeCollection.id}
-            error={lookupError}
-            result={lookupResult}
-            status={lookupStatus}
-            onCreateItem={createOrMergeInventoryItem}
-            onAdded={() => {
-              setActivePanel(null);
-              setLookupResult(null);
-              setLookupQuery("");
-            }}
-          />
-        ) : null}
-
-        {activePanel === "manual" && activeCollection ? (
-          <ManualAddPanel
-            collectionId={activeCollection.id}
-            onCreateItem={createOrMergeInventoryItem}
-            onAdded={() => {
-              setActivePanel(null);
-            }}
-          />
-        ) : null}
-
-        {activePanel === "cert" && activeCollection ? (
-          <PsaCertPanel
-            collectionId={activeCollection.id}
-            onCreateItem={createOrMergeInventoryItem}
-            onAdded={() => {
-              setActivePanel(null);
-            }}
-          />
-        ) : null}
-
-        {activePanel === "bulk" && activeCollection ? (
-          <BulkLookupPanel
-            collectionId={activeCollection.id}
-            onCreateItem={createOrMergeInventoryItem}
-          />
-        ) : null}
-
-        {activePanel === "import" && activeCollection ? (
-          <InventoryCsvImportPanel
-            collectionId={activeCollection.id}
-            onImported={(updatedInventory) => setInventory(updatedInventory)}
           />
         ) : null}
 
@@ -2207,20 +2124,6 @@ function WorkspaceShell({
                     onSubmit={() => handleBulkUpdateStorageLocation(bulkStorageLocation)}
                   />
                 ) : null}
-                {isInventorySelectionSection && bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
-                  <BulkPriceQueuePanel
-                    isWorking={bulkPriceStatus === "loading"}
-                    message={bulkPriceMessage}
-                    queue={bulkPriceQueue}
-                    status={bulkPriceStatus}
-                    onCancel={handleCancelBulkPriceQueue}
-                    onClearCompleted={handleClearCompletedBulkPriceQueue}
-                    onIgnoreItem={handleIgnorePriceRefresh}
-                    onOpenItem={(item) => setSelectedItem(item)}
-                    onResume={handleResumeBulkPriceQueue}
-                    onRetryFailed={handleRetryFailedBulkPriceQueue}
-                  />
-                ) : null}
                 {visibleItems.length > 0 ? (
                   <InventoryGrid
                     isSelecting={isInventorySelectionSection && selectionMode}
@@ -2275,7 +2178,7 @@ function WorkspaceShell({
         ) : null}
 
         {activeSection === "pricing" && activeCollection ? (
-          <PricingReviewWorkspace
+          <PricingWorkspace
             canEdit={activeCollection.role !== "viewer"}
             collectionId={activeCollection.id}
             key={activeCollection.id}
@@ -2300,29 +2203,13 @@ function WorkspaceShell({
         ) : null}
 
         {activeSection === "data" ? (
-          <>
-            <DataWorkspacePanel
-              dataActionMessage={dataActionMessage}
-              exportStatus={exportStatus}
-              hasCollection={Boolean(activeCollection)}
-              onExport={handleExportInventoryCsv}
-              onImport={() => openPanel("import")}
-            />
-            {bulkPriceQueue && bulkPriceQueue.summary.total > 0 ? (
-              <BulkPriceQueuePanel
-                isWorking={bulkPriceStatus === "loading"}
-                message={bulkPriceMessage}
-                queue={bulkPriceQueue}
-                status={bulkPriceStatus}
-                onCancel={handleCancelBulkPriceQueue}
-                onClearCompleted={handleClearCompletedBulkPriceQueue}
-                onIgnoreItem={handleIgnorePriceRefresh}
-                onOpenItem={(item) => setSelectedItem(item)}
-                onResume={handleResumeBulkPriceQueue}
-                onRetryFailed={handleRetryFailedBulkPriceQueue}
-              />
-            ) : null}
-          </>
+          <DataWorkspacePanel
+            dataActionMessage={dataActionMessage}
+            exportStatus={exportStatus}
+            hasCollection={Boolean(activeCollection)}
+            onExport={handleExportInventoryCsv}
+            onImport={() => openIntake("csv")}
+          />
         ) : null}
 
         {activeSection === "admin" && activeCollection ? (

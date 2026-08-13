@@ -17,6 +17,8 @@ Milestone 1 is focused on the working app shell:
 - Interactive saved-price charts and immutable collection-value history with date ranges and point inspection
 - Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
 - Needs-attention inbox for metadata, image, pricing, duplicate, and failed-work review
+- Unified Add Cards workspace for search, manual entry, PSA certs, bulk lists, and CSV imports
+- Consolidated Pricing workspace for coverage, match review, and refresh-queue operations
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`
 

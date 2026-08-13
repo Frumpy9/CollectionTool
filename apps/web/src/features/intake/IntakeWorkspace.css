@@ -1,0 +1,327 @@
+.intake-workspace {
+  display: grid;
+  gap: 14px;
+}
+
+.intake-workspace-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.intake-workspace-header > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.intake-workspace-header h3,
+.intake-workspace-header p,
+.intake-method-header h3,
+.intake-method-header p,
+.intake-introduction p,
+.intake-permission-state p,
+.intake-empty-workflow p {
+  margin: 0;
+}
+
+.intake-workspace-header h3 {
+  font-size: 1.4rem;
+}
+
+.intake-workspace-header p:not(.eyebrow) {
+  max-width: 720px;
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.intake-access-badge {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.intake-access-badge.can-edit {
+  border-color: rgba(15, 118, 110, 0.3);
+  color: var(--teal);
+  background: #f0fdfa;
+}
+
+.intake-access-badge.read-only {
+  color: var(--muted);
+  background: var(--panel-strong);
+}
+
+.intake-method-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.intake-method-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 52px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+}
+
+.intake-method-tabs button > svg {
+  flex: 0 0 auto;
+}
+
+.intake-method-tabs button > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.intake-method-tabs strong,
+.intake-method-tabs small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.intake-method-tabs strong {
+  color: inherit;
+  font-size: 0.86rem;
+}
+
+.intake-method-tabs small {
+  color: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.intake-method-tabs button:hover,
+.intake-method-tabs button:focus-visible {
+  color: var(--ink);
+  border-color: var(--line);
+  outline: none;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.intake-method-tabs button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.intake-method-tabs button.active {
+  color: var(--ink);
+  border-color: rgba(213, 47, 58, 0.3);
+  background: var(--panel);
+  box-shadow: 0 1px 5px rgba(23, 32, 38, 0.08);
+}
+
+.intake-method-tabs button.active > svg {
+  color: var(--accent);
+}
+
+.intake-method-panel,
+.intake-introduction {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.intake-method-panel:focus {
+  outline: none;
+}
+
+.intake-method-panel:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.intake-method-header,
+.intake-introduction-copy,
+.intake-permission-state,
+.intake-empty-workflow {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.intake-method-header > div,
+.intake-introduction-copy > div,
+.intake-permission-state > div,
+.intake-empty-workflow > div {
+  display: grid;
+  gap: 3px;
+}
+
+.intake-method-header h3 {
+  font-size: 1rem;
+}
+
+.intake-method-header p,
+.intake-introduction-copy p,
+.intake-permission-state p,
+.intake-empty-workflow p {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.intake-method-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--accent);
+  background: #fff6f6;
+}
+
+.intake-workflow-slot {
+  min-width: 0;
+}
+
+.intake-workflow-slot > :first-child {
+  margin-top: 0;
+}
+
+.intake-workflow-slot > :last-child {
+  margin-bottom: 0;
+}
+
+.intake-introduction-copy > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.intake-method-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.intake-method-summary button {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 8px;
+  min-height: 126px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  background: var(--panel-strong);
+  text-align: left;
+}
+
+.intake-method-summary button > svg {
+  color: var(--accent);
+}
+
+.intake-method-summary button span {
+  display: grid;
+  gap: 4px;
+}
+
+.intake-method-summary button small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.intake-method-summary button:hover,
+.intake-method-summary button:focus-visible {
+  border-color: rgba(213, 47, 58, 0.32);
+  outline: none;
+  background: #fffafa;
+}
+
+.intake-method-summary button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.intake-method-summary button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.intake-permission-state,
+.intake-empty-workflow,
+.intake-read-only-note {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.intake-permission-state > svg,
+.intake-empty-workflow > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.intake-read-only-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+@media (max-width: 1050px) {
+  .intake-method-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .intake-method-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .intake-workspace-header {
+    display: grid;
+  }
+
+  .intake-access-badge {
+    justify-self: start;
+  }
+
+  .intake-method-tabs,
+  .intake-method-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .intake-method-tabs button {
+    min-height: 46px;
+  }
+
+  .intake-method-tabs small {
+    white-space: normal;
+  }
+
+  .intake-method-summary button {
+    min-height: 0;
+  }
+}

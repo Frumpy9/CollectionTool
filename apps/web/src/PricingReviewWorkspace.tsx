@@ -95,7 +95,7 @@ export function PricingReviewWorkspace({
       <div className="workspace-panel-header pricing-review-heading">
         <div>
           <p className="eyebrow">Pricing quality</p>
-          <h2>Match review</h2>
+          <h3>Match review</h3>
           <p>
             Compare inventory facts with saved provider alternatives. Confirmed pins remain in
             place during future price refreshes.
