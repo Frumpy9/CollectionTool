@@ -1,0 +1,161 @@
+.inventory-view-switcher {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.inventory-view-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.inventory-view-heading > div {
+  display: grid;
+  gap: 1px;
+}
+
+.inventory-view-heading h3,
+.inventory-view-heading p,
+.inventory-view-description {
+  margin: 0;
+}
+
+.inventory-view-heading h3 {
+  font-size: 1rem;
+}
+
+.inventory-view-heading > p {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.inventory-view-heading > p strong {
+  color: var(--ink);
+}
+
+.inventory-view-options {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.inventory-view-options button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--muted);
+  background: transparent;
+  text-align: left;
+}
+
+.inventory-view-options button > svg {
+  flex: 0 0 auto;
+}
+
+.inventory-view-options button > span {
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inventory-view-options button > strong {
+  display: grid;
+  min-width: 25px;
+  min-height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0 6px;
+  color: inherit;
+  background: var(--surface);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.inventory-view-options button:hover,
+.inventory-view-options button:focus-visible {
+  color: var(--ink);
+  border-color: var(--line);
+  outline: none;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.inventory-view-options button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+}
+
+.inventory-view-options button.active {
+  color: var(--ink);
+  border-color: rgba(37, 99, 235, 0.34);
+  background: var(--panel);
+  box-shadow: 0 1px 5px rgba(23, 32, 38, 0.08);
+}
+
+.inventory-view-options button.active > svg {
+  color: var(--blue);
+}
+
+.inventory-view-options button.active > strong {
+  color: #174ea6;
+  background: #eef5ff;
+}
+
+.inventory-view-description {
+  min-height: 1.3em;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.inventory-view-description strong {
+  color: var(--ink);
+}
+
+@media (max-width: 1180px) {
+  .inventory-view-options {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .inventory-view-switcher {
+    padding: 10px;
+  }
+
+  .inventory-view-heading {
+    align-items: start;
+  }
+
+  .inventory-view-options {
+    display: flex;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+  }
+
+  .inventory-view-options button {
+    flex: 0 0 148px;
+    scroll-snap-align: start;
+  }
+}
