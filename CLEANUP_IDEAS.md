@@ -65,11 +65,15 @@ Storage now supports reviewed moves and rename/merge operations, a first-class U
 conservative naming suggestions, and non-mutating local audit reports. Viewers retain browse and
 audit access without seeing mutation controls.
 
-### [ ] 5. Transaction and inventory finalization
+### [x] 5. Transaction and inventory finalization
 
 When recording a sale, trade, gift, or disposal, explicitly offer to adjust inventory in the same
 reviewed operation. Show the before and after quantity and retain a **ledger only** option. Never
 silently change inventory.
+
+New item transactions now default to ledger-only and offer an explicit linked-inventory option with
+a before/after confirmation. The ledger insert and quantity change commit atomically; invalid or
+insufficient adjustments roll both back. Editing or deleting history never replays inventory changes.
 
 ## Consistency And Trust Cleanups
 

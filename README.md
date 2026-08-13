@@ -151,9 +151,11 @@ is reconstructed once during migration and is labeled as an approximate legacy e
 
 ## Transaction Ledger
 
-Use the Transactions workspace to record collection activity without changing inventory counts. Amounts are totals for the whole transaction, never per-card amounts. Purchase and sale totals plus fees feed the cash-flow summary; assigned trade values stay outside cash flow. Cash-sale realized P&L is shown only when a sale has an explicit allocated cost. Trade-given assigned-value P&L is reported separately for the same reason.
+Use the Transactions workspace to record collection activity. Amounts are totals for the whole transaction, never per-card amounts. Purchase and sale totals plus fees feed the cash-flow summary; assigned trade values stay outside cash flow. Cash-sale realized P&L is shown only when a sale has an explicit allocated cost. Trade-given assigned-value P&L is reported separately for the same reason.
 
-Ledger rows retain a snapshot of the card name, set, and number if their inventory item is later deleted. Viewers can read the ledger, while editors, admins, and owners can add, edit, or delete rows. Adjust inventory quantity separately from the linked row's **Edit inventory** action.
+New item transactions default to **Ledger only**. When a row is linked, editors can instead choose **Adjust linked inventory**, review the exact before/after quantity, and confirm the ledger entry and inventory change as one atomic operation. Incoming purchases, trades, and gifts increase quantity; sales, outgoing trades or gifts, and disposals decrease it. A zero remainder removes the inventory row while preserving its transaction snapshot. Failed quantity validation changes neither ledger nor inventory, and editing or deleting a ledger entry never replays or reverses inventory changes.
+
+Viewers can read the ledger, while editors, admins, and owners can add, edit, or delete rows. Ledger rows retain a snapshot of the card name, set, and number if their inventory item is later deleted.
 
 ## Needs-Attention Inbox
 
