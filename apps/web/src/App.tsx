@@ -442,7 +442,7 @@ function workspaceSectionMeta(
     return {
       eyebrow: "Cash and activity",
       title: "Transaction ledger",
-      description: "Record purchases, sales, trades, gifts, disposals, and fees without rewriting inventory."
+      description: "Record activity ledger-only or finalize it with an explicit linked-inventory adjustment."
     };
   }
 
@@ -2818,9 +2818,12 @@ function TransactionLedgerWorkspace({
                   <span>
                     <strong>Adjust linked inventory</strong>
                     <small>
-                      {selectedFinalizationItem && finalizationAfterQuantity !== null
+                      {selectedFinalizationItem &&
+                      finalizationAfterQuantity !== null &&
+                      finalizationAfterQuantity >= 0 &&
+                      finalizationAfterQuantity <= 999
                         ? `${selectedFinalizationItem.card.name}: ${selectedFinalizationItem.quantity} → ${finalizationAfterQuantity}`
-                        : "Link an inventory row and enter a valid quantity to preview the change."}
+                        : "Link an inventory row and enter a safe quantity to preview the change."}
                     </small>
                   </span>
                 </label>

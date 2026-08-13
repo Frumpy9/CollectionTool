@@ -36,6 +36,7 @@ test("transaction ledger persists partial sales and computes only explicit reali
       transactedAt: "2026-08-05"
     });
     assert.equal(sale.statusCode, 201);
+    assert.equal(sale.json().inventoryAdjustment, null, "omitting opt-in remains ledger-only");
 
     const saleWithoutBasis = await createTransaction(server.app, collectionId, cookie, {
       itemId,
