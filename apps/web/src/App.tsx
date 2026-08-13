@@ -69,7 +69,16 @@ import {
   IntakeWorkspace,
   type IntakeMethod
 } from "./features/intake/IntakeWorkspace";
+import {
+  InventoryViewSwitcher,
+  applyInventoryView,
+  getInventoryViewDefinition,
+  isInventoryView,
+  reconcileItemTypeFilterForInventoryView,
+  type InventoryView
+} from "./features/inventory";
 import { PricingWorkspace } from "./features/pricing/PricingWorkspace";
+import { StorageWorkspace } from "./features/storage/StorageWorkspace";
 
 declare const __APP_VERSION__: string;
 
@@ -117,14 +126,6 @@ type InventoryTagFilter =
   | { type: "variant"; label: string; value: string }
   | { type: "storage"; label: string; value: string };
 
-type InventoryGroupSummary = {
-  key: string;
-  label: string;
-  count: number;
-  valueCents: number;
-  examples: string;
-};
-
 type BulkStorageEntryMode = "existing" | "new";
 
 type BulkMode = "cards" | "psa";
@@ -143,7 +144,6 @@ type BulkQueueRow = {
 type DuplicateDecisionChoice = "merge" | "separate" | "cancel";
 type WorkspaceSection =
   | "collection"
-  | "graded"
   | "search"
   | "attention"
   | "storage"
@@ -183,7 +183,7 @@ const variantOptions = [
 ];
 
 const workspaceNavItems = [
-  { section: "collection", label: "Collection", icon: Grid2X2 },
+  { section: "collection", label: "Inventory", icon: Grid2X2 },
   { section: "attention", label: "Needs attention", icon: Inbox },
   { section: "search", label: "Add cards", icon: Plus },
   { section: "storage", label: "Storage", icon: Tags },
@@ -260,6 +260,33 @@ const defaultInventoryFilters: InventoryFilterState = {
   valueStatus: "all",
   sort: "newest"
 };
+
+const inventoryViewStoragePrefix = "pokemon-vault:inventory-view:";
+
+function readStoredInventoryView(collectionId: string | undefined): InventoryView {
+  if (!collectionId) {
+    return "all";
+  }
+
+  try {
+    const storedView = window.localStorage.getItem(`${inventoryViewStoragePrefix}${collectionId}`);
+    return storedView && isInventoryView(storedView) ? storedView : "all";
+  } catch {
+    return "all";
+  }
+}
+
+function storeInventoryView(collectionId: string | undefined, view: InventoryView) {
+  if (!collectionId) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(`${inventoryViewStoragePrefix}${collectionId}`, view);
+  } catch {
+    // Inventory views remain usable for this session when storage is unavailable.
+  }
+}
 
 export function App() {
   const [auth, setAuth] = useState<AuthMeResponse | null>(null);
@@ -373,25 +400,15 @@ export function App() {
 
 function workspaceSectionMeta(
   section: WorkspaceSection,
-  counts: { totalCards: number; gradedRows: number; rawRows: number; storageGroups: number }
+  counts: { totalCards: number; inventoryRows: number; storageLocations: number }
 ) {
-  if (section === "graded") {
-    return {
-      eyebrow: "Slabs and certs",
-      title: "Graded cards",
-      description: `${counts.gradedRows} graded row${
-        counts.gradedRows === 1 ? "" : "s"
-      } with cert details, market pricing, and price history.`
-    };
-  }
-
   if (section === "storage") {
     return {
       eyebrow: "Organization",
-      title: "Storage and variants",
-      description: `${counts.storageGroups} storage group${
-        counts.storageGroups === 1 ? "" : "s"
-      } across ${counts.totalCards} card${counts.totalCards === 1 ? "" : "s"}.`
+      title: "Storage organizer",
+      description: `${counts.storageLocations} assigned location${
+        counts.storageLocations === 1 ? "" : "s"
+      } across ${counts.inventoryRows} inventory row${counts.inventoryRows === 1 ? "" : "s"}.`
     };
   }
 
@@ -453,11 +470,11 @@ function workspaceSectionMeta(
 
   if (section === "collection") {
     return {
-      eyebrow: "Raw inventory",
-      title: "Raw cards",
-      description: `${counts.rawRows} raw row${
-        counts.rawRows === 1 ? "" : "s"
-      } ready for lookup, pricing, and organization.`
+      eyebrow: "Collection",
+      title: "Inventory",
+      description: `${counts.inventoryRows} inventory row${
+        counts.inventoryRows === 1 ? "" : "s"
+      } across ${counts.totalCards} owned card${counts.totalCards === 1 ? "" : "s"}.`
     };
   }
 
@@ -486,8 +503,9 @@ function WorkspaceShell({
     collections.find((collection) => collection.id === activeCollectionId) ?? collections[0];
   const [activeSection, setActiveSection] = useState<WorkspaceSection>("collection");
   const [showCollectionMenu, setShowCollectionMenu] = useState(false);
-  const [showCollectionTypeMenu, setShowCollectionTypeMenu] = useState(false);
-  const [collectionResultScope, setCollectionResultScope] = useState<"raw" | "all">("raw");
+  const [inventoryView, setInventoryView] = useState<InventoryView>(() =>
+    readStoredInventoryView(collections[0]?.id)
+  );
   const [inventory, setInventory] = useState<InventoryListResponse>({
     items: [],
     summary: {
@@ -585,7 +603,7 @@ function WorkspaceShell({
     setSelectedItem(null);
     setShowFilters(false);
     setShowCollectionMenu(false);
-    setShowCollectionTypeMenu(false);
+    setInventoryView(readStoredInventoryView(activeCollection?.id));
     setInventoryFilters(defaultInventoryFilters);
     setIntakeMethod("search");
     setSelectionMode(false);
@@ -873,72 +891,37 @@ function WorkspaceShell({
     [inventoryFilters]
   );
   const hasActiveInventoryFilters = activeFilterChips.length > 0;
-  const rawItems = useMemo(
-    () => inventory.items.filter((item) => item.itemType === "raw"),
-    [inventory.items]
+  const inventoryViewReferenceTimeMs = useMemo(() => Date.now(), [inventory.items]);
+  const inventoryViewDefinition = getInventoryViewDefinition(inventoryView);
+  const sectionItems = useMemo(
+    () =>
+      applyInventoryView(inventory.items, inventoryView, {
+        referenceTimeMs: inventoryViewReferenceTimeMs
+      }),
+    [inventory.items, inventoryView, inventoryViewReferenceTimeMs]
   );
-  const gradedItems = useMemo(
-    () => inventory.items.filter((item) => item.itemType === "graded"),
-    [inventory.items]
-  );
-  const storageGroups = useMemo(() => getStorageGroups(inventory.items), [inventory.items]);
-  const variantGroups = useMemo(() => getVariantGroups(inventory.items), [inventory.items]);
-  const sectionItems =
-    activeSection === "graded"
-      ? gradedItems
-      : activeSection === "collection"
-        ? collectionResultScope === "all" || inventoryFilters.itemType !== "all"
-          ? inventory.items
-          : rawItems
-        : inventory.items;
-  const isInventorySelectionSection = activeSection === "collection" || activeSection === "graded";
-  const isAllCollectionResultScope =
-    activeSection === "collection" &&
-    (collectionResultScope === "all" || inventoryFilters.itemType !== "all");
+  const isInventorySelectionSection = activeSection === "collection";
   const visibleItems =
     isInventorySelectionSection
       ? filterInventoryItems(sectionItems, inventoryFilters)
       : [];
-  const inventoryRowKindLabel = isAllCollectionResultScope
-    ? "matching rows"
-    : activeSection === "graded"
-      ? "graded rows"
-      : "raw rows";
+  const inventoryRowKindLabel = inventoryView === "all"
+    ? "inventory rows"
+    : `${inventoryViewDefinition.label.toLocaleLowerCase()} rows`;
   const overallValueChangeCents = collectionValueChangeCents(inventory.items);
   const overallValueClassName = priceChangeClassName(overallValueChangeCents);
-  const sectionMeta = isAllCollectionResultScope
-    ? {
-        eyebrow: "Collection",
-        title: "Matching cards",
-        description: `${visibleItems.length} row${
-          visibleItems.length === 1 ? "" : "s"
-        } across raw and graded inventory.`
-      }
-    : workspaceSectionMeta(activeSection, {
-        totalCards: inventory.summary.cardCount,
-        gradedRows: gradedItems.length,
-        rawRows: rawItems.length,
-        storageGroups: storageGroups.length
-      });
+  const sectionMeta = workspaceSectionMeta(activeSection, {
+    totalCards: inventory.summary.cardCount,
+    inventoryRows: inventory.summary.itemCount,
+    storageLocations: filterOptions.storageLocations.length
+  });
 
   const workspaceStats = [
     {
-      label:
-        activeSection === "graded"
-          ? "Graded rows"
-          : isAllCollectionResultScope
-            ? "Matching rows"
-            : activeSection === "collection"
-              ? "Raw rows"
-              : "Total cards",
-      value:
-        activeSection === "graded"
-          ? String(gradedItems.length)
-          : isAllCollectionResultScope
-            ? String(visibleItems.length)
-            : activeSection === "collection"
-            ? String(rawItems.length)
-            : String(inventory.summary.cardCount),
+      label: activeSection === "collection" ? `${inventoryViewDefinition.label} rows` : "Total cards",
+      value: activeSection === "collection"
+        ? String(sectionItems.length)
+        : String(inventory.summary.cardCount),
       icon: Grid2X2
     },
     {
@@ -951,7 +934,7 @@ function WorkspaceShell({
     },
     {
       label: "Inventory rows",
-      value: activeSection === "graded" || activeSection === "collection" ? String(sectionItems.length) : String(inventory.summary.itemCount),
+      value: String(inventory.summary.itemCount),
       icon: Sparkles
     },
     {
@@ -963,10 +946,6 @@ function WorkspaceShell({
 
   function changeSection(section: WorkspaceSection) {
     setActiveSection(section);
-    if (section === "collection") {
-      setCollectionResultScope("raw");
-    }
-    setShowCollectionTypeMenu(false);
     setDeepSearchMessage("");
     setDeepSearchLookupResult(null);
     setDeepSearchSets([]);
@@ -984,6 +963,33 @@ function WorkspaceShell({
     setShowFilters(false);
   }
 
+  function handleInventoryViewChange(nextView: InventoryView) {
+    setInventoryView(nextView);
+    storeInventoryView(activeCollection?.id, nextView);
+    setInventoryFilters((current) => ({
+      ...current,
+      itemType: reconcileItemTypeFilterForInventoryView(nextView, current.itemType)
+    }));
+    setSelectedItemIds([]);
+    setBulkVariantEditorOpen(false);
+    setBulkStorageEditorOpen(false);
+  }
+
+  function handleInventoryFiltersChange(nextFilters: InventoryFilterState) {
+    const impliedItemType = inventoryViewDefinition.impliedItemType;
+
+    if (impliedItemType && nextFilters.itemType !== "all") {
+      if (nextFilters.itemType !== impliedItemType) {
+        setInventoryView(nextFilters.itemType);
+        storeInventoryView(activeCollection?.id, nextFilters.itemType);
+      }
+      setInventoryFilters({ ...nextFilters, itemType: "all" });
+      return;
+    }
+
+    setInventoryFilters(nextFilters);
+  }
+
   function handleSelectCollection(collectionId: string) {
     setActiveCollectionId(collectionId);
     setShowCollectionMenu(false);
@@ -995,37 +1001,19 @@ function WorkspaceShell({
     setIntakeMethod(method);
   }
 
-  function applyStorageFilter(storageLocation: string) {
-    setInventoryFilters({
-      ...defaultInventoryFilters,
-      storageLocation
-    });
-    setActiveSection("collection");
-    setCollectionResultScope("all");
-    setShowFilters(true);
-  }
-
-  function applyVariantFilter(variant: string) {
-    setInventoryFilters({
-      ...defaultInventoryFilters,
-      variants: [variant]
-    });
-    setActiveSection("collection");
-    setCollectionResultScope("all");
-    setShowFilters(true);
-  }
-
   function applyInventoryTagFilter(filter: InventoryTagFilter) {
     const nextFilters = filtersFromInventoryTag(filter);
 
-    setInventoryFilters(nextFilters);
     if (filter.type === "itemType") {
-      setActiveSection(filter.value === "graded" ? "graded" : "collection");
-      setCollectionResultScope("raw");
+      setInventoryView(filter.value);
+      storeInventoryView(activeCollection?.id, filter.value);
+      setInventoryFilters({ ...nextFilters, itemType: "all" });
     } else {
-      setActiveSection("collection");
-      setCollectionResultScope("all");
+      setInventoryView("all");
+      storeInventoryView(activeCollection?.id, "all");
+      setInventoryFilters(nextFilters);
     }
+    setActiveSection("collection");
     setSelectedItem(null);
     setSelectionMode(false);
     setSelectedItemIds([]);
@@ -1818,48 +1806,6 @@ function WorkspaceShell({
           {visibleWorkspaceNavItems.map((item) => {
             const Icon = item.icon;
 
-            if (item.section === "collection") {
-              const isCollectionGroupActive = activeSection === "collection" || activeSection === "graded";
-
-              return (
-                <div className="nav-group" key={item.section}>
-                  <button
-                    aria-expanded={showCollectionTypeMenu}
-                    aria-haspopup="menu"
-                    className={`nav-item ${isCollectionGroupActive ? "active" : ""}`}
-                    onClick={() => setShowCollectionTypeMenu((isOpen) => !isOpen)}
-                    type="button"
-                  >
-                    <Icon size={18} aria-hidden="true" />
-                    <span>{item.label}</span>
-                    <ChevronDown className="nav-item-chevron" size={16} aria-hidden="true" />
-                  </button>
-                  {showCollectionTypeMenu ? (
-                    <div className="nav-submenu" role="menu" aria-label="Collection views">
-                      <button
-                        className={activeSection === "collection" ? "active" : ""}
-                        onClick={() => changeSection("collection")}
-                        role="menuitem"
-                        type="button"
-                      >
-                        <Grid2X2 size={16} aria-hidden="true" />
-                        Raw cards
-                      </button>
-                      <button
-                        className={activeSection === "graded" ? "active" : ""}
-                        onClick={() => changeSection("graded")}
-                        role="menuitem"
-                        type="button"
-                      >
-                        <ShieldCheck size={16} aria-hidden="true" />
-                        Graded cards
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            }
-
             return (
               <button
                 className={`nav-item ${activeSection === item.section ? "active" : ""}`}
@@ -1907,7 +1853,7 @@ function WorkspaceShell({
             <p>{sectionMeta.description}</p>
           </div>
           <div className="topbar-actions">
-            {activeSection === "collection" || activeSection === "graded" ? (
+            {activeSection === "collection" ? (
               <button
                 className={`icon-button ${showFilters ? "active" : ""}`}
                 type="button"
@@ -1994,21 +1940,30 @@ function WorkspaceShell({
           />
         ) : null}
 
-        {(activeSection === "collection" || activeSection === "graded") && showFilters ? (
+        {activeSection === "collection" ? (
+          <InventoryViewSwitcher
+            items={inventory.items}
+            onChange={handleInventoryViewChange}
+            referenceTimeMs={inventoryViewReferenceTimeMs}
+            value={inventoryView}
+          />
+        ) : null}
+
+        {activeSection === "collection" && showFilters ? (
           <InventoryFilterPanel
             chips={activeFilterChips}
             filters={inventoryFilters}
             options={filterOptions}
             resultCount={visibleItems.length}
             totalCount={sectionItems.length}
-            onChange={setInventoryFilters}
+            onChange={handleInventoryFiltersChange}
             onClearAll={() => setInventoryFilters(defaultInventoryFilters)}
           />
         ) : null}
 
         {inventoryStatus === "error" ? <p className="form-error">{inventoryError}</p> : null}
 
-        {activeSection === "collection" || activeSection === "graded" ? (
+        {activeSection === "collection" ? (
           <>
             <section className="stats-grid" aria-label="Collection summary">
               {workspaceStats.map((stat) => {
@@ -2150,30 +2105,33 @@ function WorkspaceShell({
                   <div className="card-stack card-stack-three" />
                 </div>
                 <div className="empty-copy">
-                  <p className="eyebrow">Ready for inventory</p>
-                  <h3>
-                    {activeSection === "graded"
-                      ? "No graded cards yet."
-                      : "No raw cards yet."}
-                  </h3>
-                  <p>
-                    {activeSection === "graded"
-                      ? "Import a PSA cert or mark a manual entry as graded to track slab details, values, and price history."
-                      : "Use lookup, bulk paste, CSV import, or manual entry to add raw cards to this local collection."}
-                  </p>
+                  <p className="eyebrow">{inventoryViewDefinition.label} view</p>
+                  <h3>{inventoryViewDefinition.emptyTitle}</h3>
+                  <p>{inventoryViewDefinition.emptyDescription}</p>
                 </div>
               </section>
             )}
           </>
         ) : null}
 
-        {activeSection === "storage" ? (
-          <StorageInsights
+        {activeSection === "storage" && activeCollection ? (
+          <StorageWorkspace
+            canEdit={activeCollection.role !== "viewer"}
+            collectionId={activeCollection.id}
             items={inventory.items}
-            storageGroups={storageGroups}
-            variantGroups={variantGroups}
-            onSelectStorage={applyStorageFilter}
-            onSelectVariant={applyVariantFilter}
+            key={activeCollection.id}
+            onItemsUpdated={(updatedItems) => {
+              const updatedById = new Map(updatedItems.map((item) => [item.id, item]));
+              setInventory((current) =>
+                summarizeInventory(
+                  current.items.map((item) => updatedById.get(item.id) ?? item)
+                )
+              );
+              setSelectedItem((current) =>
+                current ? updatedById.get(current.id) ?? current : current
+              );
+            }}
+            onOpenItem={setSelectedItem}
           />
         ) : null}
 
@@ -2451,196 +2409,6 @@ function collectionValueHistoryDetail(point: CollectionValueHistoryPoint) {
   }
 
   return `migration baseline · ${ownedLabel}`;
-}
-
-function StorageInsights({
-  items,
-  storageGroups,
-  variantGroups,
-  onSelectStorage,
-  onSelectVariant
-}: {
-  items: InventoryItem[];
-  storageGroups: InventoryGroupSummary[];
-  variantGroups: InventoryGroupSummary[];
-  onSelectStorage: (storageLocation: string) => void;
-  onSelectVariant: (variant: string) => void;
-}) {
-  const storedQuantity = storageGroups.reduce((total, group) => total + group.count, 0);
-  const storedValueCents = storageGroups.reduce((total, group) => total + group.valueCents, 0);
-  const unassignedItems = items.filter((item) => !item.storageLocation?.trim());
-  const unassignedQuantity = unassignedItems.reduce((total, item) => total + item.quantity, 0);
-  const unassignedValueCents = unassignedItems.reduce(
-    (total, item) => total + inventoryItemValue(item),
-    0
-  );
-  const maxStorageCount = Math.max(1, ...storageGroups.map((group) => group.count));
-  const topStorageGroups = storageGroups.slice(0, 8);
-  const topVariantGroups = variantGroups.slice(0, 12);
-  const overflowStorageGroups = storageGroups.slice(topStorageGroups.length);
-  const overflowVariantGroups = variantGroups.slice(topVariantGroups.length);
-
-  return (
-    <section className="storage-workspace" aria-label="Storage and variant summaries">
-      <div className="storage-overview">
-        <div>
-          <p className="eyebrow">Storage</p>
-          <h3>Location map</h3>
-        </div>
-        <div className="storage-metrics" aria-label="Storage summary">
-          <div>
-            <span>Locations</span>
-            <strong>{storageGroups.length}</strong>
-          </div>
-          <div>
-            <span>Stored cards</span>
-            <strong>{storedQuantity}</strong>
-          </div>
-          <div>
-            <span>Stored value</span>
-            <strong>{formatCurrency(storedValueCents)}</strong>
-          </div>
-          <div className={unassignedQuantity > 0 ? "needs-attention" : ""}>
-            <span>Unassigned</span>
-            <strong>{unassignedQuantity}</strong>
-          </div>
-        </div>
-      </div>
-
-      <div className="storage-layout">
-        <div className="storage-panel storage-panel-primary">
-          <div className="insight-header">
-            <div>
-              <p className="eyebrow">Locations</p>
-              <h3>Stored groups</h3>
-            </div>
-            <span>{storedQuantity}</span>
-          </div>
-          <div className="storage-group-list">
-            {topStorageGroups.length > 0 ? (
-              topStorageGroups.map((group) => (
-                <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
-                  <span className="storage-group-main">
-                    <strong>{group.label}</strong>
-                    <small>{group.examples}</small>
-                  </span>
-                  <span className="storage-group-stats">
-                    <strong>{group.count}</strong>
-                    <small>{formatCurrency(group.valueCents)}</small>
-                  </span>
-                  <span className="storage-group-meter" aria-hidden="true">
-                    <span
-                      style={{
-                        width: `${Math.max(8, (group.count / maxStorageCount) * 100)}%`
-                      }}
-                    />
-                  </span>
-                </button>
-              ))
-            ) : (
-              <p className="lookup-note">No assigned storage locations yet.</p>
-            )}
-          </div>
-        </div>
-
-        <div className="storage-side-stack">
-          <div className="storage-panel">
-            <div className="insight-header">
-              <div>
-                <p className="eyebrow">Loose ends</p>
-                <h3>Unassigned</h3>
-              </div>
-              <span>{unassignedQuantity}</span>
-            </div>
-            <div className="storage-empty-metric">
-              <strong>{formatCurrency(unassignedValueCents)}</strong>
-              <span>{unassignedItems.length} row{unassignedItems.length === 1 ? "" : "s"}</span>
-            </div>
-          </div>
-
-          <div className="storage-panel">
-            <div className="insight-header">
-              <div>
-                <p className="eyebrow">Variants</p>
-                <h3>Tags in use</h3>
-              </div>
-              <span>{variantGroups.length}</span>
-            </div>
-            <div className="storage-variant-list">
-              {topVariantGroups.length > 0 ? (
-                topVariantGroups.map((group) => (
-                  <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
-                    <span>
-                      <strong>{group.label}</strong>
-                      <small>{group.count} · {formatCurrency(group.valueCents)}</small>
-                    </span>
-                  </button>
-                ))
-              ) : (
-                <p className="lookup-note">No variant tags yet.</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {overflowStorageGroups.length > 0 || overflowVariantGroups.length > 0 ? (
-        <div className="storage-overflow-grid">
-          {overflowStorageGroups.length > 0 ? (
-            <div className="insight-panel">
-              <div className="insight-header">
-                <div>
-                  <p className="eyebrow">All locations</p>
-                  <h3>More groups</h3>
-                </div>
-                <span>{overflowStorageGroups.length}</span>
-              </div>
-              <div className="insight-list">
-                {overflowStorageGroups.map((group) => (
-                  <button key={group.key} onClick={() => onSelectStorage(group.key)} type="button">
-                    <span>
-                      <strong>{group.label}</strong>
-                      <small>{group.examples}</small>
-                    </span>
-                    <span>
-                      <strong>{group.count}</strong>
-                      <small>{formatCurrency(group.valueCents)}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {overflowVariantGroups.length > 0 ? (
-            <div className="insight-panel">
-              <div className="insight-header">
-                <div>
-                  <p className="eyebrow">All variants</p>
-                  <h3>More tags</h3>
-                </div>
-                <span>{overflowVariantGroups.length}</span>
-              </div>
-              <div className="insight-list">
-                {overflowVariantGroups.map((group) => (
-                  <button key={group.key} onClick={() => onSelectVariant(group.key)} type="button">
-                    <span>
-                      <strong>{group.label}</strong>
-                      <small>{group.examples}</small>
-                    </span>
-                    <span>
-                      <strong>{group.count}</strong>
-                      <small>{formatCurrency(group.valueCents)}</small>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
 }
 
 const transactionTypeOptions: Array<{ value: CollectionTransactionType; label: string }> = [
@@ -5245,26 +5013,24 @@ function InventoryFilterPanel({
   options: InventoryFilterOptions;
   resultCount: number;
   totalCount: number;
-  onChange: React.Dispatch<React.SetStateAction<InventoryFilterState>>;
+  onChange: (filters: InventoryFilterState) => void;
   onClearAll: () => void;
 }) {
   function updateFilter(next: Partial<InventoryFilterState>) {
-    onChange((current) => ({
-      ...current,
+    onChange({
+      ...filters,
       ...next
-    }));
+    });
   }
 
   function toggleVariant(variant: string) {
-    onChange((current) => {
-      const isSelected = current.variants.includes(variant);
+    const isSelected = filters.variants.includes(variant);
 
-      return {
-        ...current,
-        variants: isSelected
-          ? current.variants.filter((selected) => selected !== variant)
-          : [...current.variants, variant]
-      };
+    onChange({
+      ...filters,
+      variants: isSelected
+        ? filters.variants.filter((selected) => selected !== variant)
+        : [...filters.variants, variant]
     });
   }
 
@@ -8334,80 +8100,6 @@ function getInventoryFilterOptions(items: InventoryItem[]): InventoryFilterOptio
     conditions: uniqueSorted(items.map((item) => item.conditionLabel)),
     storageLocations: uniqueSorted(items.map((item) => item.storageLocation))
   };
-}
-
-function getStorageGroups(items: InventoryItem[]): InventoryGroupSummary[] {
-  return groupInventoryItems(
-    items.filter((item) => Boolean(item.storageLocation?.trim())),
-    (item) => item.storageLocation?.trim() ?? "",
-    (value) => value
-  );
-}
-
-function getVariantGroups(items: InventoryItem[]): InventoryGroupSummary[] {
-  const groups = new Map<string, InventoryItem[]>();
-
-  for (const item of items) {
-    for (const variant of variantsFromText(item.variantDetails ?? "")) {
-      const current = groups.get(variant) ?? [];
-      current.push(item);
-      groups.set(variant, current);
-    }
-  }
-
-  return [...groups.entries()]
-    .map(([variant, groupItems]) => inventoryGroupSummary(variant, variant, groupItems))
-    .sort(compareInventoryGroups);
-}
-
-function groupInventoryItems(
-  items: InventoryItem[],
-  keyForItem: (item: InventoryItem) => string,
-  labelForKey: (key: string) => string
-) {
-  const groups = new Map<string, InventoryItem[]>();
-
-  for (const item of items) {
-    const key = keyForItem(item);
-
-    if (!key) {
-      continue;
-    }
-
-    const current = groups.get(key) ?? [];
-    current.push(item);
-    groups.set(key, current);
-  }
-
-  return [...groups.entries()]
-    .map(([key, groupItems]) => inventoryGroupSummary(key, labelForKey(key), groupItems))
-    .sort(compareInventoryGroups);
-}
-
-function inventoryGroupSummary(
-  key: string,
-  label: string,
-  items: InventoryItem[]
-): InventoryGroupSummary {
-  const examples = uniqueSorted(items.map((item) => item.card.name))
-    .slice(0, 3)
-    .join(", ");
-
-  return {
-    key,
-    label,
-    count: items.reduce((total, item) => total + item.quantity, 0),
-    valueCents: items.reduce((total, item) => total + inventoryItemValue(item), 0),
-    examples: examples || "No named cards"
-  };
-}
-
-function compareInventoryGroups(left: InventoryGroupSummary, right: InventoryGroupSummary) {
-  if (right.count !== left.count) {
-    return right.count - left.count;
-  }
-
-  return left.label.localeCompare(right.label, undefined, { sensitivity: "base" });
 }
 
 function getInventoryFilterChips(
