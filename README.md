@@ -18,6 +18,7 @@ Milestone 1 is focused on the working app shell:
 - Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
 - Needs-attention inbox for metadata, image, pricing, duplicate, and failed-work review
 - Unified Add Cards workspace for search, manual entry, PSA certs, bulk lists, and CSV imports
+- Server-ranked image recovery with provider fallback and inspectable match reasons
 - Consolidated Pricing workspace for coverage, match review, and refresh-queue operations
 - Docker Compose layout with persistent local data
 - Public-safe `.env.example`

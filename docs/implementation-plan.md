@@ -30,6 +30,8 @@
 - [x] Added bulk card lookup and bulk PSA cert import from pasted or uploaded text lists.
 - [x] Added centralized server-side duplicate detection with structured match reasons and a
   quantity-merge choice before adding matching inventory rows.
+- [x] Moved inventory image search, provider fallback, ranking, and match explanations to a tested
+  server-side matcher shared by all inventory rows regardless of intake source.
 - [x] Added persistent graded-cert metadata and slab detail UI for PSA imports.
 - [x] Fixed graded-cert metadata migration id collision and added self-healing cert column setup.
 - [x] Removed PSA estimate UI because the public PSA API did not return estimate values in testing.

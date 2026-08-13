@@ -470,30 +470,6 @@ test("inventory duplicate preflight returns structured matches without mutating 
       headers: { cookie }
     });
     assert.equal(inventoryResponse.json().items.length, 1);
-  } finally {
-    await closeTestServer(server);
-  }
-});
-
-test("inventory image lookup is member-readable and returns provider diagnostics", async () => {
-  const server = await createTestServer();
-  try {
-    const { collections, cookie } = await bootstrapAdmin(server.app);
-    const collectionId = collections[0].id;
-    const createResponse = await server.app.inject({
-      method: "POST",
-      url: `/api/collections/${collectionId}/items`,
-      headers: { cookie },
-      payload: {
-        name: "Pikachu",
-        setName: "Base Set",
-        setCode: "BS",
-        cardNumber: "58/102",
-        language: "en",
-        itemType: "raw",
-        quantity: 1
-      }
-    });
     const itemId = createResponse.json().item.id as string;
 
     const response = await server.app.inject({

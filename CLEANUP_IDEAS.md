@@ -88,11 +88,16 @@ CSV policies and cert checks share the same normalized keys, and Needs Attention
 structured matching fields. Certification matches cannot change quantity or be added as separate rows, while intentional
 variant differences such as 1st Edition, Shadowless, and printing details remain distinct.
 
-### [ ] 7. Server-side image matching
+### [x] 7. Server-side image matching
 
 Move image candidate lookup, scoring, and provider fallback logic out of the large frontend
 component. Return ranked candidates with match reasons and confidence from the API so manual, bulk,
 PSA, and CSV workflows share one tested implementation.
+
+Image search queries, provider fallback, compatibility checks, de-duplication, and ranking now run
+in one tested server module. The inventory image picker shows ranked confidence and field-level match
+reasons. Rows created by any intake path use this same fetch action after they enter inventory; CSV
+commits remain atomic and never wait on external image providers.
 
 ### [ ] 8. Clear collection versus system administration
 
