@@ -1529,6 +1529,17 @@ small {
   margin-left: auto;
 }
 
+.collection-settings-toolbar > div {
+  display: grid;
+  gap: 2px;
+}
+
+.collection-settings-toolbar > div > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .admin-message {
   margin: 0;
   font-weight: 800;
@@ -1712,6 +1723,23 @@ small {
 .admin-compact-list {
   display: grid;
   gap: 8px;
+}
+
+.provider-diagnostic-list strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.provider-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: #b7791f;
+}
+
+.provider-status-dot.available {
+  background: var(--teal);
 }
 
 .admin-compact-list div {

@@ -396,13 +396,7 @@ export type AdminIgnoredPriceRefreshItem = {
   ignoredAt: string;
 };
 
-export type AdminCollectionStatusResponse = {
-  backups: {
-    scheduledEnabled: boolean;
-    intervalHours: number;
-    retentionDays: number;
-    latest: AdminBackupSummary[];
-  };
+export type CollectionSettingsStatusResponse = {
   pricing: {
     scheduledEnabled: boolean;
     intervalHours: number;
@@ -416,6 +410,23 @@ export type AdminCollectionStatusResponse = {
     ignoredItems: AdminIgnoredPriceRefreshItem[];
     queueSummary: BulkPriceQueueResponse["summary"];
   };
+};
+
+export type SystemProviderDiagnostic = {
+  id: "tcgdex" | "pokemontcg" | "pokemonpricetracker" | "psa";
+  label: string;
+  status: "available" | "missing_credentials";
+  detail: string;
+};
+
+export type SystemAdminStatusResponse = {
+  backups: {
+    scheduledEnabled: boolean;
+    intervalHours: number;
+    retentionDays: number;
+    latest: AdminBackupSummary[];
+  };
+  providers: SystemProviderDiagnostic[];
 };
 
 export type DatabaseIntegrityViolation = {

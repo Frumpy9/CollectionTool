@@ -1,6 +1,5 @@
 import type {
   AddCollectionMemberRequest,
-  AdminCollectionStatusResponse,
   AdminUser,
   AdminUsersResponse,
   AuthMeResponse,
@@ -24,6 +23,7 @@ import type {
   CollectionMembersResponse,
   CollectionTransaction,
   CollectionTransactionsResponse,
+  CollectionSettingsStatusResponse,
   CreateCollectionTransactionResponse,
   CreateAdminUserRequest,
   DatabaseIntegrityResponse,
@@ -49,6 +49,7 @@ import type {
   SelectPokemonPriceTrackerPricingRequest,
   SelectPricingRequest,
   ResetAdminUserPasswordRequest,
+  SystemAdminStatusResponse,
   UpdateAdminUserRequest,
   UpdateCollectionMemberRequest,
   UpdateInventoryItemRequest,
@@ -174,8 +175,9 @@ export const api = {
     request<{ ok: true }>(`/api/collections/${collectionId}/members/${userId}`, {
       method: "DELETE"
     }),
-  getAdminStatus: (collectionId: string) =>
-    request<AdminCollectionStatusResponse>(`/api/collections/${collectionId}/admin/status`),
+  getCollectionSettingsStatus: (collectionId: string) =>
+    request<CollectionSettingsStatusResponse>(`/api/collections/${collectionId}/settings/status`),
+  getSystemAdminStatus: () => request<SystemAdminStatusResponse>("/api/admin/status"),
   runDatabaseIntegrityCheck: () =>
     request<DatabaseIntegrityResponse>("/api/admin/database/integrity-check", {
       method: "POST",
@@ -305,8 +307,8 @@ export const api = {
     ),
   downloadCsvImportErrors: (collectionId: string, jobId: string) =>
     requestBlob(`/api/collections/${collectionId}/csv-imports/${jobId}/errors.csv`),
-  createSqliteBackup: (collectionId: string) =>
-    request<BackupSqliteResponse>(`/api/collections/${collectionId}/backups/sqlite`, {
+  createSqliteBackup: () =>
+    request<BackupSqliteResponse>("/api/admin/backups/sqlite", {
       method: "POST",
       body: JSON.stringify({})
     }),

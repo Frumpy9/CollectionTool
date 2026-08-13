@@ -98,6 +98,35 @@ test("system admins can run healthy database integrity diagnostics", async () =>
     });
     assert.ok(Number.isFinite(Date.parse(diagnostic.checkedAt)));
     assert.equal("path" in diagnostic.connection, false);
+
+    const statusResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/admin/status",
+      headers: { cookie }
+    });
+    assert.equal(statusResponse.statusCode, 200);
+    assert.equal(statusResponse.json().backups.scheduledEnabled, false);
+    assert.deepEqual(
+      statusResponse.json().providers.map((provider: { id: string; status: string }) => [
+        provider.id,
+        provider.status
+      ]),
+      [
+        ["tcgdex", "available"],
+        ["pokemontcg", "available"],
+        ["pokemonpricetracker", "missing_credentials"],
+        ["psa", "missing_credentials"]
+      ]
+    );
+
+    const backupResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/admin/backups/sqlite",
+      headers: { cookie },
+      payload: {}
+    });
+    assert.equal(backupResponse.statusCode, 200);
+    assert.equal(backupResponse.json().ok, true);
   } finally {
     await closeTestServer(server);
   }
@@ -141,7 +170,7 @@ test("database diagnostics report foreign-key violations without row contents", 
   }
 });
 
-test("collection admins cannot run system database diagnostics", async () => {
+test("collection admins can load collection settings but cannot access system administration", async () => {
   const server = await createTestServer();
   try {
     const { collections, cookie: adminCookie } = await bootstrapAdmin(server.app);
@@ -170,6 +199,29 @@ test("collection admins cannot run system database diagnostics", async () => {
 
     assert.equal(response.statusCode, 403);
     assert.deepEqual(response.json(), { error: "Unauthorized" });
+
+    const statusResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/admin/status",
+      headers: { cookie: managerLogin.cookie }
+    });
+    assert.equal(statusResponse.statusCode, 403);
+
+    const backupResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/admin/backups/sqlite",
+      headers: { cookie: managerLogin.cookie },
+      payload: {}
+    });
+    assert.equal(backupResponse.statusCode, 403);
+
+    const collectionSettingsResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collections[0].id}/settings/status`,
+      headers: { cookie: managerLogin.cookie }
+    });
+    assert.equal(collectionSettingsResponse.statusCode, 200);
+    assert.equal("backups" in collectionSettingsResponse.json(), false);
   } finally {
     await closeTestServer(server);
   }
@@ -414,6 +466,20 @@ test("system admins can inspect every collection while foreign collections remai
       }
     });
     assert.equal(mutateResponse.statusCode, 403);
+
+    const membershipResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectorCollectionId}/members`,
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(membershipResponse.statusCode, 403);
+
+    const settingsResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectorCollectionId}/settings/status`,
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(settingsResponse.statusCode, 403);
   } finally {
     await closeTestServer(server);
   }
@@ -792,6 +858,26 @@ test("pricing reviews are viewer-readable but viewer mutations are forbidden", a
         await server.app.inject({
           method: "GET",
           url: `/api/collections/${collectionId}/pricing/reviews`,
+          headers: { cookie: viewerLogin.cookie }
+        })
+      ).statusCode,
+      200
+    );
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "GET",
+          url: `/api/collections/${collectionId}/pricing/bulk/queue`,
+          headers: { cookie: viewerLogin.cookie }
+        })
+      ).statusCode,
+      200
+    );
+    assert.equal(
+      (
+        await server.app.inject({
+          method: "GET",
+          url: `/api/collections/${collectionId}/pricing/value-history`,
           headers: { cookie: viewerLogin.cookie }
         })
       ).statusCode,

@@ -34,7 +34,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuthMeResponse,
   AuthUser,
-  AdminCollectionStatusResponse,
   AdminUser,
   BulkPriceQueueResponse,
   BulkVariantEditMode,
@@ -44,6 +43,7 @@ import type {
   CollectionMember,
   CollectionMemberCandidate,
   CollectionMembersResponse,
+  CollectionSettingsStatusResponse,
   CollectionSummary,
   CollectionTransaction,
   CollectionTransactionType,
@@ -63,6 +63,7 @@ import type {
   PokemonPriceTrackerSetSummary,
   PricingCandidate,
   PsaCertLookupResponse,
+  SystemAdminStatusResponse,
   TransactionInventoryAdjustment,
   ValueOverrideHistoryEntry
 } from "@collection-tool/shared";
@@ -154,9 +155,10 @@ type WorkspaceSection =
   | "pricing"
   | "ledger"
   | "data"
-  | "admin"
+  | "settings"
+  | "system"
   | "credits";
-type AdminTab = "accounts" | "members" | "maintenance";
+type SystemAdminTab = "accounts" | "maintenance";
 type DeepSearchStatus = "idle" | "loading" | "error";
 
 type ApiCredit = {
@@ -194,13 +196,25 @@ const workspaceNavItems = [
   { section: "pricing", label: "Pricing", icon: AlertTriangle },
   { section: "ledger", label: "Transactions", icon: CircleDollarSign },
   { section: "data", label: "Data", icon: Database },
-  { section: "admin", label: "Admin", icon: Users, adminOnly: true },
+  {
+    section: "settings",
+    label: "Collection settings",
+    icon: Users,
+    collectionAdminOnly: true
+  },
+  {
+    section: "system",
+    label: "System admin",
+    icon: ShieldCheck,
+    systemAdminOnly: true
+  },
   { section: "credits", label: "Credits", icon: ExternalLink }
 ] satisfies Array<{
   section: WorkspaceSection;
   label: string;
   icon: typeof Grid2X2;
-  adminOnly?: boolean;
+  collectionAdminOnly?: boolean;
+  systemAdminOnly?: boolean;
 }>;
 
 const apiCredits: ApiCredit[] = [
@@ -456,11 +470,19 @@ function workspaceSectionMeta(
     };
   }
 
-  if (section === "admin") {
+  if (section === "settings") {
     return {
-      eyebrow: "Admin",
-      title: "Admin tools",
-      description: "Manage local accounts, collection access, backups, and maintenance status."
+      eyebrow: "Collection access",
+      title: "Collection settings",
+      description: "Manage members, roles, and collection-specific pricing behavior."
+    };
+  }
+
+  if (section === "system") {
+    return {
+      eyebrow: "System",
+      title: "System administration",
+      description: "Manage local accounts, database integrity, backups, and provider diagnostics."
     };
   }
 
@@ -537,13 +559,13 @@ function WorkspaceShell({
   const [exportStatus, setExportStatus] = useState<"idle" | "loading" | "error">("idle");
   const [backupStatus, setBackupStatus] = useState<"idle" | "loading" | "error">("idle");
   const [dataActionMessage, setDataActionMessage] = useState("");
-  const [adminTab, setAdminTab] = useState<AdminTab>(
-    authUser.systemRole === "admin" ? "accounts" : "members"
-  );
+  const [systemAdminTab, setSystemAdminTab] = useState<SystemAdminTab>("accounts");
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
   const [collectionMembers, setCollectionMembers] = useState<CollectionMember[]>([]);
   const [memberCandidates, setMemberCandidates] = useState<CollectionMemberCandidate[]>([]);
-  const [adminStatus, setAdminStatus] = useState<AdminCollectionStatusResponse | null>(null);
+  const [collectionSettingsStatus, setCollectionSettingsStatus] =
+    useState<CollectionSettingsStatusResponse | null>(null);
+  const [systemAdminStatus, setSystemAdminStatus] = useState<SystemAdminStatusResponse | null>(null);
   const [databaseIntegrity, setDatabaseIntegrity] = useState<DatabaseIntegrityResponse | null>(null);
   const [databaseIntegrityStatus, setDatabaseIntegrityStatus] = useState<
     "idle" | "loading" | "issues" | "error"
@@ -581,12 +603,13 @@ function WorkspaceShell({
       bulkPriceQueue.summary.running +
       bulkPriceQueue.summary.rateLimited
     : 0;
-  const canUseAdmin =
-    authUser.systemRole === "admin" ||
-    activeCollection?.role === "owner" ||
-    activeCollection?.role === "admin";
+  const canManageActiveCollection =
+    activeCollection?.role === "owner" || activeCollection?.role === "admin";
+  const isSystemAdmin = authUser.systemRole === "admin";
   const visibleWorkspaceNavItems = workspaceNavItems.filter(
-    (item) => !item.adminOnly || canUseAdmin
+    (item) =>
+      (!item.collectionAdminOnly || canManageActiveCollection) &&
+      (!item.systemAdminOnly || isSystemAdmin)
   );
 
   useEffect(() => {
@@ -620,7 +643,7 @@ function WorkspaceShell({
     setBulkPriceMessage("");
     setDataActionMessage("");
     setAdminMessage("");
-    setAdminStatus(null);
+    setCollectionSettingsStatus(null);
     setDatabaseIntegrity(null);
     setDatabaseIntegrityStatus("idle");
     setCollectionMembers([]);
@@ -629,9 +652,6 @@ function WorkspaceShell({
     setCollectionValueHistory([]);
     setCollectionValueHistoryStatus("idle");
     setCollectionValueHistoryMessage("");
-    if (authUser.systemRole !== "admin") {
-      setAdminTab("members");
-    }
   }, [activeCollection?.id]);
 
   useEffect(() => {
@@ -734,26 +754,37 @@ function WorkspaceShell({
   }, [activeCollection?.id]);
 
   useEffect(() => {
-    if (!activeCollection || activeSection !== "admin" || !canUseAdmin) {
+    if (!activeCollection || activeSection !== "settings" || !canManageActiveCollection) {
       return;
     }
 
-    void refreshAdminData();
-  }, [activeCollection?.id, activeSection, canUseAdmin, authUser.systemRole]);
+    void refreshCollectionSettingsData();
+  }, [activeCollection?.id, activeSection, canManageActiveCollection]);
 
   useEffect(() => {
-    if (activeSection === "admin" && !canUseAdmin) {
+    if (activeSection !== "system" || !isSystemAdmin) {
+      return;
+    }
+
+    void refreshSystemAdminData();
+  }, [activeSection, isSystemAdmin]);
+
+  useEffect(() => {
+    if (
+      (activeSection === "settings" && !canManageActiveCollection) ||
+      (activeSection === "system" && !isSystemAdmin)
+    ) {
       setActiveSection("collection");
     }
-  }, [activeSection, canUseAdmin]);
+  }, [activeSection, canManageActiveCollection, isSystemAdmin]);
 
   useEffect(() => {
     const availableItemIds = new Set(inventory.items.map((item) => item.id));
     setSelectedItemIds((current) => current.filter((itemId) => availableItemIds.has(itemId)));
   }, [inventory.items]);
 
-  async function refreshAdminData() {
-    if (!activeCollection || !canUseAdmin) {
+  async function refreshCollectionSettingsData() {
+    if (!activeCollection || !canManageActiveCollection) {
       return;
     }
 
@@ -761,24 +792,42 @@ function WorkspaceShell({
     setAdminMessage("");
 
     try {
-      const [membersResponse, statusResponse, usersResponse] = await Promise.all([
+      const [membersResponse, statusResponse] = await Promise.all([
         api.listCollectionMembers(activeCollection.id),
-        api.getAdminStatus(activeCollection.id),
-        authUser.systemRole === "admin" ? api.listAdminUsers() : Promise.resolve(null)
+        api.getCollectionSettingsStatus(activeCollection.id)
       ]);
 
       setCollectionMembers(membersResponse.members);
       setMemberCandidates(membersResponse.candidates);
-      setAdminStatus(statusResponse);
-
-      if (usersResponse) {
-        setAdminUsers(usersResponse.users);
-      }
+      setCollectionSettingsStatus(statusResponse);
 
       setAdminLoadStatus("idle");
     } catch (error) {
       setAdminLoadStatus("error");
-      setAdminMessage(error instanceof Error ? error.message : "Unable to load admin tools.");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to load collection settings.");
+    }
+  }
+
+  async function refreshSystemAdminData() {
+    if (!isSystemAdmin) {
+      return;
+    }
+
+    setAdminLoadStatus("loading");
+    setAdminMessage("");
+
+    try {
+      const [usersResponse, statusResponse] = await Promise.all([
+        api.listAdminUsers(),
+        api.getSystemAdminStatus()
+      ]);
+
+      setAdminUsers(usersResponse.users);
+      setSystemAdminStatus(statusResponse);
+      setAdminLoadStatus("idle");
+    } catch (error) {
+      setAdminLoadStatus("error");
+      setAdminMessage(error instanceof Error ? error.message : "Unable to load system administration.");
     }
   }
 
@@ -1166,7 +1215,7 @@ function WorkspaceShell({
   }
 
   async function handleCreateSqliteBackup() {
-    if (!activeCollection) {
+    if (!isSystemAdmin) {
       return;
     }
 
@@ -1176,12 +1225,12 @@ function WorkspaceShell({
     setAdminMessage("");
 
     try {
-      const response = await api.createSqliteBackup(activeCollection.id);
+      const response = await api.createSqliteBackup();
       setBackupStatus("idle");
       const message = `Backup saved to ${response.path} (${formatFileSize(response.sizeBytes)}).`;
       setDataActionMessage(message);
       setAdminMessage(message);
-      void refreshAdminData();
+      void refreshSystemAdminData();
     } catch (error) {
       setBackupStatus("error");
       const message = error instanceof Error ? error.message : "Unable to create backup.";
@@ -1232,7 +1281,7 @@ function WorkspaceShell({
       form.reset();
       setAdminActionStatus("idle");
       setAdminMessage(`Created @${response.user.username}.`);
-      void refreshAdminData();
+      void refreshSystemAdminData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to create user.");
@@ -1255,7 +1304,7 @@ function WorkspaceShell({
       );
       setAdminActionStatus("idle");
       setAdminMessage(`Updated @${response.user.username}.`);
-      void refreshAdminData();
+      void refreshSystemAdminData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to update user.");
@@ -1294,7 +1343,7 @@ function WorkspaceShell({
       setAdminMessage(
         `${response.user.disabledAt ? "Disabled" : "Enabled"} @${response.user.username}.`
       );
-      void refreshAdminData();
+      void refreshSystemAdminData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to update account status.");
@@ -1322,7 +1371,7 @@ function WorkspaceShell({
       form.reset();
       setAdminActionStatus("idle");
       setAdminMessage(`Added @${response.member.username} as ${response.member.role}.`);
-      void refreshAdminData();
+      void refreshCollectionSettingsData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to add member.");
@@ -1344,7 +1393,7 @@ function WorkspaceShell({
       );
       setAdminActionStatus("idle");
       setAdminMessage(`Updated @${response.member.username} to ${response.member.role}.`);
-      void refreshAdminData();
+      void refreshCollectionSettingsData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to update member.");
@@ -1372,7 +1421,7 @@ function WorkspaceShell({
       );
       setAdminActionStatus("idle");
       setAdminMessage(`Removed @${member.username} from this collection.`);
-      void refreshAdminData();
+      void refreshCollectionSettingsData();
     } catch (error) {
       setAdminActionStatus("error");
       setAdminMessage(error instanceof Error ? error.message : "Unable to remove member.");
@@ -1446,105 +1495,6 @@ function WorkspaceShell({
       setBulkPriceStatus("error");
       setBulkPriceMessage(
         error instanceof Error ? error.message : "Unable to queue bulk price refresh."
-      );
-    }
-  }
-
-  async function handleResumeBulkPriceQueue() {
-    if (!activeCollection) {
-      return;
-    }
-
-    setBulkPriceStatus("loading");
-    setBulkPriceMessage("");
-
-    try {
-      const response = await api.resumeBulkPriceQueue(activeCollection.id);
-      applyBulkPriceQueueResponse(response);
-      setBulkPriceStatus("idle");
-      setBulkPriceMessage(response.message);
-    } catch (error) {
-      setBulkPriceStatus("error");
-      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to resume queue.");
-    }
-  }
-
-  async function handleCancelBulkPriceQueue() {
-    if (!activeCollection) {
-      return;
-    }
-
-    setBulkPriceStatus("loading");
-    setBulkPriceMessage("");
-
-    try {
-      const response = await api.cancelBulkPriceQueue(activeCollection.id);
-      applyBulkPriceQueueResponse(response);
-      setBulkPriceStatus("idle");
-      setBulkPriceMessage(response.message);
-    } catch (error) {
-      setBulkPriceStatus("error");
-      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to cancel queue.");
-    }
-  }
-
-  async function handleRetryFailedBulkPriceQueue() {
-    if (!activeCollection) {
-      return;
-    }
-
-    setBulkPriceStatus("loading");
-    setBulkPriceMessage("");
-
-    try {
-      const response = await api.retryFailedBulkPriceQueue(activeCollection.id);
-      applyBulkPriceQueueResponse(response);
-      setBulkPriceStatus("idle");
-      setBulkPriceMessage(response.message);
-    } catch (error) {
-      setBulkPriceStatus("error");
-      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to retry failed jobs.");
-    }
-  }
-
-  async function handleClearCompletedBulkPriceQueue() {
-    if (!activeCollection) {
-      return;
-    }
-
-    setBulkPriceStatus("loading");
-    setBulkPriceMessage("");
-
-    try {
-      const response = await api.clearCompletedBulkPriceQueue(activeCollection.id);
-      applyBulkPriceQueueResponse(response);
-      setBulkPriceStatus("idle");
-      setBulkPriceMessage(response.message);
-    } catch (error) {
-      setBulkPriceStatus("error");
-      setBulkPriceMessage(error instanceof Error ? error.message : "Unable to clear queue.");
-    }
-  }
-
-  async function handleIgnorePriceRefresh(item: InventoryItem) {
-    if (!activeCollection) {
-      return;
-    }
-
-    setBulkPriceStatus("loading");
-    setBulkPriceMessage("");
-
-    try {
-      const response = await api.ignorePriceRefreshForItem(activeCollection.id, item.id);
-      applyBulkPriceQueueResponse(response);
-      setBulkPriceStatus("idle");
-      setBulkPriceMessage(response.message);
-    } catch (error) {
-      setBulkPriceStatus("error");
-      setBulkPriceMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to ignore queued price refreshes for this card."
       );
     }
   }
@@ -2196,39 +2146,41 @@ function WorkspaceShell({
           />
         ) : null}
 
-        {activeSection === "admin" && activeCollection ? (
-          <AdminWorkspacePanel
+        {activeSection === "settings" && activeCollection ? (
+          <CollectionSettingsWorkspacePanel
             actionStatus={adminActionStatus}
-            activeTab={adminTab}
-            authUser={authUser}
-            backupStatus={backupStatus}
-            canUseAdmin={canUseAdmin}
             collectionName={activeCollection.name}
             loadStatus={adminLoadStatus}
             members={collectionMembers}
             memberCandidates={memberCandidates}
             message={adminMessage}
+            status={collectionSettingsStatus}
+            onAddMember={handleAddCollectionMember}
+            onRefresh={refreshCollectionSettingsData}
+            onRemoveMember={handleRemoveCollectionMember}
+            onUpdateMember={handleUpdateCollectionMember}
+          />
+        ) : null}
+
+        {activeSection === "system" && isSystemAdmin ? (
+          <SystemAdminWorkspacePanel
+            actionStatus={adminActionStatus}
+            activeTab={systemAdminTab}
+            authUser={authUser}
+            backupStatus={backupStatus}
             databaseIntegrity={databaseIntegrity}
             databaseIntegrityStatus={databaseIntegrityStatus}
-            priceQueue={bulkPriceQueue}
-            status={adminStatus}
+            loadStatus={adminLoadStatus}
+            message={adminMessage}
+            status={systemAdminStatus}
             users={adminUsers}
-            onAddMember={handleAddCollectionMember}
             onBackup={handleCreateSqliteBackup}
-            onCancelQueue={handleCancelBulkPriceQueue}
-            onClearCompletedQueue={handleClearCompletedBulkPriceQueue}
             onCreateUser={handleCreateAdminUser}
-            onIgnorePriceRefresh={handleIgnorePriceRefresh}
-            onOpenItem={setSelectedItem}
-            onRefresh={refreshAdminData}
+            onRefresh={refreshSystemAdminData}
             onRunDatabaseIntegrityCheck={handleRunDatabaseIntegrityCheck}
-            onRemoveMember={handleRemoveCollectionMember}
             onResetPassword={handleResetAdminUserPassword}
-            onRetryFailedQueue={handleRetryFailedBulkPriceQueue}
-            onResumeQueue={handleResumeBulkPriceQueue}
-            onTabChange={setAdminTab}
+            onTabChange={setSystemAdminTab}
             onToggleUser={handleToggleAdminUser}
-            onUpdateMember={handleUpdateCollectionMember}
             onUpdateUser={handleUpdateAdminUser}
           />
         ) : null}
@@ -3102,71 +3054,113 @@ function CreditsWorkspacePanel({ credits }: { credits: ApiCredit[] }) {
   );
 }
 
-function AdminWorkspacePanel({
+function CollectionSettingsWorkspacePanel({
   actionStatus,
-  activeTab,
-  authUser,
-  backupStatus,
-  canUseAdmin,
   collectionName,
-  databaseIntegrity,
-  databaseIntegrityStatus,
   loadStatus,
   members,
   memberCandidates,
   message,
-  priceQueue,
   status,
-  users,
   onAddMember,
-  onBackup,
-  onCancelQueue,
-  onClearCompletedQueue,
-  onCreateUser,
-  onIgnorePriceRefresh,
-  onOpenItem,
   onRefresh,
-  onRunDatabaseIntegrityCheck,
   onRemoveMember,
-  onResetPassword,
-  onRetryFailedQueue,
-  onResumeQueue,
-  onTabChange,
-  onToggleUser,
-  onUpdateMember,
-  onUpdateUser
+  onUpdateMember
 }: {
   actionStatus: "idle" | "loading" | "error";
-  activeTab: AdminTab;
-  authUser: AuthUser;
-  backupStatus: "idle" | "loading" | "error";
-  canUseAdmin: boolean;
   collectionName: string;
-  databaseIntegrity: DatabaseIntegrityResponse | null;
-  databaseIntegrityStatus: "idle" | "loading" | "issues" | "error";
   loadStatus: "idle" | "loading" | "error";
   members: CollectionMember[];
   memberCandidates: CollectionMemberCandidate[];
   message: string;
-  priceQueue: BulkPriceQueueResponse | null;
-  status: AdminCollectionStatusResponse | null;
-  users: AdminUser[];
+  status: CollectionSettingsStatusResponse | null;
   onAddMember: (event: React.FormEvent<HTMLFormElement>) => void;
+  onRefresh: () => void;
+  onRemoveMember: (member: CollectionMember) => void;
+  onUpdateMember: (userId: string, role: "admin" | "editor" | "viewer") => void;
+}) {
+  const isWorking = actionStatus === "loading";
+
+  return (
+    <section className="admin-workspace" aria-label="Collection settings">
+      <div className="admin-tabs collection-settings-toolbar">
+        <div>
+          <strong>{collectionName}</strong>
+          <span>Membership and scheduled pricing apply only to this collection.</span>
+        </div>
+        <button
+          className="admin-refresh-button"
+          disabled={loadStatus === "loading"}
+          onClick={onRefresh}
+          type="button"
+        >
+          <RefreshCw size={16} aria-hidden="true" />
+          {loadStatus === "loading" ? "Refreshing..." : "Refresh"}
+        </button>
+      </div>
+
+      {message ? (
+        <p
+          className={`admin-message ${
+            actionStatus === "error" || loadStatus === "error" ? "error" : "ok"
+          }`}
+        >
+          {message}
+        </p>
+      ) : null}
+
+      <AdminMembersPanel
+        collectionName={collectionName}
+        isWorking={isWorking}
+        members={members}
+        memberCandidates={memberCandidates}
+        onAddMember={onAddMember}
+        onRemoveMember={onRemoveMember}
+        onUpdateMember={onUpdateMember}
+      />
+
+      <CollectionPricingBehaviorPanel status={status} />
+    </section>
+  );
+}
+
+function SystemAdminWorkspacePanel({
+  actionStatus,
+  activeTab,
+  authUser,
+  backupStatus,
+  databaseIntegrity,
+  databaseIntegrityStatus,
+  loadStatus,
+  message,
+  status,
+  users,
+  onBackup,
+  onCreateUser,
+  onRefresh,
+  onRunDatabaseIntegrityCheck,
+  onResetPassword,
+  onTabChange,
+  onToggleUser,
+  onUpdateUser
+}: {
+  actionStatus: "idle" | "loading" | "error";
+  activeTab: SystemAdminTab;
+  authUser: AuthUser;
+  backupStatus: "idle" | "loading" | "error";
+  databaseIntegrity: DatabaseIntegrityResponse | null;
+  databaseIntegrityStatus: "idle" | "loading" | "issues" | "error";
+  loadStatus: "idle" | "loading" | "error";
+  message: string;
+  status: SystemAdminStatusResponse | null;
+  users: AdminUser[];
   onBackup: () => void;
-  onCancelQueue: () => void;
-  onClearCompletedQueue: () => void;
   onCreateUser: (event: React.FormEvent<HTMLFormElement>) => void;
-  onIgnorePriceRefresh: (item: InventoryItem) => void;
-  onOpenItem: (item: InventoryItem) => void;
   onRefresh: () => void;
   onRunDatabaseIntegrityCheck: () => void;
-  onRemoveMember: (member: CollectionMember) => void;
   onResetPassword: (user: AdminUser, password: string) => void;
-  onRetryFailedQueue: () => void;
-  onResumeQueue: () => void;
-  onTabChange: (tab: AdminTab) => void;
+  onTabChange: (tab: SystemAdminTab) => void;
   onToggleUser: (user: AdminUser) => void;
-  onUpdateMember: (userId: string, role: "admin" | "editor" | "viewer") => void;
   onUpdateUser: (
     userId: string,
     payload: {
@@ -3177,36 +3171,22 @@ function AdminWorkspacePanel({
     }
   ) => void;
 }) {
-  const tabs: AdminTab[] =
-    authUser.systemRole === "admin" ? ["accounts", "members", "maintenance"] : ["members", "maintenance"];
-  const currentTab = tabs.includes(activeTab) ? activeTab : tabs[0];
+  const tabs: SystemAdminTab[] = ["accounts", "maintenance"];
   const isWorking = actionStatus === "loading";
 
-  if (!canUseAdmin) {
-    return (
-      <section className="empty-state">
-        <div className="empty-copy">
-          <p className="eyebrow">Admin</p>
-          <h3>No admin access.</h3>
-          <p>Collection owners and admins can manage this workspace.</p>
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className="admin-workspace" aria-label="Admin tools">
-      <div className="admin-tabs" role="tablist" aria-label="Admin tabs">
+    <section className="admin-workspace" aria-label="System administration">
+      <div className="admin-tabs" role="tablist" aria-label="System administration tabs">
         {tabs.map((tab) => (
           <button
-            aria-selected={currentTab === tab}
-            className={currentTab === tab ? "active" : ""}
+            aria-selected={activeTab === tab}
+            className={activeTab === tab ? "active" : ""}
             key={tab}
             onClick={() => onTabChange(tab)}
             role="tab"
             type="button"
           >
-            {adminTabLabel(tab)}
+            {systemAdminTabLabel(tab)}
           </button>
         ))}
         <button
@@ -3235,7 +3215,7 @@ function AdminWorkspacePanel({
         </p>
       ) : null}
 
-      {currentTab === "accounts" && authUser.systemRole === "admin" ? (
+      {activeTab === "accounts" ? (
         <AdminAccountsPanel
           currentUserId={authUser.id}
           isWorking={isWorking}
@@ -3247,35 +3227,15 @@ function AdminWorkspacePanel({
         />
       ) : null}
 
-      {currentTab === "members" ? (
-        <AdminMembersPanel
-          collectionName={collectionName}
-          isWorking={isWorking}
-          members={members}
-          memberCandidates={memberCandidates}
-          onAddMember={onAddMember}
-          onRemoveMember={onRemoveMember}
-          onUpdateMember={onUpdateMember}
-        />
-      ) : null}
-
-      {currentTab === "maintenance" ? (
+      {activeTab === "maintenance" ? (
         <AdminMaintenancePanel
           backupStatus={backupStatus}
           databaseIntegrity={databaseIntegrity}
           databaseIntegrityStatus={databaseIntegrityStatus}
           isWorking={isWorking}
-          isSystemAdmin={authUser.systemRole === "admin"}
-          priceQueue={priceQueue}
           status={status}
           onBackup={onBackup}
-          onCancelQueue={onCancelQueue}
-          onClearCompletedQueue={onClearCompletedQueue}
-          onIgnorePriceRefresh={onIgnorePriceRefresh}
-          onOpenItem={onOpenItem}
-          onRetryFailedQueue={onRetryFailedQueue}
           onRunDatabaseIntegrityCheck={onRunDatabaseIntegrityCheck}
-          onResumeQueue={onResumeQueue}
         />
       ) : null}
     </section>
@@ -3554,36 +3514,18 @@ function AdminMaintenancePanel({
   databaseIntegrity,
   databaseIntegrityStatus,
   isWorking,
-  isSystemAdmin,
-  priceQueue,
   status,
   onBackup,
-  onCancelQueue,
-  onClearCompletedQueue,
-  onIgnorePriceRefresh,
-  onOpenItem,
-  onRetryFailedQueue,
-  onRunDatabaseIntegrityCheck,
-  onResumeQueue
+  onRunDatabaseIntegrityCheck
 }: {
   backupStatus: "idle" | "loading" | "error";
   databaseIntegrity: DatabaseIntegrityResponse | null;
   databaseIntegrityStatus: "idle" | "loading" | "issues" | "error";
   isWorking: boolean;
-  isSystemAdmin: boolean;
-  priceQueue: BulkPriceQueueResponse | null;
-  status: AdminCollectionStatusResponse | null;
+  status: SystemAdminStatusResponse | null;
   onBackup: () => void;
-  onCancelQueue: () => void;
-  onClearCompletedQueue: () => void;
-  onIgnorePriceRefresh: (item: InventoryItem) => void;
-  onOpenItem: (item: InventoryItem) => void;
-  onRetryFailedQueue: () => void;
   onRunDatabaseIntegrityCheck: () => void;
-  onResumeQueue: () => void;
 }) {
-  const pricing = status?.pricing;
-
   return (
     <div className="admin-panel-stack">
       <div className="admin-maintenance-grid">
@@ -3593,7 +3535,11 @@ function AdminMaintenancePanel({
               <p className="eyebrow">Backups</p>
               <h3>SQLite snapshots</h3>
             </div>
-            <button disabled={backupStatus === "loading" || isWorking} onClick={onBackup} type="button">
+            <button
+              disabled={backupStatus === "loading" || isWorking}
+              onClick={onBackup}
+              type="button"
+            >
               <HardDriveDownload size={16} aria-hidden="true" />
               {backupStatus === "loading" ? "Backing up..." : "Back up now"}
             </button>
@@ -3622,150 +3568,151 @@ function AdminMaintenancePanel({
         <section className="admin-status-panel">
           <div className="admin-panel-header">
             <div>
-              <p className="eyebrow">Pricing</p>
-              <h3>Scheduled refresh</h3>
+              <p className="eyebrow">Database</p>
+              <h3>Integrity and connection safety</h3>
             </div>
+            <button
+              disabled={databaseIntegrityStatus === "loading" || isWorking}
+              onClick={onRunDatabaseIntegrityCheck}
+              type="button"
+            >
+              <Database size={16} aria-hidden="true" />
+              {databaseIntegrityStatus === "loading" ? "Checking..." : "Run check"}
+            </button>
           </div>
-          <div className="admin-fact-grid">
-            <AdminFact label="Scheduled" value={pricing?.scheduledEnabled ? "On" : "Off"} />
-            <AdminFact label="Interval" value={`${pricing?.intervalHours ?? 0}h`} />
-            <AdminFact label="Batch" value={String(pricing?.batchSize ?? 0)} />
-            <AdminFact label="Queue" value={String(pricing?.queueSummary.total ?? 0)} />
-            <AdminFact label="Review" value={String(pricing?.queueSummary.needsReview ?? 0)} />
-            <AdminFact label="Failed" value={String(pricing?.queueSummary.failed ?? 0)} />
-          </div>
-          <div className="admin-compact-list">
-            <div>
-              <strong>Last completed</strong>
-              <span>{pricing?.runCompletedAt ? formatHistoryDate(pricing.runCompletedAt) : "Not completed yet"}</span>
-            </div>
-            <div>
-              <strong>Next due</strong>
-              <span>{pricing?.nextDueAt ? formatHistoryDate(pricing.nextDueAt) : "Waiting for first run"}</span>
-            </div>
-            <div>
-              <strong>Current cursor</strong>
-              <span>{pricing?.cursorItemId ?? "None"}</span>
-            </div>
-          </div>
+          {databaseIntegrity ? (
+            <>
+              <div className="admin-fact-grid">
+                <AdminFact
+                  label="Status"
+                  value={databaseIntegrity.status === "healthy" ? "Healthy" : "Issues found"}
+                />
+                <AdminFact
+                  label="SQLite"
+                  value={databaseIntegrity.integrityCheck.ok ? "OK" : "Check failed"}
+                />
+                <AdminFact
+                  label="Foreign keys"
+                  value={
+                    databaseIntegrity.connection.foreignKeysEnabled ? "Enforced" : "Disabled"
+                  }
+                />
+                <AdminFact
+                  label="FK violations"
+                  value={String(databaseIntegrity.foreignKeyCheck.violationCount)}
+                />
+                <AdminFact
+                  label="Journal"
+                  value={databaseIntegrity.connection.journalMode.toUpperCase()}
+                />
+                <AdminFact
+                  label="Busy timeout"
+                  value={`${databaseIntegrity.connection.busyTimeoutMs} ms`}
+                />
+              </div>
+              <div className="admin-compact-list">
+                <div>
+                  <strong>Checked</strong>
+                  <span>{formatHistoryDate(databaseIntegrity.checkedAt)}</span>
+                </div>
+                {databaseIntegrity.foreignKeyCheck.violations.slice(0, 10).map((violation) => (
+                  <div
+                    key={`${violation.table}-${violation.rowId ?? "unknown"}-${violation.foreignKeyIndex}`}
+                  >
+                    <strong>{violation.table}</strong>
+                    <span>
+                      Row {violation.rowId ?? "unknown"} references {violation.parentTable}
+                    </span>
+                  </div>
+                ))}
+                {databaseIntegrity.foreignKeyCheck.violationCount > 10 ? (
+                  <p>
+                    Showing 10 of {databaseIntegrity.foreignKeyCheck.violationCount} foreign-key
+                    violations.
+                  </p>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <p className="admin-panel-note">
+              Runs SQLite integrity and foreign-key checks on demand. No database path or card data
+              is included in the result.
+            </p>
+          )}
         </section>
 
-        {isSystemAdmin ? (
-          <section className="admin-status-panel">
-            <div className="admin-panel-header">
-              <div>
-                <p className="eyebrow">Database</p>
-                <h3>Integrity and connection safety</h3>
-              </div>
-              <button
-                disabled={databaseIntegrityStatus === "loading" || isWorking}
-                onClick={onRunDatabaseIntegrityCheck}
-                type="button"
-              >
-                <Database size={16} aria-hidden="true" />
-                {databaseIntegrityStatus === "loading" ? "Checking..." : "Run check"}
-              </button>
+        <section className="admin-status-panel">
+          <div className="admin-panel-header">
+            <div>
+              <p className="eyebrow">Providers</p>
+              <h3>Server-side integrations</h3>
             </div>
-            {databaseIntegrity ? (
-              <>
-                <div className="admin-fact-grid">
-                  <AdminFact
-                    label="Status"
-                    value={databaseIntegrity.status === "healthy" ? "Healthy" : "Issues found"}
-                  />
-                  <AdminFact
-                    label="SQLite"
-                    value={databaseIntegrity.integrityCheck.ok ? "OK" : "Check failed"}
-                  />
-                  <AdminFact
-                    label="Foreign keys"
-                    value={databaseIntegrity.connection.foreignKeysEnabled ? "Enforced" : "Disabled"}
-                  />
-                  <AdminFact
-                    label="FK violations"
-                    value={String(databaseIntegrity.foreignKeyCheck.violationCount)}
-                  />
-                  <AdminFact
-                    label="Journal"
-                    value={databaseIntegrity.connection.journalMode.toUpperCase()}
-                  />
-                  <AdminFact
-                    label="Busy timeout"
-                    value={`${databaseIntegrity.connection.busyTimeoutMs} ms`}
-                  />
-                </div>
-                <div className="admin-compact-list">
-                  <div>
-                    <strong>Checked</strong>
-                    <span>{formatHistoryDate(databaseIntegrity.checkedAt)}</span>
-                  </div>
-                  {databaseIntegrity.foreignKeyCheck.violations.slice(0, 10).map((violation) => (
-                    <div
-                      key={`${violation.table}-${violation.rowId ?? "unknown"}-${violation.foreignKeyIndex}`}
-                    >
-                      <strong>{violation.table}</strong>
-                      <span>
-                        Row {violation.rowId ?? "unknown"} references {violation.parentTable}
-                      </span>
-                    </div>
-                  ))}
-                  {databaseIntegrity.foreignKeyCheck.violationCount > 10 ? (
-                    <p>
-                      Showing 10 of {databaseIntegrity.foreignKeyCheck.violationCount} foreign-key
-                      violations.
-                    </p>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <p className="admin-panel-note">
-                Runs SQLite integrity and foreign-key checks on demand. No database path or card data
-                is included in the result.
-              </p>
-            )}
-          </section>
-        ) : null}
-      </div>
-
-      <section className="admin-status-panel">
-        <div className="admin-panel-header">
-          <div>
-            <p className="eyebrow">Ignored cards</p>
-            <h3>{pricing?.ignoredCount ?? 0} skipped by scheduler</h3>
           </div>
-        </div>
-        <div className="admin-compact-list">
-          {pricing?.ignoredItems.length ? (
-            pricing.ignoredItems.map((item) => (
-              <div key={item.itemId}>
-                <strong>{item.name}</strong>
-                <span>
-                  {[item.setName, item.cardNumber].filter(Boolean).join(" · ") || "No set data"} ·{" "}
-                  {formatHistoryDate(item.ignoredAt)}
-                </span>
+          <div className="admin-compact-list provider-diagnostic-list">
+            {status?.providers.map((provider) => (
+              <div key={provider.id}>
+                <strong>
+                  <span
+                    aria-label={
+                      provider.status === "available" ? "Available" : "Missing credentials"
+                    }
+                    className={`provider-status-dot ${provider.status}`}
+                  />
+                  {provider.label}
+                </strong>
+                <span>{provider.detail}</span>
               </div>
-            ))
-          ) : (
-            <p>No ignored price-refresh cards.</p>
-          )}
-        </div>
-      </section>
-
-      {priceQueue && priceQueue.summary.total > 0 ? (
-        <BulkPriceQueuePanel
-          isWorking={isWorking}
-          message=""
-          queue={priceQueue}
-          status="idle"
-          onCancel={onCancelQueue}
-          onClearCompleted={onClearCompletedQueue}
-          onIgnoreItem={onIgnorePriceRefresh}
-          onOpenItem={onOpenItem}
-          onResume={onResumeQueue}
-          onRetryFailed={onRetryFailedQueue}
-        />
-      ) : null}
+            )) ?? <p>Provider diagnostics are loading.</p>}
+          </div>
+        </section>
+      </div>
     </div>
+  );
+}
+
+function CollectionPricingBehaviorPanel({
+  status
+}: {
+  status: CollectionSettingsStatusResponse | null;
+}) {
+  const pricing = status?.pricing;
+
+  return (
+    <section className="admin-status-panel" aria-label="Collection pricing behavior">
+      <div className="admin-panel-header">
+        <div>
+          <p className="eyebrow">Pricing behavior</p>
+          <h3>Scheduled refresh for this collection</h3>
+        </div>
+      </div>
+      <div className="admin-fact-grid">
+        <AdminFact label="Scheduled" value={pricing?.scheduledEnabled ? "On" : "Off"} />
+        <AdminFact label="Interval" value={`${pricing?.intervalHours ?? 0}h`} />
+        <AdminFact label="Batch" value={String(pricing?.batchSize ?? 0)} />
+        <AdminFact label="Queue" value={String(pricing?.queueSummary.total ?? 0)} />
+        <AdminFact label="Needs review" value={String(pricing?.queueSummary.needsReview ?? 0)} />
+        <AdminFact label="Ignored" value={String(pricing?.ignoredCount ?? 0)} />
+      </div>
+      <div className="admin-compact-list">
+        <div>
+          <strong>Last completed</strong>
+          <span>
+            {pricing?.runCompletedAt
+              ? formatHistoryDate(pricing.runCompletedAt)
+              : "Not completed yet"}
+          </span>
+        </div>
+        <div>
+          <strong>Next due</strong>
+          <span>
+            {pricing?.nextDueAt
+              ? formatHistoryDate(pricing.nextDueAt)
+              : "Waiting for first run"}
+          </span>
+        </div>
+        <p>Queue actions and match review live in the Pricing workspace.</p>
+      </div>
+    </section>
   );
 }
 
@@ -3778,13 +3725,9 @@ function AdminFact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function adminTabLabel(tab: AdminTab) {
+function systemAdminTabLabel(tab: SystemAdminTab) {
   if (tab === "accounts") {
     return "Accounts";
-  }
-
-  if (tab === "members") {
-    return "Members";
   }
 
   return "Maintenance";

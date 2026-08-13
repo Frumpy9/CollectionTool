@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type {
   AddCollectionMemberRequest,
-  AdminCollectionStatusResponse,
+  CollectionSettingsStatusResponse,
   DatabaseIntegrityResponse,
   AdminIgnoredPriceRefreshItem,
   AdminUser,
@@ -13,6 +13,7 @@ import type {
   CollectionMembersResponse,
   CreateAdminUserRequest,
   ResetAdminUserPasswordRequest,
+  SystemAdminStatusResponse,
   UpdateAdminUserRequest,
   UpdateCollectionMemberRequest
 } from "@collection-tool/shared";
@@ -77,6 +78,19 @@ export async function registerAdminRoutes(
 
     return { users: listAdminUsers(database) };
   });
+
+  app.get(
+    "/api/admin/status",
+    async (request, reply): Promise<SystemAdminStatusResponse | { error: string }> => {
+      const auth = requireSystemAdmin(request, reply, database);
+
+      if (!auth) {
+        return { error: "Unauthorized" };
+      }
+
+      return getSystemAdminStatus(database, config);
+    }
+  );
 
   app.post(
     "/api/admin/database/integrity-check",
@@ -447,15 +461,15 @@ export async function registerAdminRoutes(
   );
 
   app.get(
-    "/api/collections/:collectionId/admin/status",
-    async (request, reply): Promise<AdminCollectionStatusResponse | { error: string }> => {
+    "/api/collections/:collectionId/settings/status",
+    async (request, reply): Promise<CollectionSettingsStatusResponse | { error: string }> => {
       const access = requireCollectionManager(request, reply, database);
 
       if (!access) {
         return { error: "Unauthorized" };
       }
 
-      return getCollectionAdminStatus(database, config, access.collectionId);
+      return getCollectionSettingsStatus(database, config, access.collectionId);
     }
   );
 }
@@ -782,11 +796,11 @@ function listCollectionMemberCandidates(
   }));
 }
 
-function getCollectionAdminStatus(
+function getCollectionSettingsStatus(
   database: AppDatabase,
   config: AppConfig,
   collectionId: string
-): AdminCollectionStatusResponse {
+): CollectionSettingsStatusResponse {
   const state = database.connection
     .prepare(
       `
@@ -807,12 +821,6 @@ function getCollectionAdminStatus(
   const ignoredItems = listIgnoredPriceRefreshItems(database, collectionId);
 
   return {
-    backups: {
-      scheduledEnabled: config.scheduledBackupsEnabled,
-      intervalHours: config.backupIntervalHours,
-      retentionDays: config.backupRetentionDays,
-      latest: listSqliteBackups(database, 5)
-    },
     pricing: {
       scheduledEnabled: config.scheduledPriceRefreshEnabled,
       intervalHours: config.priceRefreshIntervalHours,
@@ -826,6 +834,52 @@ function getCollectionAdminStatus(
       ignoredItems,
       queueSummary
     }
+  };
+}
+
+function getSystemAdminStatus(
+  database: AppDatabase,
+  config: AppConfig
+): SystemAdminStatusResponse {
+  return {
+    backups: {
+      scheduledEnabled: config.scheduledBackupsEnabled,
+      intervalHours: config.backupIntervalHours,
+      retentionDays: config.backupRetentionDays,
+      latest: listSqliteBackups(database, 5)
+    },
+    providers: [
+      {
+        id: "tcgdex",
+        label: "TCGdex",
+        status: "available",
+        detail: "Public card metadata provider; no credential is required."
+      },
+      {
+        id: "pokemontcg",
+        label: "PokemonTCG.io",
+        status: "available",
+        detail: config.pokemonTcgApiKey
+          ? "API key configured."
+          : "Public access available; no optional API key is configured."
+      },
+      {
+        id: "pokemonpricetracker",
+        label: "PokemonPriceTracker",
+        status: config.pokemonPriceTrackerApiKey ? "available" : "missing_credentials",
+        detail: config.pokemonPriceTrackerApiKey
+          ? "API credential configured."
+          : "POKEMON_PRICE_TRACKER_API_KEY is not configured."
+      },
+      {
+        id: "psa",
+        label: "PSA",
+        status: config.psaAccessToken ? "available" : "missing_credentials",
+        detail: config.psaAccessToken
+          ? "API credential configured."
+          : "PSA_ACCESS_TOKEN is not configured."
+      }
+    ]
   };
 }
 

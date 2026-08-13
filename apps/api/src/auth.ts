@@ -212,10 +212,6 @@ export function canManageCollection(
   collectionId: string,
   user: AuthUser
 ) {
-  if (user.systemRole === "admin") {
-    return true;
-  }
-
   const role = getCollectionRole(database, collectionId, user.id);
 
   return role === "owner" || role === "admin";

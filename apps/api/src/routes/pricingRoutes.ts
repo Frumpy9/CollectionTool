@@ -165,7 +165,7 @@ export async function registerPricingRoutes(
   app.get(
     "/api/collections/:collectionId/pricing/value-history",
     async (request, reply): Promise<CollectionValueHistoryResponse | { error: string }> => {
-      const access = getCollectionPricingAccess(request, database);
+      const access = getCollectionPricingReadAccess(request, database);
 
       if (!access.ok) {
         reply.code(access.statusCode);
@@ -654,7 +654,7 @@ export async function registerPricingRoutes(
   );
 
   app.get("/api/collections/:collectionId/pricing/bulk/queue", async (request, reply) => {
-    const access = getCollectionPricingAccess(request, database);
+    const access = getCollectionPricingReadAccess(request, database);
 
     if (!access.ok) {
       reply.code(access.statusCode);
