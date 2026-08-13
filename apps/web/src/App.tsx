@@ -4813,10 +4813,11 @@ function ManualAddPanel({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const form = event.currentTarget;
     setError("");
     setIsSubmitting(true);
 
-    const formData = new FormData(event.currentTarget);
+    const formData = new FormData(form);
     const payload: CreateInventoryItemRequest = {
       name: String(formData.get("name") ?? ""),
       setName: String(formData.get("setName") ?? ""),
@@ -4852,7 +4853,7 @@ function ManualAddPanel({
 
       if (item) {
         onAdded(item);
-        event.currentTarget.reset();
+        form.reset();
         setItemType("raw");
         setLanguage("en");
       }
