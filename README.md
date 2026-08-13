@@ -18,6 +18,7 @@ Milestone 1 is focused on the working app shell:
 - Collection transaction ledger for purchases, sales, trades, gifts, disposals, and fees
 - Needs-attention inbox for metadata, image, pricing, duplicate, and failed-work review
 - Unified Add Cards workspace for search, manual entry, PSA certs, bulk lists, and CSV imports
+- Persistent Jobs drawer for CSV-import progress and collection pricing queues
 - Server-ranked image recovery with provider fallback and inspectable match reasons
 - Consolidated Pricing workspace for coverage, match review, and refresh-queue operations
 - Docker Compose layout with persistent local data
@@ -107,6 +108,18 @@ downloaded as a spreadsheet-safe CSV error report. Imports are limited to 5 MB, 
 and 128 columns. Jobs are temporary, creator-only, and expire after one hour.
 They are held in API memory rather than the database, so an API restart discards unfinished previews;
 upload the CSV again to create a fresh plan after a restart.
+
+## Background Jobs
+
+The persistent **Jobs** drawer follows CSV previews and pricing refresh queues while you move between
+workspaces or collections. It shows running, ready, provider-paused, failed, cancelled, and completed
+work with progress and direct links back to CSV review or Pricing. Editors can cancel CSV validation
+and use the pricing queue's resume, retry, cancel, and finished-job cleanup actions; viewers can
+inspect pricing progress without receiving mutation controls.
+
+Pricing queue state is stored in SQLite. CSV previews remain creator-only, live in API memory, expire
+after one hour, and disappear on API restart as described above. The drawer is the shared UI surface
+for future image-cache and maintenance job types.
 
 ## Database Reliability
 

@@ -63,6 +63,8 @@
 - [x] Added a viewer-readable needs-attention inbox for pricing gaps, stale/low-confidence matches, images, metadata, duplicate certs/items, and persisted failed pricing work.
 - [x] Consolidated search, manual entry, PSA cert, bulk-list, and CSV workflows into one permission-aware Add Cards workspace.
 - [x] Consolidated pricing coverage, match review, and refresh-queue operations into one Pricing workspace.
+- [x] Added a persistent, permission-aware Jobs drawer for retained CSV imports and pricing queues
+  across accessible collections, with progress, pause, failure, completion, cancellation, and retry controls.
 
 ## Branch Roadmap
 

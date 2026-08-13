@@ -110,11 +110,16 @@ system administrators and contains local accounts, whole-database backups and in
 credential-safe provider diagnostics. A system administrator can still inspect every collection as a
 viewer for debugging, but cannot use that viewer access to mutate foreign membership or inventory.
 
-### [ ] 9. Shared background-job center
+### [x] 9. Shared background-job center
 
 Add a persistent job drawer for CSV imports, price refreshes, future image caching, and maintenance
 tasks. It should show progress, pauses, rate limits, failures, completion, cancellation, and retries
 without requiring the user to remain on the originating screen.
+
+The shipped Jobs drawer follows retained CSV imports and durable pricing queues across every
+collection the user can access. It reports progress and provider pauses, brings ready or failed work
+back to its review workspace, and exposes permission-safe resume, retry, cancel, and cleanup actions.
+The shared job-card model leaves a single persistent surface for future cache and maintenance work.
 
 ### [ ] 10. Consistent feedback and destructive-action review
 
