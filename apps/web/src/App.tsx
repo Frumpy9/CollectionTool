@@ -901,6 +901,8 @@ function WorkspaceShell({
     [inventory.items, inventoryView, inventoryViewReferenceTimeMs]
   );
   const isInventorySelectionSection = activeSection === "collection";
+  const canSelectInventory =
+    isInventorySelectionSection && activeCollection?.role !== "viewer";
   const visibleItems =
     isInventorySelectionSection
       ? filterInventoryItems(sectionItems, inventoryFilters)
@@ -1864,7 +1866,7 @@ function WorkspaceShell({
                 <ListFilter size={20} aria-hidden="true" />
               </button>
             ) : null}
-            {activeSection === "collection" ? (
+            {activeSection === "collection" && activeCollection?.role !== "viewer" ? (
               <button className="primary-button" type="button" onClick={() => openIntake("manual")}>
                 <Plus size={18} aria-hidden="true" />
                 Add card
@@ -2013,14 +2015,14 @@ function WorkspaceShell({
                         Clear filters
                       </button>
                     ) : null}
-                    {isInventorySelectionSection ? (
+                    {canSelectInventory ? (
                       <button type="button" onClick={toggleSelectionMode}>
                         {selectionMode ? "Cancel select" : "Select"}
                       </button>
                     ) : null}
                   </div>
                 </div>
-                {isInventorySelectionSection && selectionMode ? (
+                {canSelectInventory && selectionMode ? (
                   <BulkSelectionBar
                     includeExisting={bulkPriceIncludeExisting}
                     isWorking={bulkSelectionIsWorking}
@@ -2049,7 +2051,7 @@ function WorkspaceShell({
                     onSelectVisible={selectVisibleItems}
                   />
                 ) : null}
-                {isInventorySelectionSection && selectionMode && bulkVariantEditorOpen ? (
+                {canSelectInventory && selectionMode && bulkVariantEditorOpen ? (
                   <BulkVariantEditor
                     clearMarketPrices={bulkVariantClearMarketPrices}
                     isWorking={bulkVariantStatus === "loading"}
@@ -2064,7 +2066,7 @@ function WorkspaceShell({
                     onToggleVariant={toggleBulkVariantValue}
                   />
                 ) : null}
-                {isInventorySelectionSection && selectionMode && bulkStorageEditorOpen ? (
+                {canSelectInventory && selectionMode && bulkStorageEditorOpen ? (
                   <BulkStorageLocationEditor
                     entryMode={bulkStorageEntryMode}
                     isWorking={bulkStorageStatus === "loading"}
@@ -2081,7 +2083,7 @@ function WorkspaceShell({
                 ) : null}
                 {visibleItems.length > 0 ? (
                   <InventoryGrid
-                    isSelecting={isInventorySelectionSection && selectionMode}
+                    isSelecting={canSelectInventory && selectionMode}
                     items={visibleItems}
                     selectedItemIds={selectedItemIdSet}
                     onSelect={setSelectedItem}
@@ -2211,6 +2213,7 @@ function WorkspaceShell({
 
         {activeCollection && selectedItem ? (
           <InventoryItemDetail
+            canEdit={activeCollection.role !== "viewer"}
             collectionId={activeCollection.id}
             item={selectedItem}
             onClose={() => setSelectedItem(null)}
@@ -5798,10 +5801,12 @@ function DuplicateMergeDialog({
 }
 
 function GradedCertSummary({
+  canEdit,
   item,
   isRefreshing,
   onRefresh
 }: {
+  canEdit: boolean;
   item: InventoryItem;
   isRefreshing: boolean;
   onRefresh: () => void;
@@ -5829,7 +5834,7 @@ function GradedCertSummary({
               Cert
             </a>
           ) : null}
-          {canRefreshPsa ? (
+          {canEdit && canRefreshPsa ? (
             <button disabled={isRefreshing} onClick={onRefresh} type="button">
               <RefreshCw size={16} aria-hidden="true" />
               {isRefreshing ? "Refreshing..." : "Refresh"}
@@ -5863,6 +5868,7 @@ function GradedCertSummary({
 }
 
 function RawMarketPriceSummary({
+  canEdit,
   candidates,
   error,
   isRefreshing,
@@ -5870,6 +5876,7 @@ function RawMarketPriceSummary({
   onRefresh,
   onSelectCandidate
 }: {
+  canEdit: boolean;
   candidates: PricingCandidate[];
   error: string;
   isRefreshing: boolean;
@@ -5901,10 +5908,10 @@ function RawMarketPriceSummary({
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
           <PricingResearchLinks item={item} />
-          <button disabled={isRefreshing} onClick={onRefresh} type="button">
+          {canEdit ? <button disabled={isRefreshing} onClick={onRefresh} type="button">
             <RefreshCw size={16} aria-hidden="true" />
             {isRefreshing ? "Refreshing..." : "Refresh raw price"}
-          </button>
+          </button> : null}
         </div>
       </div>
 
@@ -5976,6 +5983,7 @@ function RawMarketPriceSummary({
 }
 
 function GradedMarketPriceSummary({
+  canEdit,
   candidates,
   error,
   isRefreshing,
@@ -5983,6 +5991,7 @@ function GradedMarketPriceSummary({
   onRefresh,
   onSelectCandidate
 }: {
+  canEdit: boolean;
   candidates: PricingCandidate[];
   error: string;
   isRefreshing: boolean;
@@ -6014,10 +6023,10 @@ function GradedMarketPriceSummary({
         </div>
         <div className="graded-cert-actions pricing-panel-actions">
           <PricingResearchLinks item={item} />
-          <button disabled={isRefreshing} onClick={onRefresh} type="button">
+          {canEdit ? <button disabled={isRefreshing} onClick={onRefresh} type="button">
             <RefreshCw size={16} aria-hidden="true" />
             {isRefreshing ? "Refreshing..." : "Refresh graded price"}
-          </button>
+          </button> : null}
         </div>
       </div>
 
@@ -6360,6 +6369,7 @@ function InventoryMetaFilterButton({
 }
 
 function InventoryItemDetail({
+  canEdit,
   collectionId,
   item,
   onClose,
@@ -6368,6 +6378,7 @@ function InventoryItemDetail({
   onTagFilter,
   onUpdated
 }: {
+  canEdit: boolean;
   collectionId: string;
   item: InventoryItem;
   onClose: () => void;
@@ -6944,11 +6955,13 @@ function InventoryItemDetail({
             {itemType === "graded" ? (
               <>
                 <GradedCertSummary
+                  canEdit={canEdit}
                   item={item}
                   isRefreshing={status === "refreshing"}
                   onRefresh={handleRefreshCert}
                 />
                 <GradedMarketPriceSummary
+                  canEdit={canEdit}
                   candidates={gradedPricingCandidates}
                   error={pricingError}
                   isRefreshing={status === "pricing"}
@@ -6961,6 +6974,7 @@ function InventoryItemDetail({
 
             {itemType === "raw" ? (
               <RawMarketPriceSummary
+                canEdit={canEdit}
                 candidates={pricingCandidates}
                 error={pricingError}
                 isRefreshing={status === "pricing"}
@@ -6984,7 +6998,13 @@ function InventoryItemDetail({
               status={valueHistoryStatus}
             />
 
-            <form className="image-edit-form detail-edit-form" key={item.id} onSubmit={handleSave}>
+            {!canEdit ? (
+              <p className="lookup-note" role="note">
+                This collection is open for system-admin debugging. Editing still requires an explicit editor membership.
+              </p>
+            ) : null}
+
+            {canEdit ? <form className="image-edit-form detail-edit-form" key={item.id} onSubmit={handleSave}>
               <label>
                 Card name
                 <input defaultValue={item.card.name} name="name" required />
@@ -7167,7 +7187,7 @@ function InventoryItemDetail({
                   {status === "deleting" ? "Deleting..." : "Delete card"}
                 </button>
               </div>
-            </form>
+            </form> : null}
           </div>
         </div>
       </section>
