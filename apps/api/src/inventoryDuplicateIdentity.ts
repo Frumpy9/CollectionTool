@@ -111,7 +111,7 @@ export function findInventoryDuplicateMatches(
         item,
         kind: "cert-number",
         reasons: certInventoryDuplicateReasons(candidate),
-        mergeAllowed: true,
+        mergeAllowed: false,
         separateAllowed: false
       }));
     }

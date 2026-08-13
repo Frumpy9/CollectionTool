@@ -77,11 +77,16 @@ insufficient adjustments roll both back. Editing or deleting history never repla
 
 ## Consistency And Trust Cleanups
 
-### [ ] 6. Centralized duplicate identity
+### [x] 6. Centralized duplicate identity
 
 Move duplicate comparison into one server-side domain module used by manual entry, bulk intake, CSV
 imports, cert checks, and Needs Attention. Return structured match reasons so every workflow explains
 duplicates consistently.
+
+Duplicate identity now lives in one tested server module. Intake uses a read-only preflight endpoint,
+CSV policies and cert checks share the same normalized keys, and Needs Attention reports the same
+structured matching fields. Certification matches cannot change quantity or be added as separate rows, while intentional
+variant differences such as 1st Edition, Shadowless, and printing details remain distinct.
 
 ### [ ] 7. Server-side image matching
 

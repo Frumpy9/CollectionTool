@@ -69,7 +69,7 @@ test("formatted cert matches take precedence and cannot be added separately", ()
   const matches = findInventoryDuplicateMatches([exactWithoutCert, certItem], payload);
   assert.deepEqual(matches.map((match) => match.item.id), ["cert-match"]);
   assert.equal(matches[0].kind, "cert-number");
-  assert.equal(matches[0].mergeAllowed, true);
+  assert.equal(matches[0].mergeAllowed, false);
   assert.equal(matches[0].separateAllowed, false);
   assert.deepEqual(matches[0].reasons.map((reason) => reason.code), ["cert-number"]);
   assert.match(matches[0].reasons[0].message, /Certification number matches/);

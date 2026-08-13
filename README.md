@@ -94,7 +94,9 @@ The Data workspace accepts Pokemon Vault inventory exports, compatible named col
 Vault collection exports. Previewing runs on the API and does not change inventory. The preview
 states exactly how many rows will commit and how many invalid or duplicate rows are excluded. You
 must acknowledge exclusions before committing, and exact duplicates require an explicit skip,
-merge-quantity, or separate-row policy. Cert numbers are always deduplicated.
+merge-quantity, or separate-row policy. Cert numbers are always deduplicated. Manual, bulk, PSA,
+CSV, and Needs Attention checks use the same server-side identity rules and return field-level match
+reasons; variant-distinct cards remain separate.
 
 Accepted rows commit in one SQLite transaction, so an interruption or row failure cannot leave a
 partial import. Inventory changes after preview invalidate the plan and require a new preview. A

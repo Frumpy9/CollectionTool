@@ -6133,7 +6133,7 @@ function DuplicateMergeDialog({
 
         <p className="lookup-note">
           {isCertMatch
-            ? `Certification numbers identify one physical slab. Increase this row to qty ${mergedQuantity}, or cancel.`
+            ? "This certification number identifies the existing physical slab. No new row or quantity change will be saved."
             : `Increase this row to qty ${mergedQuantity}, or keep this as a separate copy.`}
         </p>
 
@@ -6148,9 +6148,15 @@ function DuplicateMergeDialog({
               Add separate copy
             </button>
           ) : null}
-          <button onClick={() => onResolve("cancel")} type="button">
-            Cancel
-          </button>
+          {!match.mergeAllowed && !match.separateAllowed ? (
+            <button className="primary-button" onClick={() => onResolve("cancel")} type="button">
+              Keep existing row
+            </button>
+          ) : (
+            <button onClick={() => onResolve("cancel")} type="button">
+              Cancel
+            </button>
+          )}
         </div>
       </section>
     </div>
