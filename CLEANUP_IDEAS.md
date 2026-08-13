@@ -42,13 +42,16 @@ Suggested views:
 
 Needs Attention should remain a collection-wide inbox but deep-link into the relevant Pricing view.
 
-### [ ] 3. Simpler inventory navigation
+### [x] 3. Simpler inventory navigation
 
 Use one Inventory workspace with persistent views or filters for All, Raw, Graded, Missing price,
 Missing image, and Recently added. Remove surprising transitions between raw-only, graded-only, and
 cross-inventory result scopes.
 
-### [ ] 4. Actionable storage organizer
+The shipped view switcher stores the active view per collection, reports real inventory-row counts,
+and applies the primary scope before the existing detailed filters.
+
+### [x] 4. Actionable storage organizer
 
 Either merge the current storage summaries into Inventory or turn Storage into a real organizer:
 
@@ -57,6 +60,10 @@ Either merge the current storage summaries into Inventory or turn Storage into a
 - Move cards between locations
 - Detect inconsistent location names
 - Start a physical inventory audit
+
+Storage now supports reviewed moves and rename/merge operations, a first-class Unassigned group,
+conservative naming suggestions, and non-mutating local audit reports. Viewers retain browse and
+audit access without seeing mutation controls.
 
 ### [ ] 5. Transaction and inventory finalization
 

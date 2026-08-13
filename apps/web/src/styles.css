@@ -1375,199 +1375,6 @@ small {
   line-height: 1.35;
 }
 
-.storage-workspace {
-  display: grid;
-  gap: 14px;
-}
-
-.storage-overview,
-.storage-panel {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.82) inset;
-}
-
-.storage-overview {
-  display: grid;
-  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 1.8fr);
-  gap: 14px;
-  align-items: stretch;
-  padding: 16px;
-}
-
-.storage-overview h3 {
-  margin: 0;
-  font-size: 1.25rem;
-}
-
-.storage-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.storage-metrics div {
-  display: grid;
-  gap: 5px;
-  min-height: 74px;
-  padding: 12px;
-  border: 1px solid #dbe5ec;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.storage-metrics div.needs-attention {
-  border-color: #f4cf75;
-  background: #fff9ea;
-}
-
-.storage-metrics span,
-.storage-empty-metric span,
-.storage-variant-list small {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-.storage-metrics strong {
-  align-self: end;
-  color: var(--ink);
-  font-size: 1.25rem;
-  line-height: 1;
-}
-
-.storage-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.75fr) minmax(260px, 0.85fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.storage-panel {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-}
-
-.storage-panel-primary {
-  min-height: 420px;
-}
-
-.storage-side-stack {
-  display: grid;
-  gap: 14px;
-}
-
-.storage-group-list {
-  display: grid;
-  gap: 9px;
-}
-
-.storage-group-list button {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px 14px;
-  align-items: center;
-  min-height: 78px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 12px;
-  color: var(--ink);
-  background: var(--panel-strong);
-  text-align: left;
-}
-
-.storage-group-list button:hover,
-.storage-group-list button:focus-visible,
-.storage-variant-list button:hover,
-.storage-variant-list button:focus-visible {
-  border-color: rgba(20, 83, 45, 0.32);
-  outline: none;
-  background: #f0fdf4;
-}
-
-.storage-group-main,
-.storage-group-stats,
-.storage-variant-list button span {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.storage-group-main small {
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.storage-group-stats {
-  justify-items: end;
-}
-
-.storage-group-stats strong {
-  font-size: 1.1rem;
-}
-
-.storage-group-stats small {
-  color: #475569;
-  font-weight: 900;
-}
-
-.storage-group-meter {
-  grid-column: 1 / -1;
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e2e8f0;
-}
-
-.storage-group-meter span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #16a34a;
-}
-
-.storage-empty-metric {
-  display: grid;
-  gap: 5px;
-  padding: 12px;
-  border: 1px solid #f4cf75;
-  border-radius: 8px;
-  background: #fff9ea;
-}
-
-.storage-empty-metric strong {
-  font-size: 1.35rem;
-}
-
-.storage-variant-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.storage-variant-list button {
-  min-width: 132px;
-  max-width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 11px;
-  color: var(--ink);
-  background: var(--panel-strong);
-  text-align: left;
-}
-
-.storage-overflow-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 14px;
-}
-
 .credits-workspace {
   display: grid;
   gap: 14px;
@@ -3887,14 +3694,8 @@ small {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .storage-overview,
-  .storage-layout,
   .deep-search-panel:first-child {
     grid-template-columns: 1fr;
-  }
-
-  .storage-panel-primary {
-    min-height: 0;
   }
 }
 
@@ -3946,8 +3747,7 @@ small {
     .ledger-form,
     .admin-row-form,
     .member-row,
-    .admin-fact-grid,
-    .storage-metrics {
+    .admin-fact-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3996,18 +3796,6 @@ small {
   .deep-search-actions button,
   .deep-card-actions button {
     width: 100%;
-  }
-
-  .storage-overview {
-    padding: 14px;
-  }
-
-  .storage-group-list button {
-    grid-template-columns: 1fr;
-  }
-
-  .storage-group-stats {
-    justify-items: start;
   }
 
   .lookup-card {
