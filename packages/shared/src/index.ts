@@ -229,6 +229,15 @@ export type CollectionTransactionsResponse = {
   summary: CollectionTransactionSummary;
 };
 
+export type TransactionInventoryAdjustment = {
+  itemId: string;
+  direction: "increase" | "decrease";
+  quantity: number;
+  beforeQuantity: number;
+  afterQuantity: number;
+  itemDeleted: boolean;
+};
+
 export type CreateCollectionTransactionRequest = {
   itemId?: string | null;
   type: CollectionTransactionType;
@@ -241,9 +250,18 @@ export type CreateCollectionTransactionRequest = {
   counterparty?: string;
   notes?: string;
   transactedAt: string;
+  /** Explicit opt-in. Omitted/false always records a ledger-only entry. */
+  adjustInventory?: boolean;
 };
 
-export type UpdateCollectionTransactionRequest = Partial<CreateCollectionTransactionRequest>;
+export type CreateCollectionTransactionResponse = {
+  transaction: CollectionTransaction;
+  inventoryAdjustment: TransactionInventoryAdjustment | null;
+};
+
+export type UpdateCollectionTransactionRequest = Partial<
+  Omit<CreateCollectionTransactionRequest, "adjustInventory">
+>;
 
 export type BackupSqliteResponse = {
   ok: true;

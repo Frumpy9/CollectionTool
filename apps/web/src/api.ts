@@ -24,6 +24,7 @@ import type {
   CollectionMembersResponse,
   CollectionTransaction,
   CollectionTransactionsResponse,
+  CreateCollectionTransactionResponse,
   CreateAdminUserRequest,
   DatabaseIntegrityResponse,
   CreateInventoryItemRequest,
@@ -190,7 +191,7 @@ export const api = {
       }`
     ),
   createTransaction: (collectionId: string, payload: CreateCollectionTransactionRequest) =>
-    request<{ transaction: CollectionTransaction }>(
+    request<CreateCollectionTransactionResponse>(
       `/api/collections/${collectionId}/transactions`,
       { method: "POST", body: JSON.stringify(payload) }
     ),

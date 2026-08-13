@@ -4,11 +4,14 @@ import type {
   CollectionTransactionSummary,
   CollectionTransactionType,
   CollectionTransactionsResponse,
+  CreateCollectionTransactionResponse,
   CreateCollectionTransactionRequest,
+  TransactionInventoryAdjustment,
   UpdateCollectionTransactionRequest
 } from "@collection-tool/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
+import { recordCollectionValueSnapshot } from "../collectionValueSnapshots.js";
 import type { AppDatabase } from "../db.js";
 
 const transactionTypes = new Set<CollectionTransactionType>([
@@ -18,6 +21,19 @@ const transactionTypes = new Set<CollectionTransactionType>([
   "trade_given",
   "fee",
   "gift_received",
+  "gift_given",
+  "disposal"
+]);
+
+const incomingInventoryTypes = new Set<CollectionTransactionType>([
+  "purchase",
+  "trade_received",
+  "gift_received"
+]);
+
+const outgoingInventoryTypes = new Set<CollectionTransactionType>([
+  "sale",
+  "trade_given",
   "gift_given",
   "disposal"
 ]);
@@ -81,45 +97,67 @@ export async function registerTransactionRoutes(
     const access = requireCollectionAccess(request, reply, database, true);
     if (!access) return accessError(reply, true);
 
+    const body = request.body as CreateCollectionTransactionRequest;
     const input = normalizeInput(
       database,
       access.collectionId,
-      request.body as CreateCollectionTransactionRequest
+      body
     );
     const id = randomUUID();
+    let inventoryAdjustment: TransactionInventoryAdjustment | null = null;
 
-    database.connection
-      .prepare(
-        `
-          INSERT INTO collection_transactions (
-            id, collection_id, owned_item_id, transaction_type, quantity,
-            amount_cents, fees_cents, allocated_cost_cents, currency,
-            item_name, item_set_name, item_card_number, counterparty, notes,
-            transacted_at, created_by_user_id
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?)
-        `
-      )
-      .run(
-        id,
-        access.collectionId,
-        input.itemId,
-        input.type,
-        input.quantity,
-        input.amountCents,
-        input.feesCents,
-        input.allocatedCostCents,
-        input.itemName,
-        input.itemSetName,
-        input.itemCardNumber,
-        input.counterparty,
-        input.notes,
-        input.transactedAt,
-        access.userId
-      );
+    database.connection.exec("BEGIN IMMEDIATE");
+    try {
+      database.connection
+        .prepare(
+          `
+            INSERT INTO collection_transactions (
+              id, collection_id, owned_item_id, transaction_type, quantity,
+              amount_cents, fees_cents, allocated_cost_cents, currency,
+              item_name, item_set_name, item_card_number, counterparty, notes,
+              transacted_at, created_by_user_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(
+          id,
+          access.collectionId,
+          input.itemId,
+          input.type,
+          input.quantity,
+          input.amountCents,
+          input.feesCents,
+          input.allocatedCostCents,
+          input.itemName,
+          input.itemSetName,
+          input.itemCardNumber,
+          input.counterparty,
+          input.notes,
+          input.transactedAt,
+          access.userId
+        );
+
+      if (body.adjustInventory === true) {
+        inventoryAdjustment = adjustLinkedInventory(
+          database,
+          access.collectionId,
+          input
+        );
+      }
+
+      database.connection.exec("COMMIT");
+    } catch (error) {
+      database.connection.exec("ROLLBACK");
+      throw error;
+    }
 
     reply.code(201);
-    return { transaction: getTransaction(database, access.collectionId, id) };
+    const response: CreateCollectionTransactionResponse = {
+      transaction: getTransaction(database, access.collectionId, id)!,
+      inventoryAdjustment
+    };
+    return response;
   });
 
   app.patch(
@@ -210,6 +248,94 @@ export async function registerTransactionRoutes(
   );
 }
 
+function adjustLinkedInventory(
+  database: AppDatabase,
+  collectionId: string,
+  input: TransactionInput
+): TransactionInventoryAdjustment {
+  if (!input.itemId || input.quantity === null) {
+    throw badRequest("Link an inventory item and enter a quantity before adjusting inventory.");
+  }
+
+  const direction = incomingInventoryTypes.has(input.type)
+    ? "increase"
+    : outgoingInventoryTypes.has(input.type)
+      ? "decrease"
+      : null;
+
+  if (!direction) {
+    throw badRequest("This transaction type cannot adjust inventory.");
+  }
+
+  const current = database.connection
+    .prepare(
+      `
+        SELECT quantity, card_id
+        FROM owned_items
+        WHERE id = ? AND collection_id = ?
+      `
+    )
+    .get(input.itemId, collectionId) as
+    | { quantity: number; card_id: string }
+    | undefined;
+
+  if (!current) {
+    throw badRequest("The linked inventory item was not found.");
+  }
+
+  const afterQuantity = direction === "increase"
+    ? current.quantity + input.quantity
+    : current.quantity - input.quantity;
+
+  if (direction === "increase" && afterQuantity > 999) {
+    throw badRequest("The adjusted inventory quantity cannot exceed 999.");
+  }
+
+  if (afterQuantity < 0) {
+    throw badRequest(
+      `Cannot remove ${input.quantity}; only ${current.quantity} ${
+        current.quantity === 1 ? "copy is" : "copies are"
+      } available.`
+    );
+  }
+
+  if (afterQuantity === 0) {
+    database.connection
+      .prepare("DELETE FROM owned_items WHERE id = ? AND collection_id = ?")
+      .run(input.itemId, collectionId);
+    database.connection
+      .prepare(
+        `
+          DELETE FROM cards
+          WHERE id = ?
+            AND NOT EXISTS (SELECT 1 FROM owned_items WHERE card_id = ?)
+        `
+      )
+      .run(current.card_id, current.card_id);
+    recordCollectionValueSnapshot(database, collectionId, "inventory_delete");
+  } else {
+    database.connection
+      .prepare(
+        `
+          UPDATE owned_items
+          SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND collection_id = ?
+        `
+      )
+      .run(afterQuantity, input.itemId, collectionId);
+    recordCollectionValueSnapshot(database, collectionId, "inventory_update");
+  }
+
+  return {
+    itemId: input.itemId,
+    direction,
+    quantity: input.quantity,
+    beforeQuantity: current.quantity,
+    afterQuantity,
+    itemDeleted: afterQuantity === 0
+  };
+}
+
 function requireCollectionAccess(
   request: Parameters<typeof getAuthContext>[0],
   reply: FastifyReply,
@@ -261,6 +387,9 @@ function normalizeInput(
 ): TransactionInput {
   if (!raw || typeof raw !== "object") throw badRequest("Enter transaction details.");
   if (!transactionTypes.has(raw.type)) throw badRequest("Choose a valid transaction type.");
+  if (raw.adjustInventory !== undefined && typeof raw.adjustInventory !== "boolean") {
+    throw badRequest("Inventory adjustment must be true or false.");
+  }
 
   const itemId = normalizeOptionalText(raw.itemId, 100, "Item ID");
   const linkedItem = itemId ? getItemSnapshot(database, collectionId, itemId) : null;
@@ -272,6 +401,16 @@ function normalizeInput(
   }
   if (raw.type === "fee" && quantity !== null) {
     throw badRequest("Standalone fee entries do not use a quantity.");
+  }
+  if (raw.adjustInventory && (!itemId || quantity === null)) {
+    throw badRequest("Link an inventory item and enter a quantity before adjusting inventory.");
+  }
+  if (
+    raw.adjustInventory &&
+    !incomingInventoryTypes.has(raw.type) &&
+    !outgoingInventoryTypes.has(raw.type)
+  ) {
+    throw badRequest("This transaction type cannot adjust inventory.");
   }
 
   const amountCents = nonNegativeInteger(raw.amountCents ?? 0, "Total amount");

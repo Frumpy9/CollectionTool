@@ -92,6 +92,113 @@ test("transaction ledger persists partial sales and computes only explicit reali
   }
 });
 
+test("reviewed outgoing transactions adjust inventory atomically and remove empty rows", async () => {
+  const server = await createTestServer();
+  try {
+    const { collectionId, cookie } = await bootstrap(server.app);
+    const itemId = await createItem(server.app, collectionId, cookie, 3);
+
+    const partialSale = await createTransaction(server.app, collectionId, cookie, {
+      itemId,
+      type: "sale",
+      quantity: 2,
+      amountCents: 2_000,
+      transactedAt: "2026-08-05",
+      adjustInventory: true
+    });
+    assert.equal(partialSale.statusCode, 201);
+    assert.deepEqual(partialSale.json().inventoryAdjustment, {
+      itemId,
+      direction: "decrease",
+      quantity: 2,
+      beforeQuantity: 3,
+      afterQuantity: 1,
+      itemDeleted: false
+    });
+
+    const insufficientDisposal = await createTransaction(server.app, collectionId, cookie, {
+      itemId,
+      type: "disposal",
+      quantity: 2,
+      amountCents: 0,
+      transactedAt: "2026-08-06",
+      adjustInventory: true
+    });
+    assert.equal(insufficientDisposal.statusCode, 400);
+    assert.match(errorMessage(insufficientDisposal), /only 1 copy is available/i);
+
+    const afterFailedAdjustment = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/transactions`,
+      headers: { cookie }
+    });
+    assert.equal(afterFailedAdjustment.json().transactions.length, 1, "failed adjustment rolls back ledger insert");
+
+    const finalDisposal = await createTransaction(server.app, collectionId, cookie, {
+      itemId,
+      type: "disposal",
+      quantity: 1,
+      amountCents: 0,
+      transactedAt: "2026-08-07",
+      adjustInventory: true
+    });
+    assert.equal(finalDisposal.statusCode, 201);
+    assert.deepEqual(finalDisposal.json().inventoryAdjustment, {
+      itemId,
+      direction: "decrease",
+      quantity: 1,
+      beforeQuantity: 1,
+      afterQuantity: 0,
+      itemDeleted: true
+    });
+    assert.equal(finalDisposal.json().transaction.itemId, null, "historical snapshot survives row deletion");
+
+    const inventory = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie }
+    });
+    assert.equal(inventory.json().items.length, 0);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
+test("reviewed incoming transactions can increase a linked inventory row", async () => {
+  const server = await createTestServer();
+  try {
+    const { collectionId, cookie } = await bootstrap(server.app);
+    const itemId = await createItem(server.app, collectionId, cookie, 1);
+    const gift = await createTransaction(server.app, collectionId, cookie, {
+      itemId,
+      type: "gift_received",
+      quantity: 2,
+      amountCents: 0,
+      transactedAt: "2026-08-05",
+      adjustInventory: true
+    });
+
+    assert.equal(gift.statusCode, 201);
+    assert.deepEqual(gift.json().inventoryAdjustment, {
+      itemId,
+      direction: "increase",
+      quantity: 2,
+      beforeQuantity: 1,
+      afterQuantity: 3,
+      itemDeleted: false
+    });
+
+    const inventory = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie }
+    });
+    assert.equal(inventory.json().items[0].quantity, 3);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("viewers can read the ledger but only editors can change it", async () => {
   const server = await createTestServer();
   try {
