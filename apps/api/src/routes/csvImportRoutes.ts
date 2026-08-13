@@ -45,6 +45,12 @@ export async function registerCsvImportRoutes(app: FastifyInstance, database: Ap
     }
   );
 
+  app.get("/api/collections/:collectionId/csv-imports", async (request, reply) => {
+    const access = requireEditor(request, reply, database);
+    if (!access) return;
+    return { jobs: jobs.list(access.collectionId, access.userId) };
+  });
+
   app.get("/api/collections/:collectionId/csv-imports/:jobId", async (request, reply) => {
     const access = requireEditor(request, reply, database);
     if (!access) return;

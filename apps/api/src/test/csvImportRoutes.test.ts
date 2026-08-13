@@ -40,6 +40,20 @@ test("atomic CSV dry-run preserves quoted multiline exports and commits accepted
     assert.equal(countRows(server.database, "owned_items"), 0, "dry-run must not write inventory");
     assert.equal(countRows(server.database, "collection_value_snapshots"), 0);
 
+    const listedReadyJobs = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/csv-imports`,
+      headers: { cookie }
+    });
+    assert.equal(listedReadyJobs.statusCode, 200);
+    assert.deepEqual(
+      listedReadyJobs.json().jobs.map((listedJob: CsvImportJobResponse) => [
+        listedJob.id,
+        listedJob.status
+      ]),
+      [[job.id, "ready"]]
+    );
+
     const noAcknowledgement = await commitJob(server.app, collectionId, cookie, job, false);
     assert.equal(noAcknowledgement.statusCode, 400);
     assert.match(noAcknowledgement.json().error, /acknowledge/i);
@@ -62,6 +76,12 @@ test("atomic CSV dry-run preserves quoted multiline exports and commits accepted
       quantity: 2,
       notes: 'First line\nsecond line with "quotes"'
     });
+    const listedCompletedJobs = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/csv-imports`,
+      headers: { cookie }
+    });
+    assert.equal(listedCompletedJobs.json().jobs[0].status, "completed");
 
     const report = await getErrorReport(server.app, collectionId, cookie, job.id);
     assert.equal(report.statusCode, 200);
@@ -389,6 +409,13 @@ test("CSV routes enforce editor authorization and scoped transport limits", asyn
       headers: { cookie: viewerCookie }
     });
     assert.equal(otherEditorRead.statusCode, 404, "jobs must remain creator-only");
+    const otherEditorList = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/csv-imports`,
+      headers: { cookie: viewerCookie }
+    });
+    assert.equal(otherEditorList.statusCode, 200);
+    assert.deepEqual(otherEditorList.json(), { jobs: [] });
 
     const parserTooLarge = "x".repeat(MAX_CSV_IMPORT_BYTES + 1);
     const parserRejected = await server.app.inject({

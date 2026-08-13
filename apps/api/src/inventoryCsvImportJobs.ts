@@ -117,6 +117,16 @@ export class CsvImportJobManager {
     return publicJob(this.requireOwnedJob(jobId, collectionId, ownerUserId));
   }
 
+  list(collectionId: string, ownerUserId: string) {
+    this.cleanupExpiredJobs();
+    return [...this.jobs.values()]
+      .filter(
+        (job) => job.collectionId === collectionId && job.ownerUserId === ownerUserId
+      )
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(publicJob);
+  }
+
   cancel(jobId: string, collectionId: string, ownerUserId: string) {
     const job = this.requireOwnedJob(jobId, collectionId, ownerUserId);
 

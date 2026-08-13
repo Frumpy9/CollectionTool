@@ -614,6 +614,10 @@ export type CsvImportJobResponse = {
   completedAt: string | null;
 };
 
+export type CsvImportJobsResponse = {
+  jobs: CsvImportJobResponse[];
+};
+
 export type CreateCsvImportJobRequest = {
   csvText: string;
   duplicatePolicy: CsvImportDuplicatePolicy;

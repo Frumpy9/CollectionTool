@@ -31,6 +31,7 @@ import type {
   CreateCollectionTransactionRequest,
   CreateCsvImportJobRequest,
   CsvImportJobResponse,
+  CsvImportJobsResponse,
   CommitCsvImportJobRequest,
   InventoryItem,
   InventoryDuplicateCheckResponse,
@@ -289,6 +290,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  listCsvImportJobs: (collectionId: string) =>
+    request<CsvImportJobsResponse>(`/api/collections/${collectionId}/csv-imports`),
   getCsvImportJob: (collectionId: string, jobId: string) =>
     request<CsvImportJobResponse>(`/api/collections/${collectionId}/csv-imports/${jobId}`),
   commitCsvImportJob: (
