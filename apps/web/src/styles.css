@@ -3727,6 +3727,25 @@ small {
   font-weight: 800;
 }
 
+.image-match-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.image-match-reasons li {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-strong);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .image-option button {
   min-height: 38px;
   border: 1px solid var(--line);

@@ -475,6 +475,57 @@ test("inventory duplicate preflight returns structured matches without mutating 
   }
 });
 
+test("inventory image lookup is member-readable and returns provider diagnostics", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload: {
+        name: "Pikachu",
+        setName: "Base Set",
+        setCode: "BS",
+        cardNumber: "58/102",
+        language: "en",
+        itemType: "raw",
+        quantity: 1
+      }
+    });
+    const itemId = createResponse.json().item.id as string;
+
+    const response = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/items/${itemId}/image-candidates`,
+      headers: { cookie }
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().candidates, []);
+    assert.deepEqual(
+      response.json().attempts.map((attempt: { provider: string; status: string }) => [
+        attempt.provider,
+        attempt.status
+      ]),
+      [
+        ["pokemonpricetracker", "unavailable"],
+        ["card-lookup", "empty"]
+      ]
+    );
+    assert.match(response.json().message, /No compatible image candidates/i);
+
+    const missing = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/items/missing/image-candidates`,
+      headers: { cookie }
+    });
+    assert.equal(missing.statusCode, 404);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("inventory creation persists PokemonPriceTracker pricing source hints", async () => {
   const server = await createTestServer();
   try {

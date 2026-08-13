@@ -4,7 +4,6 @@ import type {
   BulkPriceQueueMode,
   BulkPriceQueueResponse,
   BulkPriceQueueStatus,
-  CardImageLookupResponse,
   CollectionValueHistoryResponse,
   EnqueueBulkPriceRefreshRequest,
   InventoryMarketPriceSource,
@@ -35,7 +34,6 @@ import {
 } from "../pricingReviews.js";
 import {
   findPokemonPriceTrackerPricingCandidateByIds,
-  lookupPokemonPriceTrackerImageCandidates,
   lookupPokemonPriceTrackerHistory,
   lookupPokemonPriceTrackerPricing,
   PokemonPriceTrackerRateLimitError,
@@ -319,52 +317,6 @@ export async function registerPricingRoutes(
         item: updatedItem,
         candidates: [toPublicPricingCandidate(candidate, source)],
         message: "Saved selected market price."
-      };
-    }
-  );
-
-  app.get(
-    "/api/collections/:collectionId/items/:itemId/pricing/image-candidates",
-    async (request, reply): Promise<CardImageLookupResponse | { error: string }> => {
-      const access = getPricingAccess(request, database);
-
-      if (!access.ok) {
-        reply.code(access.statusCode);
-        return { error: access.message };
-      }
-
-      const item = getInventoryItem(database, access.collectionId, access.itemId);
-
-      if (!item) {
-        reply.code(404);
-        return { error: "Inventory item not found." };
-      }
-
-      const sourceMatch = getPricingSourceMatch(database, item.id, "pokemonpricetracker");
-      const candidates = await lookupPokemonPriceTrackerImageCandidates({
-        apiKey: config.pokemonPriceTrackerApiKey,
-        item,
-        preferredSourceCardId: sourceMatch?.source_card_id ?? null
-      }).catch((error) => {
-        reply.code(statusCodeForPricingError(error));
-        return {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Unable to load PokemonPriceTracker image candidates."
-        };
-      });
-
-      if ("error" in candidates) {
-        return candidates;
-      }
-
-      return {
-        candidates,
-        message:
-          candidates.length > 0
-            ? "Loaded PokemonPriceTracker image candidates."
-            : "No PokemonPriceTracker image candidates found."
       };
     }
   );

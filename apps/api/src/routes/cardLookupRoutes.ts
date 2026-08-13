@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  CardImageLookupResponse,
   CardLookupRequest,
   JapaneseCardCacheResponse,
   PokemonPriceTrackerSetCardsResponse,
@@ -11,11 +12,14 @@ import { getAuthContext, getCollectionRole, listCollectionsForUser } from "../au
 import { lookupCards, parseCardQuery } from "../cardLookupClient.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import { lookupInventoryImageCandidates } from "../inventoryImageMatcher.js";
+import { getPricingSourceMatch } from "../pricingReviews.js";
 import {
   lookupPokemonPriceTrackerSetCards,
   PokemonPriceTrackerRateLimitError,
   searchPokemonPriceTrackerSets
 } from "../pokemonPriceTrackerClient.js";
+import { listInventoryItems } from "./inventoryRoutes.js";
 
 export async function registerCardLookupRoutes(
   app: FastifyInstance,
@@ -40,6 +44,47 @@ export async function registerCardLookupRoutes(
       database
     });
   });
+
+  app.get(
+    "/api/collections/:collectionId/items/:itemId/image-candidates",
+    async (request, reply): Promise<CardImageLookupResponse | { error: string }> => {
+      const auth = getAuthContext(request, database);
+
+      if (!auth) {
+        reply.code(401);
+        return { error: "Unauthorized" };
+      }
+
+      const { collectionId, itemId } = request.params as {
+        collectionId: string;
+        itemId: string;
+      };
+      const role = getCollectionRole(database, collectionId, auth.user.id);
+
+      if (!role) {
+        reply.code(403);
+        return { error: "You do not have access to this collection." };
+      }
+
+      const item = listInventoryItems(database, collectionId).find(
+        (candidate) => candidate.id === itemId
+      );
+
+      if (!item) {
+        reply.code(404);
+        return { error: "Inventory item not found." };
+      }
+
+      const sourceMatch = getPricingSourceMatch(database, item.id);
+      return lookupInventoryImageCandidates({
+        item,
+        pokemonTcgApiKey: config.pokemonTcgApiKey,
+        pokemonPriceTrackerApiKey: config.pokemonPriceTrackerApiKey,
+        database,
+        preferredPokemonPriceTrackerCardId: sourceMatch?.sourceCardId ?? null
+      });
+    }
+  );
 
   app.get(
     "/api/cards/pokemonpricetracker/sets",

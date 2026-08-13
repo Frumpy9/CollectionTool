@@ -857,6 +857,38 @@ export type CardLookupCandidate = {
   score: number;
 };
 
+export type CardImageMatchReasonCode =
+  | "source-confidence"
+  | "language"
+  | "card-number"
+  | "set-code"
+  | "set-name"
+  | "card-name";
+
+export type CardImageMatchReason = {
+  code: CardImageMatchReasonCode;
+  label: string;
+  status: "match" | "partial" | "mismatch" | "unknown";
+  inventoryValue: string | null;
+  candidateValue: string | null;
+  scoreDelta: number;
+  message: string;
+};
+
+export type CardImageLookupCandidate = CardLookupCandidate & {
+  imageUrl: string;
+  imageMatchScore: number;
+  imageMatchConfidence: "exact" | "strong" | "possible";
+  imageMatchReasons: CardImageMatchReason[];
+  matchedQueries: string[];
+};
+
+export type CardImageLookupAttempt = {
+  provider: "pokemonpricetracker" | "card-lookup";
+  status: "matched" | "empty" | "unavailable";
+  message: string;
+};
+
 export type CardLookupResponse = {
   query: string;
   parsed: {
@@ -890,8 +922,9 @@ export type PokemonPriceTrackerSetCardsResponse = {
 };
 
 export type CardImageLookupResponse = {
-  candidates: CardLookupCandidate[];
+  candidates: CardImageLookupCandidate[];
   message: string;
+  attempts: CardImageLookupAttempt[];
 };
 
 export type UpsertJapaneseCardCacheRequest = {

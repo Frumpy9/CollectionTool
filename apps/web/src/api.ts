@@ -323,9 +323,9 @@ export const api = {
     request<PokemonPriceTrackerSetCardsResponse>(
       `/api/cards/pokemonpricetracker/sets/${encodeURIComponent(setName)}/cards`
     ),
-  lookupPokemonPriceTrackerImageCandidates: (collectionId: string, itemId: string) =>
+  lookupInventoryImageCandidates: (collectionId: string, itemId: string) =>
     request<CardImageLookupResponse>(
-      `/api/collections/${collectionId}/items/${itemId}/pricing/image-candidates`
+      `/api/collections/${collectionId}/items/${itemId}/image-candidates`
     ),
   createInventoryItem: (collectionId: string, payload: CreateInventoryItemRequest) =>
     request<{ item: InventoryItem }>(`/api/collections/${collectionId}/items`, {

@@ -54,6 +54,7 @@ import type {
   CsvImportDuplicatePolicy,
   CsvImportJobResponse,
   DatabaseIntegrityResponse,
+  CardImageLookupCandidate,
   InventoryDuplicateMatch,
   InventoryItem,
   InventoryItemType,
@@ -6769,7 +6770,7 @@ function InventoryItemDetail({
     "idle"
   );
   const [valueHistoryMessage, setValueHistoryMessage] = useState("");
-  const [imageCandidates, setImageCandidates] = useState<CardLookupCandidate[]>([]);
+  const [imageCandidates, setImageCandidates] = useState<CardImageLookupCandidate[]>([]);
   const [imageLookupMessage, setImageLookupMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -6958,16 +6959,14 @@ function InventoryItemDetail({
     setStatus("image");
 
     try {
-      const candidates = await findCardImageCandidatesForItem(collectionId, item);
+      const response = await api.lookupInventoryImageCandidates(collectionId, item.id);
 
-      if (candidates.length === 0) {
-        throw new Error("No image found for this card.");
+      if (response.candidates.length === 0) {
+        throw new Error(response.message || "No image found for this card.");
       }
 
-      setImageCandidates(candidates);
-      setImageLookupMessage(
-        `Found ${candidates.length} image option${candidates.length === 1 ? "" : "s"}.`
-      );
+      setImageCandidates(response.candidates);
+      setImageLookupMessage(response.message);
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : "Unable to fetch image options.");
     } finally {
@@ -6975,20 +6974,13 @@ function InventoryItemDetail({
     }
   }
 
-  async function handleSelectImageCandidate(candidate: CardLookupCandidate) {
-    const image = imageUrlFromLookupCandidate(candidate);
-
-    if (!image) {
-      setError("This option does not include an image.");
-      return;
-    }
-
+  async function handleSelectImageCandidate(candidate: CardImageLookupCandidate) {
     setError("");
     setStatus("image-saving");
 
     try {
       const response = await api.updateInventoryItemImage(collectionId, item.id, {
-        imageUrl: image
+        imageUrl: candidate.imageUrl
       });
 
       setImageUrl(response.item.card.imageUrl ?? "");
@@ -7563,9 +7555,9 @@ function ImageLookupOptions({
   disabled,
   onSelect
 }: {
-  candidates: CardLookupCandidate[];
+  candidates: CardImageLookupCandidate[];
   disabled: boolean;
-  onSelect: (candidate: CardLookupCandidate) => void;
+  onSelect: (candidate: CardImageLookupCandidate) => void;
 }) {
   return (
     <section className="image-option-panel wide-field" aria-label="Image options">
@@ -7575,16 +7567,14 @@ function ImageLookupOptions({
       </div>
       <div className="image-option-list">
         {candidates.map((candidate) => {
-          const image = imageUrlFromLookupCandidate(candidate);
+          const visibleReasons = candidate.imageMatchReasons.filter(
+            (reason) => reason.status === "match" || reason.status === "partial"
+          );
 
           return (
-            <article className="image-option" key={`${candidate.id}-${image ?? ""}`}>
+            <article className="image-option" key={`${candidate.id}-${candidate.imageUrl}`}>
               <div className="image-option-thumb" aria-hidden="true">
-                {image ? (
-                  <img alt="" src={image} />
-                ) : (
-                  <ImageIcon size={28} aria-hidden="true" />
-                )}
+                <img alt="" src={candidate.imageUrl} />
               </div>
               <div className="image-option-copy">
                 <strong>{candidate.name}</strong>
@@ -7594,10 +7584,15 @@ function ImageLookupOptions({
                     .join(" · ")}
                 </p>
                 <p>
-                  {formatImageCandidateSource(candidate.source)} · {candidate.confidence}
+                  {formatImageCandidateSource(candidate.source)} · {candidate.imageMatchConfidence}
                 </p>
+                <ul className="image-match-reasons" aria-label="Image match reasons">
+                  {visibleReasons.map((reason) => (
+                    <li key={reason.code}>{reason.message}</li>
+                  ))}
+                </ul>
               </div>
-              <button disabled={disabled || !image} onClick={() => onSelect(candidate)} type="button">
+              <button disabled={disabled} onClick={() => onSelect(candidate)} type="button">
                 Use image
               </button>
             </article>
@@ -7722,244 +7717,6 @@ function inventoryItemToPayload(item: InventoryItem): CreateInventoryItemRequest
   };
 }
 
-async function applyBestImageCandidateToItem(collectionId: string, item: InventoryItem | null) {
-  if (!item) {
-    return null;
-  }
-
-  try {
-    const candidates = await findCardImageCandidatesForItem(collectionId, item);
-    const image = candidates[0] ? imageUrlFromLookupCandidate(candidates[0]) : null;
-
-    if (!image) {
-      return item;
-    }
-
-    const response = await api.updateInventoryItemImage(collectionId, item.id, { imageUrl: image });
-    return response.item;
-  } catch {
-    return item;
-  }
-}
-
-async function findCardImageCandidatesForItem(collectionId: string, item: InventoryItem) {
-  const payload = inventoryItemToPayload(item);
-
-  try {
-    const response = await promiseWithTimeout(
-      api.lookupPokemonPriceTrackerImageCandidates(collectionId, item.id),
-      18000,
-      { candidates: [], message: "PokemonPriceTracker image lookup timed out." }
-    );
-
-    if (response.candidates.length > 0) {
-      return mergeImageLookupCandidates(response.candidates);
-    }
-  } catch {
-    // Fall back to the generic lookup databases when PokemonPriceTracker is unavailable.
-  }
-
-  return promiseWithTimeout(findCardImageCandidatesForPayload(payload), 15000, []);
-}
-
-async function findCardImageCandidatesForPayload(
-  payload: CreateInventoryItemRequest
-): Promise<CardLookupCandidate[]> {
-  const queries = imageLookupQueriesForPayload(payload);
-  const languages: Array<CardLanguage | "all"> =
-    payload.language === "other" ? ["all"] : [payload.language, "all"];
-  const candidateMap = new Map<string, { candidate: CardLookupCandidate; score: number }>();
-
-  for (const query of queries) {
-    for (const language of languages) {
-      try {
-        const result = await api.lookupCards({ query, language });
-
-        for (const candidate of result.candidates) {
-          const image = imageUrlFromLookupCandidate(candidate);
-
-          if (!image || !imageLookupCandidateMatchesPayload(payload, candidate)) {
-            continue;
-          }
-
-          const key = image || `${candidate.source}:${candidate.sourceId || candidate.id}`;
-          const score = scoreImageLookupCandidate(payload, candidate);
-          const current = candidateMap.get(key);
-
-          if (!current || score > current.score) {
-            candidateMap.set(key, { candidate, score });
-          }
-        }
-      } catch {
-        // Image fetch is a convenience path. Keep manual edit/import flows usable if lookup fails.
-      }
-    }
-  }
-
-  return [...candidateMap.values()]
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 8)
-    .map((entry) => entry.candidate);
-}
-
-function mergeImageLookupCandidates(candidates: CardLookupCandidate[]) {
-  const candidateMap = new Map<string, CardLookupCandidate>();
-
-  for (const candidate of candidates) {
-    const image = imageUrlFromLookupCandidate(candidate);
-
-    if (!image) {
-      continue;
-    }
-
-    const existing = candidateMap.get(image);
-
-    if (!existing || candidate.score > existing.score) {
-      candidateMap.set(image, candidate);
-    }
-  }
-
-  return [...candidateMap.values()].slice(0, 8);
-}
-
-function imageLookupQueriesForPayload(payload: CreateInventoryItemRequest) {
-  const queries: string[] = [];
-  const names = imageLookupNameOptions(payload.name);
-
-  for (const name of names) {
-    queries.push(
-      [name, payload.setName, payload.cardNumber].filter(Boolean).join(" "),
-      [name, payload.setCode, payload.cardNumber].filter(Boolean).join(" "),
-      [name, payload.cardNumber].filter(Boolean).join(" "),
-      [name, payload.setName].filter(Boolean).join(" ")
-    );
-  }
-
-  queries.push(
-    [payload.setCode, payload.cardNumber].filter(Boolean).join(" "),
-    [payload.setName, payload.cardNumber].filter(Boolean).join(" ")
-  );
-
-  return uniqueNonEmptyStrings(queries);
-}
-
-function imageLookupNameOptions(name: string) {
-  const trimmed = name.trim();
-  const withoutPsaFinish = trimmed.replace(/\s*-\s*(holo|hologram|reverse holo)$/i, "").trim();
-
-  return uniqueNonEmptyStrings([trimmed, withoutPsaFinish]);
-}
-
-function scoreImageLookupCandidate(
-  payload: CreateInventoryItemRequest,
-  candidate: CardLookupCandidate
-) {
-  let score = candidate.score;
-
-  score += candidate.confidence === "exact" ? 120 : candidate.confidence === "strong" ? 70 : 20;
-
-  if (candidate.language === payload.language) {
-    score += 40;
-  }
-
-  if (payload.cardNumber && candidate.cardNumber) {
-    score += cardNumbersCompatible(payload.cardNumber, candidate.cardNumber) ? 90 : -60;
-  }
-
-  if (payload.setCode && candidate.setCode) {
-    score += normalizeText(candidate.setCode) === normalizeText(payload.setCode) ? 50 : 0;
-  }
-
-  if (payload.setName && candidate.setName) {
-    const payloadSetName = normalizeSearchText(payload.setName);
-    const candidateSetName = normalizeSearchText(candidate.setName);
-
-    if (candidateSetName === payloadSetName) {
-      score += 50;
-    } else if (
-      candidateSetName.includes(payloadSetName) ||
-      payloadSetName.includes(candidateSetName)
-    ) {
-      score += 25;
-    }
-  }
-
-  const payloadNames = imageLookupNameOptions(payload.name).map(normalizeSearchText);
-  const candidateName = normalizeSearchText(candidate.name);
-
-  if (payloadNames.includes(candidateName)) {
-    score += 50;
-  } else if (
-    payloadNames.some((name) => candidateName.includes(name) || name.includes(candidateName))
-  ) {
-    score += 25;
-  }
-
-  return score;
-}
-
-function imageLookupCandidateMatchesPayload(
-  payload: CreateInventoryItemRequest,
-  candidate: CardLookupCandidate
-) {
-  if (
-    payload.cardNumber &&
-    candidate.cardNumber &&
-    !cardNumbersCompatible(payload.cardNumber, candidate.cardNumber)
-  ) {
-    return false;
-  }
-
-  const payloadNames = imageLookupNameOptions(payload.name).map(normalizeSearchText).filter(Boolean);
-  const candidateNames = imageLookupNameOptions(candidate.name).map(normalizeSearchText).filter(Boolean);
-
-  if (
-    payloadNames.length > 0 &&
-    candidateNames.length > 0 &&
-    !payloadNames.some((payloadName) =>
-      candidateNames.some(
-        (candidateName) =>
-          payloadName === candidateName ||
-          (payloadName.length >= 4 &&
-            candidateName.length >= 4 &&
-            (payloadName.includes(candidateName) || candidateName.includes(payloadName)))
-      )
-    )
-  ) {
-    return false;
-  }
-
-  if (payload.setName && candidate.setName) {
-    const payloadSetName = normalizeSearchText(payload.setName);
-    const candidateSetName = normalizeSearchText(candidate.setName);
-
-    if (
-      payloadSetName &&
-      candidateSetName &&
-      payloadSetName !== candidateSetName &&
-      !payloadSetName.includes(candidateSetName) &&
-      !candidateSetName.includes(payloadSetName)
-    ) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function cardNumbersCompatible(left: unknown, right: unknown) {
-  const leftNumber = normalizeCardNumber(left);
-  const rightNumber = normalizeCardNumber(right);
-  const leftPrinted = leftNumber.split("/")[0];
-  const rightPrinted = rightNumber.split("/")[0];
-
-  return Boolean(
-    leftNumber &&
-      rightNumber &&
-      (leftNumber === rightNumber || leftPrinted === rightNumber || rightPrinted === leftNumber)
-  );
-}
-
 function imageUrlFromLookupCandidate(candidate: CardLookupCandidate) {
   return candidate.imageUrl || candidate.item.imageUrl || null;
 }
@@ -7982,35 +7739,6 @@ function formatImageCandidateSource(source: CardLookupCandidate["source"]) {
   }
 
   return "Parsed";
-}
-
-function uniqueNonEmptyStrings(values: string[]) {
-  const seen = new Set<string>();
-  const uniqueValues: string[] = [];
-
-  for (const value of values) {
-    const trimmed = value.trim();
-
-    if (!trimmed || seen.has(normalizeText(trimmed))) {
-      continue;
-    }
-
-    seen.add(normalizeText(trimmed));
-    uniqueValues.push(trimmed);
-  }
-
-  return uniqueValues;
-}
-
-function promiseWithTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-  return new Promise((resolve) => {
-    const timer = window.setTimeout(() => resolve(fallback), timeoutMs);
-
-    promise
-      .then((value) => resolve(value))
-      .catch(() => resolve(fallback))
-      .finally(() => window.clearTimeout(timer));
-  });
 }
 
 function mergeCertRefreshPayload(
@@ -8067,10 +7795,6 @@ function normalizeText(value: unknown) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-}
-
-function normalizeCardNumber(value: unknown) {
-  return normalizeText(value).replace(/\b0+(\d)/g, "$1");
 }
 
 function normalizeQuantity(value: unknown) {
