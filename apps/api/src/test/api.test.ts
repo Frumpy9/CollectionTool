@@ -333,6 +333,92 @@ test("collection members require manager access and disabled users cannot be add
   }
 });
 
+test("system admins can inspect every collection while foreign collections remain read-only", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections: adminCollections, cookie: adminCookie } = await bootstrapAdmin(server.app);
+    await createAdminUser(server.app, adminCookie, {
+      email: "collector@example.test",
+      username: "collector",
+      displayName: "Collector User",
+      password: "collector-password",
+      systemRole: "user"
+    });
+    const collectorLogin = await login(server.app, "collector", "collector-password");
+    const createCollectionResponse = await server.app.inject({
+      method: "POST",
+      url: "/api/collections",
+      headers: { cookie: collectorLogin.cookie },
+      payload: { name: "Collector Cards", defaultLocale: "en" }
+    });
+    assert.equal(createCollectionResponse.statusCode, 200);
+    const collectorCollectionId = createCollectionResponse.json().collection.id as string;
+
+    const createItemResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectorCollectionId}/items`,
+      headers: { cookie: collectorLogin.cookie },
+      payload: {
+        name: "Debug Pikachu",
+        language: "en",
+        itemType: "raw",
+        quantity: 1
+      }
+    });
+    assert.equal(createItemResponse.statusCode, 201);
+
+    const collectorMeResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { cookie: collectorLogin.cookie }
+    });
+    assert.equal(collectorMeResponse.statusCode, 200);
+    assert.deepEqual(
+      collectorMeResponse.json().collections.map((collection: { id: string }) => collection.id),
+      [collectorCollectionId]
+    );
+
+    const adminMeResponse = await server.app.inject({
+      method: "GET",
+      url: "/api/auth/me",
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(adminMeResponse.statusCode, 200);
+    assert.deepEqual(
+      adminMeResponse
+        .json()
+        .collections.map((collection: { id: string; role: string }) => [collection.id, collection.role]),
+      [
+        [adminCollections[0].id, "owner"],
+        [collectorCollectionId, "viewer"]
+      ]
+    );
+
+    const inspectResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectorCollectionId}/items`,
+      headers: { cookie: adminCookie }
+    });
+    assert.equal(inspectResponse.statusCode, 200);
+    assert.equal(inspectResponse.json().items[0].card.name, "Debug Pikachu");
+
+    const mutateResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectorCollectionId}/items`,
+      headers: { cookie: adminCookie },
+      payload: {
+        name: "Should Not Save",
+        language: "en",
+        itemType: "raw",
+        quantity: 1
+      }
+    });
+    assert.equal(mutateResponse.statusCode, 403);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("inventory creation persists PokemonPriceTracker pricing source hints", async () => {
   const server = await createTestServer();
   try {

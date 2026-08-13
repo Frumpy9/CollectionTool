@@ -79,10 +79,23 @@ export function listCollectionsForUser(
   database: AppDatabase,
   userId: string
 ): CollectionSummary[] {
+  const user = database.connection
+    .prepare(
+      `
+        SELECT system_role
+        FROM users
+        WHERE id = ? AND disabled_at IS NULL
+      `
+    )
+    .get(userId) as { system_role: "admin" | "user" } | undefined;
+  const membershipJoin = user?.system_role === "admin"
+    ? "LEFT JOIN collection_members cm ON cm.collection_id = c.id AND cm.user_id = ?"
+    : "INNER JOIN collection_members cm ON cm.collection_id = c.id";
+  const membershipFilter = user?.system_role === "admin" ? "" : "WHERE cm.user_id = ?";
   const rows = database.connection
     .prepare(
       `
-        SELECT c.id, c.name, cm.role
+        SELECT c.id, c.name, COALESCE(cm.role, 'viewer') AS role
           , COALESCE(SUM(oi.quantity), 0) AS card_count
           , COALESCE(
               SUM(
@@ -96,10 +109,10 @@ export function listCollectionsForUser(
               0
             ) AS estimated_value_cents
         FROM collections c
-        INNER JOIN collection_members cm ON cm.collection_id = c.id
+        ${membershipJoin}
         LEFT JOIN owned_items oi ON oi.collection_id = c.id
         LEFT JOIN item_market_prices imp ON imp.owned_item_id = oi.id
-        WHERE cm.user_id = ?
+        ${membershipFilter}
         GROUP BY c.id, c.name, cm.role, c.created_at
         ORDER BY c.created_at ASC
       `
@@ -174,7 +187,24 @@ export function getCollectionRole(
     | { role: "owner" | "admin" | "editor" | "viewer" }
     | undefined;
 
-  return row?.role ?? null;
+  if (row) {
+    return row.role;
+  }
+
+  const systemAdminCanInspect = database.connection
+    .prepare(
+      `
+        SELECT 1
+        FROM users u
+        INNER JOIN collections c ON c.id = ?
+        WHERE u.id = ?
+          AND u.system_role = 'admin'
+          AND u.disabled_at IS NULL
+      `
+    )
+    .get(collectionId, userId);
+
+  return systemAdminCanInspect ? "viewer" : null;
 }
 
 export function canManageCollection(

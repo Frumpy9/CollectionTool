@@ -117,6 +117,10 @@ SQLite's `integrity_check` and `foreign_key_check`, reports connection safety se
 bounded diagnostic summary without exposing the database path or stored card data. A check detects
 problems but does not modify or repair the database.
 
+For local debugging, system administrators also see every collection in the collection switcher.
+Collections where the administrator is not an explicit member are exposed with viewer access: cards
+and collection diagnostics are visible, but inventory mutations still require a real editor role.
+
 ## Secrets
 
 Do not commit `.env`, database files, cached images, backups, sessions, or logs. PSA credentials, session secrets, tunnel tokens, and optional PokemonTCG.io/PokemonPriceTracker keys belong only in runtime environment variables.
