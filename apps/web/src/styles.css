@@ -3156,6 +3156,46 @@ small {
   font-size: 1.25rem;
 }
 
+.duplicate-reasons {
+  display: grid;
+  gap: 10px;
+}
+
+.duplicate-reasons > strong {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.duplicate-reasons ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.duplicate-reasons li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.duplicate-reasons li span {
+  color: var(--muted);
+}
+
+.duplicate-reasons li strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .graded-cert-panel,
 .raw-price-panel {
   display: grid;
@@ -4040,6 +4080,10 @@ small {
 
   .duplicate-match {
     grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .duplicate-reasons ul {
+    grid-template-columns: 1fr;
   }
 
   .graded-cert-header,

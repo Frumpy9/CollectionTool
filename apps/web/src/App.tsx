@@ -54,6 +54,7 @@ import type {
   CsvImportDuplicatePolicy,
   CsvImportJobResponse,
   DatabaseIntegrityResponse,
+  InventoryDuplicateMatch,
   InventoryItem,
   InventoryItemType,
   InventoryListResponse,
@@ -166,7 +167,7 @@ type ApiCredit = {
 
 type PendingDuplicateDecision = {
   id: string;
-  existingItem: InventoryItem;
+  match: InventoryDuplicateMatch;
   payload: CreateInventoryItemRequest;
   resolve: (choice: DuplicateDecisionChoice) => void;
 };
@@ -574,7 +575,6 @@ function WorkspaceShell({
     "idle" | "loading" | "error"
   >("idle");
   const [collectionValueHistoryMessage, setCollectionValueHistoryMessage] = useState("");
-  const inventoryRef = useRef(inventory);
   const activeBulkPriceJobCount = bulkPriceQueue
     ? bulkPriceQueue.summary.queued +
       bulkPriceQueue.summary.running +
@@ -708,10 +708,6 @@ function WorkspaceShell({
   }, [activeCollection?.id, activeBulkPriceJobCount, bulkPriceStatus]);
 
   useEffect(() => {
-    inventoryRef.current = inventory;
-  }, [inventory]);
-
-  useEffect(() => {
     if (!activeCollection) {
       return;
     }
@@ -786,13 +782,13 @@ function WorkspaceShell({
   }
 
   function requestDuplicateDecision(
-    existingItem: InventoryItem,
+    match: InventoryDuplicateMatch,
     payload: CreateInventoryItemRequest
   ) {
     return new Promise<DuplicateDecisionChoice>((resolve) => {
       setDuplicateDecision({
         id: createClientId(),
-        existingItem,
+        match,
         payload,
         resolve
       });
@@ -808,23 +804,28 @@ function WorkspaceShell({
     collectionId: string,
     payload: CreateInventoryItemRequest
   ) {
-    const existingItem = findDuplicateInventoryItem(inventoryRef.current.items, payload);
+    const duplicateCheck = await api.checkInventoryDuplicate(collectionId, payload);
+    const match = duplicateCheck.matches[0];
 
-    if (existingItem) {
-      const decision = await requestDuplicateDecision(existingItem, payload);
+    if (match) {
+      const decision = await requestDuplicateDecision(match, payload);
 
       if (decision === "cancel") {
         return null;
       }
 
-      if (decision === "merge") {
+      if (decision === "merge" && match.mergeAllowed) {
         const response = await api.updateInventoryItem(
           collectionId,
-          existingItem.id,
-          mergeDuplicateInventoryPayload(existingItem, payload)
+          match.item.id,
+          mergeDuplicateInventoryPayload(match.item, payload)
         );
         setInventory((current) => updateInventoryItem(current, response.item));
         return response.item;
+      }
+
+      if (decision === "separate" && !match.separateAllowed) {
+        return null;
       }
     }
 
@@ -6062,8 +6063,10 @@ function DuplicateMergeDialog({
   onResolve: (choice: DuplicateDecisionChoice) => void;
 }) {
   const incomingQuantity = normalizeQuantity(decision.payload.quantity);
-  const existingItem = decision.existingItem;
+  const { match } = decision;
+  const existingItem = match.item;
   const mergedQuantity = Math.min(999, existingItem.quantity + incomingQuantity);
+  const isCertMatch = match.kind === "cert-number";
 
   return (
     <div className="detail-backdrop" role="presentation">
@@ -6074,8 +6077,10 @@ function DuplicateMergeDialog({
       >
         <div className="detail-header">
           <div>
-            <p className="eyebrow">Possible duplicate</p>
-            <h3 id={`duplicate-title-${decision.id}`}>This card looks familiar</h3>
+            <p className="eyebrow">{isCertMatch ? "Certification match" : "Exact duplicate"}</p>
+            <h3 id={`duplicate-title-${decision.id}`}>
+              {isCertMatch ? "This slab is already recorded" : "This card looks familiar"}
+            </h3>
           </div>
           <button
             aria-label="Cancel duplicate add"
@@ -6114,18 +6119,35 @@ function DuplicateMergeDialog({
           </div>
         </div>
 
+        <div className="duplicate-reasons" aria-label="Matching identity fields">
+          <strong>{isCertMatch ? "Why it matched" : "Matching fields"}</strong>
+          <ul>
+            {match.reasons.map((reason) => (
+              <li key={reason.code}>
+                <span>{reason.label}</span>
+                <strong>{reason.value}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
+
         <p className="lookup-note">
-          Do you want to increase this row to qty {mergedQuantity}, or keep this as a separate
-          copy?
+          {isCertMatch
+            ? `Certification numbers identify one physical slab. Increase this row to qty ${mergedQuantity}, or cancel.`
+            : `Increase this row to qty ${mergedQuantity}, or keep this as a separate copy.`}
         </p>
 
         <div className="detail-actions">
-          <button className="primary-button" onClick={() => onResolve("merge")} type="button">
-            Increase quantity
-          </button>
-          <button onClick={() => onResolve("separate")} type="button">
-            Add separate copy
-          </button>
+          {match.mergeAllowed ? (
+            <button className="primary-button" onClick={() => onResolve("merge")} type="button">
+              Increase quantity
+            </button>
+          ) : null}
+          {match.separateAllowed ? (
+            <button onClick={() => onResolve("separate")} type="button">
+              Add separate copy
+            </button>
+          ) : null}
           <button onClick={() => onResolve("cancel")} type="button">
             Cancel
           </button>
@@ -7648,23 +7670,6 @@ function removeInventoryItem(
   return summarizeInventory(inventory.items.filter((item) => item.id !== removedItemId));
 }
 
-function findDuplicateInventoryItem(
-  items: InventoryItem[],
-  payload: CreateInventoryItemRequest
-) {
-  const certNumber = normalizedCertNumber(payload.certNumber);
-
-  if (certNumber) {
-    const matchingCertItem = items.find((item) => normalizedCertNumber(item.certNumber) === certNumber);
-
-    if (matchingCertItem) {
-      return matchingCertItem;
-    }
-  }
-
-  return items.find((item) => inventoryDuplicateKey(item) === payloadDuplicateKey(payload));
-}
-
 function mergeDuplicateInventoryPayload(
   existingItem: InventoryItem,
   payload: CreateInventoryItemRequest
@@ -8051,36 +8056,6 @@ function mergeCertLookupIntoInventoryItem(
   };
 }
 
-function inventoryDuplicateKey(item: InventoryItem) {
-  return [
-    item.itemType,
-    normalizeText(item.card.language),
-    normalizeText(item.card.name),
-    normalizeText(item.card.setCode),
-    normalizeCardNumber(item.card.cardNumber),
-    normalizeText(item.conditionLabel),
-    normalizeVariantDetails(item.variantDetails),
-    normalizeText(item.grader),
-    normalizeText(item.grade),
-    normalizeText(item.certNumber)
-  ].join("|");
-}
-
-function payloadDuplicateKey(payload: CreateInventoryItemRequest) {
-  return [
-    payload.itemType,
-    normalizeText(payload.language),
-    normalizeText(payload.name),
-    normalizeText(payload.setCode),
-    normalizeCardNumber(payload.cardNumber),
-    normalizeText(payload.conditionLabel),
-    normalizeVariantDetails(payload.variantDetails),
-    normalizeText(payload.grader),
-    normalizeText(payload.grade),
-    normalizeText(payload.certNumber)
-  ].join("|");
-}
-
 function normalizeText(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -8090,22 +8065,6 @@ function normalizeText(value: unknown) {
 
 function normalizeCardNumber(value: unknown) {
   return normalizeText(value).replace(/\b0+(\d)/g, "$1");
-}
-
-function normalizeVariantDetails(value: unknown) {
-  return normalizeText(value)
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .sort()
-    .join(",");
-}
-
-function normalizedCertNumber(value: unknown) {
-  return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
 }
 
 function normalizeQuantity(value: unknown) {
