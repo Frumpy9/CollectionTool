@@ -33,6 +33,7 @@ import type {
   CsvImportJobResponse,
   CommitCsvImportJobRequest,
   InventoryItem,
+  InventoryDuplicateCheckResponse,
   InventoryListResponse,
   MarketPriceSnapshotsResponse,
   NeedsAttentionResponse,
@@ -331,6 +332,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  checkInventoryDuplicate: (collectionId: string, payload: CreateInventoryItemRequest) =>
+    request<InventoryDuplicateCheckResponse>(
+      `/api/collections/${collectionId}/items/duplicate-check`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload)
+      }
+    ),
   updateInventoryItem: (
     collectionId: string,
     itemId: string,

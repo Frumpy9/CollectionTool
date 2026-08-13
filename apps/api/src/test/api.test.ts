@@ -419,6 +419,62 @@ test("system admins can inspect every collection while foreign collections remai
   }
 });
 
+test("inventory duplicate preflight returns structured matches without mutating inventory", async () => {
+  const server = await createTestServer();
+  try {
+    const { collections, cookie } = await bootstrapAdmin(server.app);
+    const collectionId = collections[0].id;
+    const payload = {
+      name: "Pikachu",
+      setName: "Base Set",
+      setCode: "BS",
+      cardNumber: "058",
+      language: "en",
+      itemType: "raw",
+      quantity: 1,
+      conditionLabel: "Near Mint",
+      variantDetails: "Standard, Holo / Foil"
+    };
+    const createResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie },
+      payload
+    });
+    assert.equal(createResponse.statusCode, 201);
+
+    const checkResponse = await server.app.inject({
+      method: "POST",
+      url: `/api/collections/${collectionId}/items/duplicate-check`,
+      headers: { cookie },
+      payload: {
+        ...payload,
+        name: " pikachu ",
+        setCode: "bs",
+        cardNumber: "58",
+        conditionLabel: "near  mint",
+        variantDetails: "Holo / Foil, Standard"
+      }
+    });
+    assert.equal(checkResponse.statusCode, 200, checkResponse.body);
+    assert.equal(checkResponse.json().matches.length, 1);
+    assert.equal(checkResponse.json().matches[0].kind, "exact-identity");
+    assert.deepEqual(
+      checkResponse.json().matches[0].reasons.map((reason: { code: string }) => reason.code),
+      ["item-type", "language", "name", "set-code", "card-number", "condition", "variants"]
+    );
+
+    const inventoryResponse = await server.app.inject({
+      method: "GET",
+      url: `/api/collections/${collectionId}/items`,
+      headers: { cookie }
+    });
+    assert.equal(inventoryResponse.json().items.length, 1);
+  } finally {
+    await closeTestServer(server);
+  }
+});
+
 test("inventory creation persists PokemonPriceTracker pricing source hints", async () => {
   const server = await createTestServer();
   try {

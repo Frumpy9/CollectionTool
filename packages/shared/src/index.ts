@@ -111,6 +111,39 @@ export type InventoryListResponse = {
   };
 };
 
+export type InventoryDuplicateReasonCode =
+  | "item-type"
+  | "language"
+  | "name"
+  | "set-code"
+  | "card-number"
+  | "condition"
+  | "variants"
+  | "grader"
+  | "grade"
+  | "cert-number";
+
+export type InventoryDuplicateReason = {
+  code: InventoryDuplicateReasonCode;
+  label: string;
+  value: string;
+  message: string;
+};
+
+export type InventoryDuplicateMatchKind = "cert-number" | "exact-identity";
+
+export type InventoryDuplicateMatch = {
+  item: InventoryItem;
+  kind: InventoryDuplicateMatchKind;
+  reasons: InventoryDuplicateReason[];
+  mergeAllowed: boolean;
+  separateAllowed: boolean;
+};
+
+export type InventoryDuplicateCheckResponse = {
+  matches: InventoryDuplicateMatch[];
+};
+
 export type NeedsAttentionCategory =
   | "missing-price"
   | "stale-price"

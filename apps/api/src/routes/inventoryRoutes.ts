@@ -5,6 +5,7 @@ import type {
   BulkUpdateInventoryVariantsRequest,
   CardLanguage,
   CreateInventoryItemRequest,
+  InventoryDuplicateCheckResponse,
   InventoryMarketPriceSource,
   InventoryItem,
   InventoryItemType,
@@ -19,6 +20,7 @@ import { getAuthContext, getCollectionRole } from "../auth.js";
 import { recordCollectionValueSnapshot } from "../collectionValueSnapshots.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db.js";
+import { findInventoryDuplicateMatches } from "../inventoryDuplicateIdentity.js";
 import { invalidatePricingReviewForIdentityChange } from "../pricingReviews.js";
 import { lookupPsaCert } from "../psaClient.js";
 
@@ -159,6 +161,30 @@ export async function registerInventoryRoutes(
       return response;
     }
   );
+
+  app.post("/api/collections/:collectionId/items/duplicate-check", async (request, reply) => {
+    const auth = getAuthContext(request, database);
+
+    if (!auth) {
+      reply.code(401);
+      return { error: "Unauthorized" };
+    }
+
+    const { collectionId } = request.params as { collectionId: string };
+    const role = getCollectionRole(database, collectionId, auth.user.id);
+
+    if (!role || role === "viewer") {
+      reply.code(403);
+      return { error: "You need editor access to check cards before adding them." };
+    }
+
+    const payload = normalizeCreateInput(request.body as CreateInventoryItemRequest);
+    const response: InventoryDuplicateCheckResponse = {
+      matches: findInventoryDuplicateMatches(listInventoryItems(database, collectionId), payload)
+    };
+
+    return response;
+  });
 
   app.post("/api/collections/:collectionId/items", async (request, reply) => {
     const auth = getAuthContext(request, database);
