@@ -82,6 +82,7 @@ import {
   reconcileItemTypeFilterForInventoryView,
   type InventoryView
 } from "./features/inventory";
+import { BackgroundJobCenter } from "./features/jobs/BackgroundJobCenter";
 import { PricingWorkspace } from "./features/pricing/PricingWorkspace";
 import { StorageWorkspace } from "./features/storage/StorageWorkspace";
 
@@ -543,6 +544,7 @@ function WorkspaceShell({
   const [inventoryStatus, setInventoryStatus] = useState<"idle" | "loading" | "error">("idle");
   const [inventoryError, setInventoryError] = useState("");
   const [intakeMethod, setIntakeMethod] = useState<IntakeMethod>("search");
+  const [focusedCsvImportJobId, setFocusedCsvImportJobId] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [inventoryFilters, setInventoryFilters] =
@@ -631,7 +633,6 @@ function WorkspaceShell({
     setShowCollectionMenu(false);
     setInventoryView(readStoredInventoryView(activeCollection?.id));
     setInventoryFilters(defaultInventoryFilters);
-    setIntakeMethod("search");
     setSelectionMode(false);
     setSelectedItemIds([]);
     setBulkVariantEditorOpen(false);
@@ -1047,13 +1048,30 @@ function WorkspaceShell({
 
   function handleSelectCollection(collectionId: string) {
     setActiveCollectionId(collectionId);
+    setFocusedCsvImportJobId(null);
+    setIntakeMethod("search");
     setShowCollectionMenu(false);
     changeSection("collection");
   }
 
   function openIntake(method: IntakeMethod) {
+    setFocusedCsvImportJobId(null);
     changeSection("search");
     setIntakeMethod(method);
+  }
+
+  function openBackgroundCsvImport(collectionId: string, jobId: string) {
+    setActiveCollectionId(collectionId);
+    setFocusedCsvImportJobId(jobId);
+    setShowCollectionMenu(false);
+    changeSection("search");
+    setIntakeMethod("csv");
+  }
+
+  function openBackgroundPricing(collectionId: string) {
+    setActiveCollectionId(collectionId);
+    setShowCollectionMenu(false);
+    changeSection("pricing");
   }
 
   function applyInventoryTagFilter(filter: InventoryTagFilter) {
@@ -1876,6 +1894,7 @@ function WorkspaceShell({
               csv: (
                 <InventoryCsvImportPanel
                   collectionId={activeCollection.id}
+                  focusedJobId={focusedCsvImportJobId}
                   onImported={(updatedInventory) => setInventory(updatedInventory)}
                 />
               )
@@ -2227,6 +2246,17 @@ function WorkspaceShell({
           />
         ) : null}
       </section>
+      <BackgroundJobCenter
+        activeCollectionId={activeCollection?.id ?? ""}
+        collections={collections}
+        onItemUpdated={(collectionId, item) => {
+          if (collectionId !== activeCollection?.id) return;
+          setInventory((current) => updateInventoryItem(current, item));
+          setSelectedItem((current) => (current?.id === item.id ? item : current));
+        }}
+        onOpenCsvImport={openBackgroundCsvImport}
+        onOpenPricing={openBackgroundPricing}
+      />
     </main>
   );
 }
@@ -4686,9 +4716,11 @@ function BulkQueueCard({
 
 function InventoryCsvImportPanel({
   collectionId,
+  focusedJobId,
   onImported
 }: {
   collectionId: string;
+  focusedJobId: string | null;
   onImported: (inventory: InventoryListResponse) => void;
 }) {
   const [csvText, setCsvText] = useState("");
@@ -4697,6 +4729,45 @@ function InventoryCsvImportPanel({
   const [acknowledgeExclusions, setAcknowledgeExclusions] = useState(false);
   const [error, setError] = useState("");
   const active = job && ["queued", "validating", "committing"].includes(job.status);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCsvText("");
+    setJob(null);
+    setAcknowledgeExclusions(false);
+    setError("");
+
+    const request = focusedJobId
+      ? api.getCsvImportJob(collectionId, focusedJobId)
+      : api.listCsvImportJobs(collectionId).then((response) =>
+          response.jobs.find((candidate) =>
+            ["queued", "validating", "ready", "committing", "failed"].includes(
+              candidate.status
+            )
+          ) ?? null
+        );
+
+    request
+      .then((restoredJob) => {
+        if (!cancelled && restoredJob) {
+          setJob(restoredJob);
+          if (restoredJob.error) setError(restoredJob.error);
+        }
+      })
+      .catch((restoreError: unknown) => {
+        if (!cancelled && focusedJobId) {
+          setError(
+            restoreError instanceof Error
+              ? restoreError.message
+              : "Unable to reopen this CSV import."
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionId, focusedJobId]);
 
   useEffect(() => {
     if (!job || !["queued", "validating"].includes(job.status)) {
