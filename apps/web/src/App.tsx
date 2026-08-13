@@ -49,6 +49,7 @@ import type {
   CollectionTransactionType,
   CollectionTransactionsResponse,
   CollectionValueHistoryPoint,
+  CreateCollectionTransactionRequest,
   CreateInventoryItemRequest,
   CsvImportDuplicatePolicy,
   CsvImportJobResponse,
@@ -60,6 +61,7 @@ import type {
   PokemonPriceTrackerSetSummary,
   PricingCandidate,
   PsaCertLookupResponse,
+  TransactionInventoryAdjustment,
   ValueOverrideHistoryEntry
 } from "@collection-tool/shared";
 import { api } from "./api";
@@ -2158,6 +2160,26 @@ function WorkspaceShell({
             collectionId={activeCollection.id}
             items={inventory.items}
             key={activeCollection.id}
+            onInventoryAdjusted={(adjustment) => {
+              setInventory((current) =>
+                adjustment.itemDeleted
+                  ? removeInventoryItem(current, adjustment.itemId)
+                  : summarizeInventory(
+                      current.items.map((item) =>
+                        item.id === adjustment.itemId
+                          ? { ...item, quantity: adjustment.afterQuantity }
+                          : item
+                      )
+                    )
+              );
+              setSelectedItem((current) =>
+                current?.id === adjustment.itemId
+                  ? adjustment.itemDeleted
+                    ? null
+                    : { ...current, quantity: adjustment.afterQuantity }
+                  : current
+              );
+            }}
             onOpenItem={setSelectedItem}
           />
         ) : null}
@@ -2425,15 +2447,27 @@ const transactionTypeOptions: Array<{ value: CollectionTransactionType; label: s
   { value: "disposal", label: "Disposal" }
 ];
 
+type TransactionFinalizationMode = "ledger-only" | "adjust-inventory";
+
+type PendingTransactionReview = {
+  payload: CreateCollectionTransactionRequest;
+  item: InventoryItem | null;
+  direction: "increase" | "decrease" | null;
+  beforeQuantity: number | null;
+  afterQuantity: number | null;
+};
+
 function TransactionLedgerWorkspace({
   canEdit,
   collectionId,
   items,
+  onInventoryAdjusted,
   onOpenItem
 }: {
   canEdit: boolean;
   collectionId: string;
   items: InventoryItem[];
+  onInventoryAdjusted: (adjustment: TransactionInventoryAdjustment) => void;
   onOpenItem: (item: InventoryItem) => void;
 }) {
   const [ledger, setLedger] = useState<CollectionTransactionsResponse | null>(null);
@@ -2442,6 +2476,12 @@ function TransactionLedgerWorkspace({
   const [editing, setEditing] = useState<CollectionTransaction | null>(null);
   const [type, setType] = useState<CollectionTransactionType>("purchase");
   const [itemFilter, setItemFilter] = useState("");
+  const [linkedItemId, setLinkedItemId] = useState("");
+  const [transactionQuantity, setTransactionQuantity] = useState("");
+  const [finalizationMode, setFinalizationMode] =
+    useState<TransactionFinalizationMode>("ledger-only");
+  const [pendingReview, setPendingReview] = useState<PendingTransactionReview | null>(null);
+  const ledgerFormRef = useRef<HTMLFormElement | null>(null);
 
   async function loadLedger(preserveMessage = false) {
     setStatus("loading");
@@ -2462,23 +2502,31 @@ function TransactionLedgerWorkspace({
   function beginEdit(transaction: CollectionTransaction) {
     setEditing(transaction);
     setType(transaction.type);
+    setLinkedItemId(transaction.itemId ?? "");
+    setTransactionQuantity(transaction.quantity?.toString() ?? "");
+    setFinalizationMode("ledger-only");
+    setPendingReview(null);
     setMessage("");
   }
 
   function clearEdit() {
     setEditing(null);
     setType("purchase");
+    setLinkedItemId("");
+    setTransactionQuantity("");
+    setFinalizationMode("ledger-only");
+    setPendingReview(null);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
-    const payload = {
-      itemId: String(data.get("itemId") ?? "").trim() || null,
+    const payload: CreateCollectionTransactionRequest = {
+      itemId: linkedItemId || null,
       itemName: String(data.get("itemName") ?? "").trim() || undefined,
       type,
-      quantity: optionalNumber(data.get("quantity")),
+      quantity: optionalNumber(transactionQuantity),
       amountCents: moneyToCents(data.get("amount")) ?? 0,
       feesCents: type === "fee" ? 0 : moneyToCents(data.get("fees")) ?? 0,
       allocatedCostCents:
@@ -2490,21 +2538,75 @@ function TransactionLedgerWorkspace({
       transactedAt: String(data.get("transactedAt") ?? "")
     };
 
+    setMessage("");
+    if (editing) {
+      setStatus("saving");
+      try {
+        await api.updateTransaction(collectionId, editing.id, payload);
+        clearEdit();
+        form.reset();
+        await loadLedger(true);
+        setMessage("Transaction updated. Inventory quantity was not changed.");
+      } catch (error) {
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Unable to save transaction.");
+      }
+      return;
+    }
+
+    const item = linkedItemId
+      ? items.find((candidate) => candidate.id === linkedItemId) ?? null
+      : null;
+    const direction = transactionInventoryDirection(type);
+    const quantity = payload.quantity ?? null;
+    const shouldAdjust = finalizationMode === "adjust-inventory";
+
+    setPendingReview({
+      payload: { ...payload, adjustInventory: shouldAdjust },
+      item,
+      direction: shouldAdjust ? direction : null,
+      beforeQuantity: item?.quantity ?? null,
+      afterQuantity:
+        shouldAdjust && item && direction && quantity !== null
+          ? direction === "increase"
+            ? item.quantity + quantity
+            : item.quantity - quantity
+          : null
+    });
+  }
+
+  async function confirmTransaction() {
+    if (!pendingReview || status === "saving") {
+      return;
+    }
+
     setStatus("saving");
     setMessage("");
     try {
-      if (editing) {
-        await api.updateTransaction(collectionId, editing.id, payload);
-      } else {
-        await api.createTransaction(collectionId, payload);
+      const response = await api.createTransaction(collectionId, pendingReview.payload);
+
+      if (response.inventoryAdjustment) {
+        onInventoryAdjusted(response.inventoryAdjustment);
+        if (response.inventoryAdjustment.itemDeleted && itemFilter === response.inventoryAdjustment.itemId) {
+          setItemFilter("");
+        }
       }
-      clearEdit();
-      form.reset();
+
+      setPendingReview(null);
+      setLinkedItemId("");
+      setTransactionQuantity("");
+      setFinalizationMode("ledger-only");
+      setType("purchase");
+      ledgerFormRef.current?.reset();
       await loadLedger(true);
-      setMessage(editing ? "Transaction updated." : "Transaction recorded. Inventory quantity was not changed.");
+      setMessage(
+        response.inventoryAdjustment
+          ? `Transaction recorded. Inventory changed from ${response.inventoryAdjustment.beforeQuantity} to ${response.inventoryAdjustment.afterQuantity}.`
+          : "Transaction recorded. Inventory quantity was not changed."
+      );
     } catch (error) {
       setStatus("error");
-      setMessage(error instanceof Error ? error.message : "Unable to save transaction.");
+      setMessage(error instanceof Error ? error.message : "Unable to record transaction.");
     }
   }
 
@@ -2529,6 +2631,24 @@ function TransactionLedgerWorkspace({
   const needsCostBasis = summary
     ? summary.salesMissingCostBasisCount + summary.tradesMissingCostBasisCount > 0
     : false;
+  const selectedFinalizationItem = linkedItemId
+    ? items.find((item) => item.id === linkedItemId) ?? null
+    : null;
+  const finalizationDirection = transactionInventoryDirection(type);
+  const finalizationQuantity = positiveIntegerOrNull(transactionQuantity);
+  const finalizationAfterQuantity =
+    selectedFinalizationItem && finalizationDirection && finalizationQuantity !== null
+      ? finalizationDirection === "increase"
+        ? selectedFinalizationItem.quantity + finalizationQuantity
+        : selectedFinalizationItem.quantity - finalizationQuantity
+      : null;
+  const adjustmentIssue = transactionAdjustmentIssue({
+    afterQuantity: finalizationAfterQuantity,
+    direction: finalizationDirection,
+    item: selectedFinalizationItem,
+    quantity: finalizationQuantity,
+    type
+  });
 
   return (
     <section className="ledger-workspace">
@@ -2551,8 +2671,9 @@ function TransactionLedgerWorkspace({
       ) : null}
 
       <p className="ledger-warning">
-        Ledger quantities are documentary. Adding, editing, or deleting a transaction never changes inventory quantity.
-        Use <strong>Edit inventory</strong> on a linked row to adjust holdings separately.
+        New item transactions are ledger-only by default. Before recording, you can explicitly include
+        the linked inventory adjustment in the same reviewed operation. Editing or deleting a ledger
+        entry never reapplies or reverses inventory.
       </p>
       {needsCostBasis ? (
         <p className="ledger-basis-note">
@@ -2572,20 +2693,45 @@ function TransactionLedgerWorkspace({
       </div>
 
       {canEdit ? (
-        <form className="ledger-form" key={editing?.id ?? "new"} onSubmit={handleSubmit}>
+        <form
+          className="ledger-form"
+          key={editing?.id ?? "new"}
+          onSubmit={handleSubmit}
+          ref={ledgerFormRef}
+        >
           <div className="ledger-form-heading">
             <div><p className="eyebrow">{editing ? "Edit entry" : "New entry"}</p><h3>{editing ? editing.itemName : "Record activity"}</h3></div>
             {editing ? <button type="button" onClick={clearEdit}>Cancel edit</button> : null}
           </div>
           <label>
             Type
-            <select name="type" value={type} onChange={(event) => setType(event.target.value as CollectionTransactionType)}>
+            <select
+              name="type"
+              value={type}
+              onChange={(event) => {
+                const nextType = event.target.value as CollectionTransactionType;
+                setType(nextType);
+                setPendingReview(null);
+                if (!transactionInventoryDirection(nextType)) {
+                  setFinalizationMode("ledger-only");
+                  setTransactionQuantity("");
+                }
+              }}
+            >
               {transactionTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
           <label>
             Linked inventory item
-            <select defaultValue={editing?.itemId ?? ""} name="itemId">
+            <select
+              name="itemId"
+              onChange={(event) => {
+                setLinkedItemId(event.target.value);
+                setPendingReview(null);
+                if (!event.target.value) setFinalizationMode("ledger-only");
+              }}
+              value={linkedItemId}
+            >
               <option value="">None / historical item</option>
               {items.map((item) => <option key={item.id} value={item.id}>{item.card.name} · {item.card.setName ?? "Unknown set"} · {item.card.cardNumber ?? "no #"}</option>)}
             </select>
@@ -2601,7 +2747,17 @@ function TransactionLedgerWorkspace({
           {type !== "fee" ? (
             <label>
               Quantity
-              <input defaultValue={editing?.quantity ?? ""} min="1" name="quantity" required type="number" />
+              <input
+                min="1"
+                name="quantity"
+                onChange={(event) => {
+                  setTransactionQuantity(event.target.value);
+                  setPendingReview(null);
+                }}
+                required
+                type="number"
+                value={transactionQuantity}
+              />
             </label>
           ) : null}
           <label>
@@ -2628,11 +2784,76 @@ function TransactionLedgerWorkspace({
             Notes
             <textarea defaultValue={editing?.notes ?? ""} maxLength={2000} name="notes" />
           </label>
+          <fieldset className="ledger-finalization-options">
+            <legend>Inventory finalization</legend>
+            {editing ? (
+              <p>
+                Editing this ledger entry will not reapply or reverse inventory. Adjust holdings from
+                Inventory if the historical record and current quantity need separate corrections.
+              </p>
+            ) : (
+              <>
+                <label className={finalizationMode === "ledger-only" ? "selected" : ""}>
+                  <input
+                    checked={finalizationMode === "ledger-only"}
+                    name="finalizationMode"
+                    onChange={() => setFinalizationMode("ledger-only")}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>Ledger only</strong>
+                    <small>Record the activity and leave inventory unchanged.</small>
+                  </span>
+                </label>
+                <label
+                  className={finalizationMode === "adjust-inventory" ? "selected" : ""}
+                >
+                  <input
+                    checked={finalizationMode === "adjust-inventory"}
+                    disabled={Boolean(adjustmentIssue)}
+                    name="finalizationMode"
+                    onChange={() => setFinalizationMode("adjust-inventory")}
+                    type="radio"
+                  />
+                  <span>
+                    <strong>Adjust linked inventory</strong>
+                    <small>
+                      {selectedFinalizationItem && finalizationAfterQuantity !== null
+                        ? `${selectedFinalizationItem.card.name}: ${selectedFinalizationItem.quantity} → ${finalizationAfterQuantity}`
+                        : "Link an inventory row and enter a valid quantity to preview the change."}
+                    </small>
+                  </span>
+                </label>
+                {adjustmentIssue ? <p className="ledger-finalization-hint">{adjustmentIssue}</p> : null}
+              </>
+            )}
+          </fieldset>
           <div className="ledger-form-actions">
-            <button className="primary-button" disabled={status === "saving"} type="submit">{status === "saving" ? "Saving..." : editing ? "Save entry" : "Add transaction"}</button>
+            <button
+              className="primary-button"
+              disabled={
+                status === "saving" ||
+                (!editing && finalizationMode === "adjust-inventory" && Boolean(adjustmentIssue))
+              }
+              type="submit"
+            >
+              {status === "saving" ? "Saving..." : editing ? "Save entry" : "Review transaction"}
+            </button>
           </div>
         </form>
       ) : <p className="lookup-note">Viewer access is read-only. An editor, admin, or owner can change the ledger.</p>}
+
+      {pendingReview ? (
+        <TransactionFinalizationReview
+          busy={status === "saving"}
+          review={pendingReview}
+          onCancel={() => {
+            setPendingReview(null);
+            setMessage("");
+          }}
+          onConfirm={() => void confirmTransaction()}
+        />
+      ) : null}
 
       {message ? <p className={status === "error" ? "form-error" : "lookup-note"}>{message}</p> : null}
       {status === "loading" ? <p className="lookup-note">Loading transactions...</p> : null}
@@ -2679,6 +2900,117 @@ function TransactionLedgerWorkspace({
 
 function transactionTypeLabel(type: CollectionTransactionType) {
   return transactionTypeOptions.find((option) => option.value === type)?.label ?? type;
+}
+
+function TransactionFinalizationReview({
+  busy,
+  onCancel,
+  onConfirm,
+  review
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  review: PendingTransactionReview;
+}) {
+  const adjustsInventory = review.payload.adjustInventory === true;
+  const quantity = review.payload.quantity ?? 0;
+
+  return (
+    <section
+      aria-labelledby="transaction-finalization-review-heading"
+      className="ledger-finalization-review"
+    >
+      <div className="ledger-finalization-review-heading">
+        <div>
+          <p className="eyebrow">Confirm transaction</p>
+          <h3 id="transaction-finalization-review-heading">
+            {transactionTypeLabel(review.payload.type)} · {review.item?.card.name ?? review.payload.itemName ?? "Unlinked item"}
+          </h3>
+        </div>
+        <span>{review.payload.transactedAt}</span>
+      </div>
+
+      <div className="ledger-finalization-review-grid">
+        <div>
+          <span>Ledger quantity</span>
+          <strong>{quantity}</strong>
+        </div>
+        <div>
+          <span>{review.payload.type === "trade_received" || review.payload.type === "trade_given" ? "Assigned value" : "Total amount"}</span>
+          <strong>{formatCurrency(review.payload.amountCents ?? 0)}</strong>
+        </div>
+        <div>
+          <span>Inventory before</span>
+          <strong>{review.beforeQuantity ?? "Unlinked"}</strong>
+        </div>
+        <div className={adjustsInventory ? "changes-inventory" : "ledger-only"}>
+          <span>Inventory after</span>
+          <strong>{adjustsInventory ? review.afterQuantity : review.beforeQuantity ?? "Unlinked"}</strong>
+        </div>
+      </div>
+
+      {adjustsInventory ? (
+        <p className="ledger-finalization-impact">
+          This confirmation will atomically record the ledger entry and {review.direction === "increase" ? "add" : "remove"} {quantity} {quantity === 1 ? "copy" : "copies"}.
+          {review.afterQuantity === 0 ? " The inventory row will be removed, while its ledger snapshot remains." : ""}
+        </p>
+      ) : (
+        <p className="ledger-finalization-impact ledger-only">
+          Ledger only: inventory quantity will not change.
+        </p>
+      )}
+
+      <div className="ledger-finalization-review-actions">
+        <button disabled={busy} onClick={onCancel} type="button">Back to form</button>
+        <button className="primary-button" disabled={busy} onClick={onConfirm} type="button">
+          {busy ? "Recording..." : adjustsInventory ? "Record and adjust inventory" : "Record ledger only"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function transactionInventoryDirection(
+  type: CollectionTransactionType
+): "increase" | "decrease" | null {
+  if (["purchase", "trade_received", "gift_received"].includes(type)) {
+    return "increase";
+  }
+  if (["sale", "trade_given", "gift_given", "disposal"].includes(type)) {
+    return "decrease";
+  }
+  return null;
+}
+
+function positiveIntegerOrNull(value: string) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function transactionAdjustmentIssue({
+  afterQuantity,
+  direction,
+  item,
+  quantity,
+  type
+}: {
+  afterQuantity: number | null;
+  direction: "increase" | "decrease" | null;
+  item: InventoryItem | null;
+  quantity: number | null;
+  type: CollectionTransactionType;
+}) {
+  if (!direction) return `${transactionTypeLabel(type)} entries cannot adjust inventory.`;
+  if (!item) return "Choose a linked inventory item to adjust.";
+  if (quantity === null) return "Enter a positive whole-number quantity to preview the adjustment.";
+  if (direction === "decrease" && afterQuantity !== null && afterQuantity < 0) {
+    return `Only ${item.quantity} ${item.quantity === 1 ? "copy is" : "copies are"} available.`;
+  }
+  if (direction === "increase" && afterQuantity !== null && afterQuantity > 999) {
+    return "The adjusted inventory quantity cannot exceed 999.";
+  }
+  return "";
 }
 
 function DataWorkspacePanel({

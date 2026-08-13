@@ -2099,7 +2099,8 @@ small {
 
 .ledger-form-heading,
 .ledger-form-actions,
-.ledger-notes-field {
+.ledger-notes-field,
+.ledger-finalization-options {
   grid-column: 1 / -1;
 }
 
@@ -2121,6 +2122,155 @@ small {
   min-height: 72px;
   padding-top: 10px;
   resize: vertical;
+}
+
+.ledger-finalization-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--panel-strong);
+}
+
+.ledger-finalization-options legend {
+  padding: 0 6px;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.ledger-form .ledger-finalization-options > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 68px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  color: var(--ink);
+  background: var(--panel);
+}
+
+.ledger-form .ledger-finalization-options > label.selected {
+  border-color: rgba(37, 99, 235, 0.38);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+  background: #f3f7ff;
+}
+
+.ledger-finalization-options input {
+  flex: 0 0 auto;
+  min-height: 0;
+  margin-top: 3px;
+}
+
+.ledger-finalization-options label > span {
+  display: grid;
+  gap: 4px;
+}
+
+.ledger-finalization-options small,
+.ledger-finalization-options > p {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.ledger-finalization-options > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.ledger-finalization-options .ledger-finalization-hint {
+  color: #8a5a0a;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.ledger-finalization-review {
+  display: grid;
+  gap: 14px;
+  border: 1px solid rgba(37, 99, 235, 0.3);
+  border-radius: 10px;
+  padding: 16px;
+  background: #f7faff;
+}
+
+.ledger-finalization-review-heading,
+.ledger-finalization-review-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ledger-finalization-review-heading h3,
+.ledger-finalization-review-heading p,
+.ledger-finalization-impact {
+  margin: 0;
+}
+
+.ledger-finalization-review-heading > span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.ledger-finalization-review-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.ledger-finalization-review-grid > div {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  background: var(--panel);
+}
+
+.ledger-finalization-review-grid > div.changes-inventory {
+  border-color: rgba(15, 118, 110, 0.34);
+  background: #eaf8f6;
+}
+
+.ledger-finalization-review-grid span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.ledger-finalization-review-grid strong {
+  font-size: 1.15rem;
+}
+
+.ledger-finalization-impact {
+  padding: 11px 12px;
+  border-radius: 8px;
+  color: #0f5f59;
+  background: #eaf8f6;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.ledger-finalization-impact.ledger-only {
+  color: #475569;
+  background: #eef2f6;
+}
+
+.ledger-finalization-review-actions {
+  justify-content: flex-end;
+}
+
+.ledger-finalization-review-actions button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 13px;
+  font-weight: 850;
 }
 
 .ledger-list {
@@ -3755,6 +3905,11 @@ small {
     grid-template-columns: 1fr;
   }
 
+  .ledger-finalization-options,
+  .ledger-finalization-review-grid {
+    grid-template-columns: 1fr;
+  }
+
   .ledger-row-money {
     text-align: left;
   }
@@ -3762,7 +3917,9 @@ small {
   .ledger-toolbar,
   .ledger-form-heading,
   .ledger-form-actions,
-  .ledger-row-actions {
+  .ledger-row-actions,
+  .ledger-finalization-review-heading,
+  .ledger-finalization-review-actions {
     align-items: stretch;
     flex-direction: column;
   }
