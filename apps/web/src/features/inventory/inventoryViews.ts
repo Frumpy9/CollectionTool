@@ -120,12 +120,21 @@ export function inventoryItemMatchesView(
   }
 
   const referenceTimeMs = getReferenceTime(options);
-  const createdAtMs = Date.parse(item.createdAt);
+  const createdAtMs = parseInventoryCreatedAt(item.createdAt);
 
   return (
     Number.isFinite(createdAtMs) &&
     createdAtMs <= referenceTimeMs &&
     createdAtMs >= getRecentlyAddedCutoffMs(referenceTimeMs)
+  );
+}
+
+function parseInventoryCreatedAt(value: string): number {
+  const trimmedValue = value.trim();
+  const sqliteUtcTimestamp = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(trimmedValue);
+
+  return Date.parse(
+    sqliteUtcTimestamp ? `${trimmedValue.replace(" ", "T")}Z` : trimmedValue
   );
 }
 
