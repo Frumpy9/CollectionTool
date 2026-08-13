@@ -3,11 +3,21 @@ import type {
   CreateInventoryItemRequest,
   CsvImportDuplicatePolicy,
   CsvImportJobIssue,
-  CsvImportJobResponse
+  CsvImportJobResponse,
+  InventoryDuplicateMatchKind,
+  InventoryDuplicateReason
 } from "@collection-tool/shared";
 import { recordCollectionValueSnapshot } from "./collectionValueSnapshots.js";
 import type { AppDatabase } from "./db.js";
 import { parseInventoryCsvImport, type ParsedCsvImportRow } from "./inventoryCsvImportParser.js";
+import {
+  certInventoryDuplicateReasons,
+  duplicateReasonSummary,
+  exactInventoryDuplicateReasons,
+  inventoryDuplicateIdentityKey,
+  inventoryIdentityFromPayload,
+  normalizedInventoryCertNumber
+} from "./inventoryDuplicateIdentity.js";
 
 const JOB_TTL_MS = 60 * 60 * 1_000;
 const VALIDATION_BATCH_SIZE = 50;
@@ -19,7 +29,14 @@ type PlannedAction =
   | { type: "insert" }
   | { type: "merge"; target: string; resultingQuantity: number }
   | { type: "invalid"; messages: string[] }
-  | { type: "skip"; messages: string[] };
+  | {
+      type: "skip";
+      messages: string[];
+      duplicateMatch?: {
+        kind: InventoryDuplicateMatchKind;
+        reasons: InventoryDuplicateReason[];
+      };
+    };
 
 type PlannedRow = ParsedCsvImportRow & { action: PlannedAction };
 
@@ -319,13 +336,15 @@ function planRow(
     return { ...row, action: { type: "invalid", messages: row.errors } };
   }
 
-  const certNumber = normalizedCertNumber(row.payload.certNumber);
+  const certNumber = normalizedInventoryCertNumber(row.payload.certNumber);
   if (certNumber && certNumbers.has(certNumber)) {
+    const reasons = certInventoryDuplicateReasons(inventoryIdentityFromPayload(row.payload));
     return {
       ...row,
       action: {
         type: "skip",
-        messages: [`Cert ${row.payload.certNumber} is already in this collection or CSV.`]
+        messages: [duplicateReasonSummary("cert-number", reasons)],
+        duplicateMatch: { kind: "cert-number", reasons }
       }
     };
   }
@@ -336,9 +355,14 @@ function planRow(
     return { ...row, action: { type: "insert" } };
   }
   if (duplicatePolicy === "skip") {
+    const reasons = exactInventoryDuplicateReasons(inventoryIdentityFromPayload(row.payload));
     return {
       ...row,
-      action: { type: "skip", messages: ["Exact inventory duplicate was skipped by policy."] }
+      action: {
+        type: "skip",
+        messages: [duplicateReasonSummary("exact-identity", reasons)],
+        duplicateMatch: { kind: "exact-identity", reasons }
+      }
     };
   }
 
@@ -367,7 +391,7 @@ function applyPlanToState(
     const identity = {
       target: `row:${row.index}`,
       key: duplicateKey(row.payload),
-      certNumber: normalizedCertNumber(row.payload.certNumber),
+      certNumber: normalizedInventoryCertNumber(row.payload.certNumber),
       quantity: row.payload.quantity
     };
     identitiesByKey.set(identity.key, identity);
@@ -375,7 +399,7 @@ function applyPlanToState(
   } else if (row.action.type === "merge") {
     const identity = identitiesByKey.get(duplicateKey(row.payload));
     if (identity) identity.quantity = row.action.resultingQuantity;
-    const certNumber = normalizedCertNumber(row.payload.certNumber);
+    const certNumber = normalizedInventoryCertNumber(row.payload.certNumber);
     if (certNumber) certNumbers.add(certNumber);
   }
 }
@@ -413,7 +437,7 @@ function loadInventoryIdentity(database: AppDatabase, collectionId: string) {
       grade: row.grade,
       certNumber: row.cert_number
     }),
-    certNumber: normalizedCertNumber(row.cert_number),
+    certNumber: normalizedInventoryCertNumber(row.cert_number),
     quantity: Number(row.quantity)
   }));
   return { identities, fingerprint: sha256(JSON.stringify(rows)) };
@@ -424,18 +448,7 @@ function inventoryFingerprint(database: AppDatabase, collectionId: string) {
 }
 
 function duplicateKey(payload: Record<string, unknown>) {
-  return [
-    payload.itemType,
-    normalizeText(payload.language),
-    normalizeText(payload.name),
-    normalizeText(payload.setCode),
-    normalizeCardNumber(payload.cardNumber),
-    normalizeText(payload.conditionLabel),
-    normalizeVariantDetails(payload.variantDetails),
-    normalizeText(payload.grader),
-    normalizeText(payload.grade),
-    normalizeText(payload.certNumber)
-  ].join("|");
+  return inventoryDuplicateIdentityKey(inventoryIdentityFromPayload(payload));
 }
 
 function insertInventoryRow(
@@ -548,7 +561,10 @@ function issuesForRows(rows: PlannedRow[]): CsvImportJobIssue[] {
       lineNumber: row.lineNumber,
       name: boundedText(row.name, 200),
       disposition: row.action.type === "invalid" ? "invalid" as const : "skipped" as const,
-      messages: row.action.messages.map((message) => boundedText(message, 500))
+      messages: row.action.messages.map((message) => boundedText(message, 500)),
+      ...(row.action.type === "skip" && row.action.duplicateMatch
+        ? { duplicateMatch: row.action.duplicateMatch }
+        : {})
     }];
   });
 }
@@ -613,21 +629,6 @@ function nullIfBlank(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-function normalizeText(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function normalizeCardNumber(value: unknown) {
-  return normalizeText(value).replace(/\b0+(\d)/g, "$1");
-}
-
-function normalizeVariantDetails(value: unknown) {
-  return normalizeText(value).split(",").map((part) => part.trim()).filter(Boolean).sort().join(",");
-}
-
-function normalizedCertNumber(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-}
 
 function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex");

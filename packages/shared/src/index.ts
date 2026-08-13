@@ -162,6 +162,10 @@ export type NeedsAttentionIssue = {
   items: InventoryItem[];
   totalItemCount: number;
   itemsTruncated: boolean;
+  duplicateMatch?: {
+    kind: InventoryDuplicateMatchKind;
+    reasons: InventoryDuplicateReason[];
+  };
   work: {
     kind: "pricing";
     status: "needs-review" | "failed";
@@ -564,6 +568,10 @@ export type CsvImportJobIssue = {
   name: string;
   disposition: "invalid" | "skipped";
   messages: string[];
+  duplicateMatch?: {
+    kind: InventoryDuplicateMatchKind;
+    reasons: InventoryDuplicateReason[];
+  };
 };
 
 export type CsvImportJobResponse = {

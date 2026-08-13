@@ -127,6 +127,17 @@ test("needs-attention classifies durable evidence without inventing import histo
     assert.deepEqual(new Set(itemIds(attention, "duplicate-cert")), new Set([duplicateCertA.id, duplicateCertB.id]));
     assert.deepEqual(new Set(itemIds(attention, "possible-duplicate")), new Set([duplicateA.id, duplicateB.id]));
     assert.equal(itemIds(attention, "possible-duplicate").includes(distinctVariant.id), false);
+    assert.equal(issues(attention, "duplicate-cert")[0].duplicateMatch?.kind, "cert-number");
+    assert.deepEqual(
+      issues(attention, "duplicate-cert")[0].duplicateMatch?.reasons.map((reason) => reason.code),
+      ["cert-number"]
+    );
+    assert.equal(
+      issues(attention, "possible-duplicate")[0].duplicateMatch?.reasons.some(
+        (reason) => reason.code === "variants"
+      ),
+      true
+    );
 
     const failedWork = issues(attention, "failed-work");
     assert.equal(failedWork.length, 1, "only the latest attention-status work per item remains");

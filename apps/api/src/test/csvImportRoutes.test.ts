@@ -142,6 +142,13 @@ test("CSV duplicate policies are explicit and cert numbers are always deduplicat
       const job = await createReadyJob(server.app, collectionId, cookie, csv, expected.policy);
       assert.equal(job.summary.commitRows, expected.commitRows, expected.policy);
       assert.equal(job.summary.skippedRows, expected.skippedRows, expected.policy);
+      if (expected.policy === "skip") {
+        assert.equal(job.issues[0].duplicateMatch?.kind, "exact-identity");
+        assert.equal(
+          job.issues[0].duplicateMatch?.reasons.some((reason) => reason.code === "variants"),
+          true
+        );
+      }
       const snapshotsBeforeCommit = countRows(server.database, "collection_value_snapshots");
 
       if (job.summary.commitRows > 0) {
@@ -177,6 +184,11 @@ test("CSV duplicate policies are explicit and cert numbers are always deduplicat
     assert.equal(job.summary.commitRows, 1);
     assert.equal(job.summary.skippedRows, 1);
     assert.match(job.issues[0].messages[0], /Cert/);
+    assert.equal(job.issues[0].duplicateMatch?.kind, "cert-number");
+    assert.deepEqual(
+      job.issues[0].duplicateMatch?.reasons.map((reason) => reason.code),
+      ["cert-number"]
+    );
   } finally {
     await closeTestServer(certServer);
   }

@@ -8,6 +8,7 @@ import type {
 import type { FastifyInstance } from "fastify";
 import { getAuthContext, getCollectionRole } from "../auth.js";
 import type { AppDatabase } from "../db.js";
+import { groupInventoryDuplicates } from "../inventoryDuplicateIdentity.js";
 import { listInventoryItems } from "./inventoryRoutes.js";
 
 const STALE_PRICE_DAYS = 30;
@@ -161,32 +162,21 @@ function classifyNeedsAttention(
     });
   }
 
-  const duplicateCertItemIds = new Set<string>();
-  for (const [cert, group] of grouped(items, (item) => normalizedCert(item.certNumber))) {
-    if (!cert || group.length < 2) continue;
-    group.forEach((item) => duplicateCertItemIds.add(item.id));
+  for (const group of groupInventoryDuplicates(items)) {
+    const isCertMatch = group.kind === "cert-number";
     issues.push({
-      id: `duplicate-cert:${cert}`,
-      category: "duplicate-cert",
-      title: `Cert ${group[0].certNumber} appears ${group.length} times`,
-      reasons: ["A graded certification number should normally identify one physical slab."],
-      items: group,
-      totalItemCount: group.length,
+      id: isCertMatch
+        ? `duplicate-cert:${group.key}`
+        : `possible-duplicate:${stableIssueKey(group.key)}`,
+      category: isCertMatch ? "duplicate-cert" : "possible-duplicate",
+      title: isCertMatch
+        ? `Cert ${group.items[0].certNumber} appears ${group.items.length} times`
+        : `${group.items[0].card.name} has ${group.items.length} matching rows`,
+      reasons: group.reasons.map((reason) => reason.message),
+      items: group.items,
+      totalItemCount: group.items.length,
       itemsTruncated: false,
-      work: null
-    });
-  }
-
-  for (const [key, group] of grouped(items, duplicateIdentityKey)) {
-    if (!key || group.length < 2 || group.some((item) => duplicateCertItemIds.has(item.id))) continue;
-    issues.push({
-      id: `possible-duplicate:${stableIssueKey(key)}`,
-      category: "possible-duplicate",
-      title: `${group[0].card.name} has ${group.length} matching rows`,
-      reasons: ["Item type, language, identity, condition, variants, grade, and cert fields match."],
-      items: group,
-      totalItemCount: group.length,
-      itemsTruncated: false,
+      duplicateMatch: { kind: group.kind, reasons: group.reasons },
       work: null
     });
   }
@@ -288,46 +278,6 @@ function incompleteMetadataReasons(item: InventoryItem) {
     if (!item.certNumber?.trim()) reasons.push("Certification number is missing.");
   }
   return reasons;
-}
-
-function grouped(items: InventoryItem[], keyFor: (item: InventoryItem) => string) {
-  const groups = new Map<string, InventoryItem[]>();
-  for (const item of items) {
-    const key = keyFor(item);
-    groups.set(key, [...(groups.get(key) ?? []), item]);
-  }
-  return groups;
-}
-
-function duplicateIdentityKey(item: InventoryItem) {
-  return [
-    item.itemType,
-    normalizedText(item.card.language),
-    normalizedText(item.card.name),
-    normalizedText(item.card.setCode),
-    normalizedCardNumber(item.card.cardNumber),
-    normalizedText(item.conditionLabel),
-    normalizedVariants(item.variantDetails),
-    normalizedText(item.grader),
-    normalizedText(item.grade),
-    normalizedText(item.certNumber)
-  ].join("|");
-}
-
-function normalizedText(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function normalizedCardNumber(value: unknown) {
-  return normalizedText(value).replace(/\b0+(\d)/g, "$1");
-}
-
-function normalizedVariants(value: unknown) {
-  return normalizedText(value).split(",").map((part) => part.trim()).filter(Boolean).sort().join(",");
-}
-
-function normalizedCert(value: unknown) {
-  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function stableIssueKey(value: string) {
